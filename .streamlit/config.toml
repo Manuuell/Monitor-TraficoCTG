@@ -1,0 +1,16 @@
+[theme]
+# Colores UTB
+primaryColor = "#00D4D4"
+backgroundColor = "#0A1F44"
+secondaryBackgroundColor = "#15294D"
+textColor = "#FFFFFF"
+font = "sans serif"
+base = "dark"
+
+[server]
+headless = true
+enableXsrfProtection = true
+enableCORS = false
+
+[browser]
+gatherUsageStats = false

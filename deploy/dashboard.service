@@ -1,0 +1,15 @@
+[Unit]
+Description=Dashboard Streamlit TomTom Cartagena
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/proyect_r
+EnvironmentFile=/home/ubuntu/proyect_r/.env
+ExecStart=/home/ubuntu/proyect_r/venv/bin/streamlit run dashboard/monitor.py --server.port 8501 --server.address 0.0.0.0 --server.headless true
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

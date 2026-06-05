@@ -1,0 +1,26 @@
+# Crontab para VPS 1 - Turnos 1 y 2 (API Key 1)
+# Zona horaria: America/Bogota (configurar con timedatectl set-timezone America/Bogota)
+# Total: 14 ejecuciones/dia x 113 nodos = 1,582 llamadas/dia (limite 2,500)
+#
+# Para instalar:
+#   crontab /home/ubuntu/proyect_r/deploy/crontab_vps1.txt
+# Para verificar:
+#   crontab -l
+
+# ============ TURNO 1 ============
+0  4 * * * /home/ubuntu/proyect_r/deploy/run.sh
+0  5 * * * /home/ubuntu/proyect_r/deploy/run.sh
+30 5 * * * /home/ubuntu/proyect_r/deploy/run.sh
+0  6 * * * /home/ubuntu/proyect_r/deploy/run.sh
+30 6 * * * /home/ubuntu/proyect_r/deploy/run.sh
+0  7 * * * /home/ubuntu/proyect_r/deploy/run.sh
+30 7 * * * /home/ubuntu/proyect_r/deploy/run.sh
+
+# ============ TURNO 2 ============
+0  8 * * * /home/ubuntu/proyect_r/deploy/run.sh
+0  9 * * * /home/ubuntu/proyect_r/deploy/run.sh
+0 10 * * * /home/ubuntu/proyect_r/deploy/run.sh
+0 11 * * * /home/ubuntu/proyect_r/deploy/run.sh
+0 12 * * * /home/ubuntu/proyect_r/deploy/run.sh
+30 12 * * * /home/ubuntu/proyect_r/deploy/run.sh
+0 13 * * * /home/ubuntu/proyect_r/deploy/run.sh

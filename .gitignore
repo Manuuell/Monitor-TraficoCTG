@@ -1,0 +1,30 @@
+# Secretos y credenciales
+.env
+credenciales/
+*.key
+*.pem
+
+# Python
+venv/
+__pycache__/
+*.pyc
+
+# Datos generados
+data/resultados/*.csv
+data/resultados/*.xlsx
+logs/*.log
+logs/*.jsonl
+
+# Documentos LaTeX y diagramas
+*.tex
+*.puml
+*.pdf
+*.aux
+*.toc
+*.out
+*.synctex.gz
+*.fls
+*.fdb_latexmk
+
+# Sistema
+.DS_Store

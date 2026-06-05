@@ -40,8 +40,8 @@ VPS 2 ──────────────┬─→ Google Sheets     │ 
 
 | Servidor | Turnos | Consumo diario |
 |----------|--------|----------------|
-| **VPS 1** (158.101.105.13) | Turno 1 + 2 (04:00–13:00) | 1.582 llamadas |
-| **VPS 2** (141.148.46.79) | Turno 3 + 4 (13:30–00:00) | 1.582 llamadas |
+| **VPS 1** | Turno 1 + 2 (04:00–13:00) | 1.582 llamadas |
+| **VPS 2** | Turno 3 + 4 (13:30–00:00) | 1.582 llamadas |
 
 > Se usan dos cuentas TomTom independientes para no superar el límite gratuito de 2.500 llamadas/día por cuenta.
 
@@ -153,10 +153,3 @@ crontab deploy/crontab_vps1.txt
 | 🟠 Lento | 0.60 – 0.75 | Congestión apreciable |
 | 🔴 Congestionado | < 0.60 | Velocidad muy reducida |
 
----
-
-## 👤 Autoría
-
-**Selene Patricia Ballestas** — Ingeniería Industrial
-Proyecto de Ingeniería I · Asesor: Holman Ospina Mateus, PhD
-Universidad Tecnológica de Bolívar — Cartagena de Indias, 2026

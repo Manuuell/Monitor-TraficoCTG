@@ -66,6 +66,9 @@ SHEET_ID = os.environ.get(
 )
 SHEET_TAB = os.environ.get("SHEET_TAB", "datos")
 
+# Carpeta exclusiva en Drive para los backups de PostgreSQL (off-site)
+DRIVE_BACKUP_FOLDER_ID = os.environ.get("DRIVE_BACKUP_FOLDER_ID", "")
+
 GOOGLE_SCOPES = [
     "https://www.googleapis.com/auth/drive.file",
     "https://www.googleapis.com/auth/spreadsheets",

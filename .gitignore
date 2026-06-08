@@ -14,6 +14,7 @@ data/resultados/*.csv
 data/resultados/*.xlsx
 logs/*.log
 logs/*.jsonl
+backups/
 
 # Documentos LaTeX y diagramas
 *.tex

@@ -69,6 +69,27 @@ def subir_csv_a_drive(creds: Credentials, csv_path: Path) -> str | None:
         return None
 
 
+def subir_archivo_a_drive(
+    creds: Credentials, path: Path, folder_id: str,
+    mimetype: str = "application/octet-stream",
+) -> str | None:
+    """Sube cualquier archivo a una carpeta Drive especifica. Devuelve el ID."""
+    try:
+        service = build("drive", "v3", credentials=creds, cache_discovery=False)
+        file_metadata = {"name": Path(path).name, "parents": [folder_id]}
+        media = MediaFileUpload(str(path), mimetype=mimetype, resumable=False)
+        archivo = service.files().create(
+            body=file_metadata, media_body=media, fields="id",
+        ).execute()
+        return archivo.get("id")
+    except HttpError as e:
+        print(f"  [Drive] Error subiendo {Path(path).name}: {e}")
+        return None
+    except Exception as e:
+        print(f"  [Drive] Error inesperado subiendo {Path(path).name}: {e}")
+        return None
+
+
 def asegurar_encabezados(creds: Credentials, columnas: list) -> bool:
     """Verifica que la primera fila tenga los encabezados correctos; los crea o actualiza si hay columnas nuevas."""
     try:

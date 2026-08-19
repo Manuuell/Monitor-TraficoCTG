@@ -15,6 +15,8 @@ Uso tipico:
 """
 from __future__ import annotations
 
+from datetime import date, timedelta
+
 import pandas as pd
 from sqlalchemy import create_engine, text
 from sqlalchemy.types import (
@@ -60,7 +62,12 @@ def get_engine():
             f"postgresql+psycopg2://{config.DB_USER}:{config.DB_PASSWORD}"
             f"@{config.DB_HOST}:{config.DB_PORT}/{config.DB_NAME}"
         )
-        _engine = create_engine(url, pool_pre_ping=True, pool_recycle=1800)
+        # connect_timeout corto: si la BD no responde, el dashboard cae a
+        # Sheets en segundos en vez de colgarse.
+        _engine = create_engine(
+            url, pool_pre_ping=True, pool_recycle=1800,
+            connect_args={"connect_timeout": 5},
+        )
     return _engine
 
 
@@ -126,6 +133,16 @@ def insertar_dataframe(df: pd.DataFrame) -> int:
     return len(df_ins)
 
 
+def _postprocesar_lectura(df: pd.DataFrame) -> pd.DataFrame:
+    """Normaliza tipos tras leer de la BD (mismo formato que google_upload.leer_sheet)."""
+    if "consultation_time" in df.columns:
+        df["consultation_time"] = pd.to_datetime(df["consultation_time"], errors="coerce")
+    for col in _NUMERIC_COLS:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+    return df
+
+
 def leer_datos(n_dias: int = 30) -> pd.DataFrame:
     """Lee el historico de los ultimos n_dias. Mismo formato que google_upload.leer_sheet."""
     engine = get_engine()
@@ -140,12 +157,31 @@ def leer_datos(n_dias: int = 30) -> pd.DataFrame:
         print(f"  [DB] Error leyendo: {e}")
         return pd.DataFrame()
 
-    if "consultation_time" in df.columns:
-        df["consultation_time"] = pd.to_datetime(df["consultation_time"], errors="coerce")
-    for col in _NUMERIC_COLS:
-        if col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors="coerce")
-    return df
+    return _postprocesar_lectura(df)
+
+
+def leer_rango(fecha_ini: date, fecha_fin: date) -> pd.DataFrame:
+    """
+    Lee las mediciones con consultation_time entre fecha_ini y fecha_fin
+    (ambos dias inclusive). Trae solo el periodo pedido — usa el indice
+    idx_mediciones_ct, no recorre la tabla completa.
+    """
+    engine = get_engine()
+    query = text(
+        f'SELECT * FROM {TABLA} '
+        f'WHERE "consultation_time" >= :ini AND "consultation_time" < :fin '
+        f'ORDER BY "consultation_time";'
+    )
+    try:
+        df = pd.read_sql(
+            query, engine,
+            params={"ini": fecha_ini, "fin": fecha_fin + timedelta(days=1)},
+        )
+    except Exception as e:
+        print(f"  [DB] Error leyendo rango: {e}")
+        return pd.DataFrame()
+
+    return _postprocesar_lectura(df)
 
 
 def contar_filas() -> int:

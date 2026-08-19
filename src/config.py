@@ -78,6 +78,12 @@ GOOGLE_SCOPES = [
 SUBIR_A_GOOGLE = os.environ.get("SUBIR_A_GOOGLE", "true").lower() == "true"
 
 # ============================================================
+# FIREBASE (app TransCaribe — snapshot de trafico para motor de ETAs)
+# ============================================================
+FIREBASE_CRED_FILE = CREDENCIALES_DIR / "firebase_transcaribe.json"
+SUBIR_A_FIRESTORE = os.environ.get("SUBIR_A_FIRESTORE", "true").lower() == "true"
+
+# ============================================================
 # POSTGRESQL (migracion desde Google Sheets)
 # ============================================================
 DB_HOST     = os.environ.get("DB_HOST", "localhost")

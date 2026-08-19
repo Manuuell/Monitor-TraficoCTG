@@ -405,6 +405,57 @@ def cargar_desde_sheets(n_dias: int = 30) -> pd.DataFrame:
         return pd.DataFrame()
 
 
+@st.cache_data(ttl=600)
+def rango_fechas_historico() -> tuple:
+    """
+    (fecha_min, fecha_max, fuente) del historico disponible, sin descargar
+    los datos. Con FUENTE_DASHBOARD=db lo responde PostgreSQL al instante;
+    si no, se obtiene del Sheet completo (comportamiento anterior).
+    """
+    if getattr(config, "FUENTE_DASHBOARD", "sheets") == "db":
+        try:
+            import db  # import diferido
+            mn, mx = db.rango_fechas()
+            if mn is not None and mx is not None:
+                return mn.date(), mx.date(), "PostgreSQL"
+        except Exception as e:
+            print(f"  [Dashboard] PostgreSQL no disponible para rango: {e}")
+
+    df = cargar_desde_sheets(n_dias=3650)
+    if df.empty or "consultation_time" not in df.columns:
+        return None, None, None
+    fechas = df["consultation_time"].dropna()
+    if fechas.empty:
+        return None, None, None
+    return fechas.dt.date.min(), fechas.dt.date.max(), "Google Sheets"
+
+
+@st.cache_data(ttl=300)
+def cargar_historico(fecha_ini, fecha_fin) -> tuple:
+    """
+    Datos del periodo [fecha_ini, fecha_fin] y la fuente usada.
+    PostgreSQL consulta solo el rango pedido (rapido); Sheets descarga el
+    historico completo y recorta (respaldo si la BD no esta disponible).
+    """
+    if getattr(config, "FUENTE_DASHBOARD", "sheets") == "db":
+        try:
+            import db  # import diferido
+            df = db.leer_rango(fecha_ini, fecha_fin)
+            if not df.empty:
+                return df, "PostgreSQL"
+        except Exception as e:
+            print(f"  [Dashboard] PostgreSQL no disponible, usando Sheets: {e}")
+
+    df = cargar_desde_sheets(n_dias=3650)
+    if df.empty or "consultation_time" not in df.columns:
+        return pd.DataFrame(), None
+    mask = (
+        (df["consultation_time"].dt.date >= fecha_ini) &
+        (df["consultation_time"].dt.date <= fecha_fin)
+    )
+    return df[mask].copy(), "Google Sheets"
+
+
 def leyenda_ratio(modo: str = "ratio"):
     """
     Renderiza una leyenda de colores debajo de las graficas.
@@ -489,6 +540,19 @@ def leyenda_ratio(modo: str = "ratio"):
             </span>
         </div>
         """, unsafe_allow_html=True)
+
+
+@st.cache_data(ttl=3600)
+def cargar_geometria() -> dict:
+    """Carga la geometria de las calles (capturada con capturar_geometria.py)."""
+    path = BASE_DIR / "data" / "nodos_geometria.json"
+    if not path.exists():
+        return {}
+    try:
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
 
 
 def color_por_ratio(ratio):
@@ -851,44 +915,74 @@ with tab_mapa:
 
         if "velocidad_ratio" in df_ok.columns:
             df_ok["color"] = df_ok["velocidad_ratio"].apply(color_por_ratio)
+            geo = cargar_geometria()
+
+            # Selector de visualizacion: calles (si hay geometria) o puntos
+            opciones_vista = (["Calles", "Puntos"] if geo else ["Puntos"])
+            vista = st.radio(
+                "Visualizacion del mapa", opciones_vista,
+                horizontal=True, label_visibility="collapsed",
+            )
+            if not geo:
+                st.caption("Para ver las calles trazadas, ejecuta capturar_geometria.py una vez.")
+
             try:
                 import pydeck as pdk
-                layer = pdk.Layer(
-                    "ScatterplotLayer",
-                    data=df_ok,
-                    get_position="[lon, lat]",
-                    get_fill_color="color",
-                    get_radius=100,
-                    pickable=True,
-                    opacity=0.8,
-                    stroked=True,
-                    get_line_color=[255, 255, 255, 80],
-                    line_width_min_pixels=1,
-                )
+
                 tooltip = {
-                    "html": "<b style='color:#00D4D4;'>{nombre_nodo}</b><br/>"
-                            "<span style='color:#8A9AB8;'>Actual:</span> <b>{currentSpeed}</b> km/h<br/>"
-                            "<span style='color:rgba(255,255,255,0.6);'>Libre:</span> <b>{freeFlowSpeed}</b> km/h<br/>"
-                            "<span style='color:rgba(255,255,255,0.6);'>Categoria:</span> {categoria}",
+                    "html": "<b style='color:#5eead4;'>{nombre_nodo}</b><br/>"
+                            "<span style='color:rgba(255,255,255,0.6);'>Ratio:</span> <b>{ratio_txt}</b><br/>"
+                            "<span style='color:rgba(255,255,255,0.6);'>Actual:</span> <b>{currentSpeed}</b> km/h",
                     "style": {
-                        "backgroundColor": UTB_NAVY_LIGHT,
-                        "color": UTB_WHITE,
-                        "padding": "10px",
-                        "borderRadius": "8px",
+                        "backgroundColor": UTB_NAVY_LIGHT, "color": UTB_WHITE,
+                        "padding": "10px", "borderRadius": "8px",
                         "border": f"1px solid {UTB_BORDER}",
-                        "boxShadow": "0 4px 12px rgba(0,48,135,0.12)",
                     },
                 }
+
+                if vista == "Calles":
+                    # Unir geometria (estatica) con el ratio actual de cada nodo
+                    ratio_nodo = dict(zip(df_ok["id_nodo"].astype(str), df_ok["velocidad_ratio"]))
+                    spd_nodo   = dict(zip(df_ok["id_nodo"].astype(str),
+                                          df_ok["currentSpeed"] if "currentSpeed" in df_ok.columns else []))
+                    path_rows = []
+                    for id_nodo, info in geo.items():
+                        r = ratio_nodo.get(str(id_nodo))
+                        path_rows.append({
+                            "path": info["path"],
+                            "color": color_por_ratio(r if r is not None else float("nan")),
+                            "nombre_nodo": info.get("nombre", ""),
+                            "ratio_txt": f"{r:.2f}" if r is not None and not pd.isna(r) else "—",
+                            "currentSpeed": spd_nodo.get(str(id_nodo), "—"),
+                        })
+                    capa = pdk.Layer(
+                        "PathLayer", data=path_rows,
+                        get_path="path", get_color="color",
+                        get_width=6, width_min_pixels=4,
+                        width_scale=1, cap_rounded=True, joint_rounded=True,
+                        pickable=True,
+                    )
+                else:
+                    df_ok["ratio_txt"] = df_ok["velocidad_ratio"].apply(
+                        lambda x: f"{x:.2f}" if pd.notna(x) else "—")
+                    capa = pdk.Layer(
+                        "ScatterplotLayer", data=df_ok,
+                        get_position="[lon, lat]", get_fill_color="color",
+                        get_radius=100, pickable=True, opacity=0.8, stroked=True,
+                        get_line_color=[255, 255, 255, 80], line_width_min_pixels=1,
+                    )
+
                 st.pydeck_chart(pdk.Deck(
-                    layers=[layer],
+                    layers=[capa],
                     initial_view_state=pdk.ViewState(
                         latitude=df_ok["lat"].mean(),
                         longitude=df_ok["lon"].mean(),
-                        zoom=12, pitch=30,
+                        zoom=12.3, pitch=30,
                     ),
                     tooltip=tooltip,
                     map_style="dark",
-                ), height=520)
+                ), height=540)
+                leyenda_ratio("ratio")
             except ImportError:
                 st.map(df_ok, latitude="lat", longitude="lon")
 
@@ -1063,24 +1157,16 @@ with tab_proceso:
 # ----------------------------------------------------------------
 with tab_historia:
     st.markdown("### Datos historicos")
-    st.caption("Fuente: Google Sheets · Incluye datos de VPS 1 (Turnos 1-2) y VPS 2 (Turnos 3-4)")
+    st.caption("Incluye datos de VPS 1 (Turnos 1-2) y VPS 2 (Turnos 3-4)")
 
-    # Cargar TODO el historico disponible una sola vez (evita el bug de "dias
-    # faltantes" que ocurria al recortar por n_dias relativo a hoy).
-    with st.spinner("Cargando datos desde Google Sheets..."):
-        df_sheets = cargar_desde_sheets(n_dias=3650)
+    # Rango de fechas disponible (consulta ligera; los datos del periodo se
+    # cargan despues, solo para el rango que el usuario elija).
+    with st.spinner("Consultando datos disponibles..."):
+        min_fecha, max_fecha, fuente_rango = rango_fechas_historico()
 
-    if df_sheets.empty or "consultation_time" not in df_sheets.columns:
-        st.warning("No hay datos en Sheets o no hay conexion con Google.")
-        df_sheets = pd.DataFrame()
-
-    if df_sheets.empty:
-        pass  # ya se mostro el aviso
+    if min_fecha is None:
+        st.warning("No hay datos historicos o no hay conexion con la fuente.")
     else:
-        # Rango real de fechas disponibles → limita el selector (cambio 5)
-        fechas_validas = df_sheets["consultation_time"].dropna()
-        min_fecha = fechas_validas.dt.date.min()
-        max_fecha = fechas_validas.dt.date.max()
         # Valor por defecto: ultimos 7 dias, recortado al rango disponible
         ini_default = max(min_fecha, max_fecha - timedelta(days=7))
 
@@ -1103,24 +1189,26 @@ with tab_historia:
             )
         with hf4:
             st.markdown("<div style='height:28px;'></div>", unsafe_allow_html=True)
-            if st.button("Recargar Sheets", use_container_width=True):
+            if st.button("Recargar datos", use_container_width=True):
                 st.cache_data.clear()
                 st.rerun()
 
         st.caption(
             f"Datos disponibles: {min_fecha.strftime('%d/%m/%Y')} → "
-            f"{max_fecha.strftime('%d/%m/%Y')}"
+            f"{max_fecha.strftime('%d/%m/%Y')} · Fuente: {fuente_rango}"
         )
 
         if fecha_fin < fecha_ini:
             st.error("La fecha 'Hasta' debe ser mayor o igual a 'Desde'.")
             df_periodo = pd.DataFrame()
         else:
-            mask = (
-                (df_sheets["consultation_time"].dt.date >= fecha_ini) &
-                (df_sheets["consultation_time"].dt.date <= fecha_fin)
-            )
-            df_periodo = df_sheets[mask].copy()
+            with st.spinner("Cargando periodo seleccionado..."):
+                df_periodo, fuente_datos = cargar_historico(fecha_ini, fecha_fin)
+
+            if fuente_datos is None:
+                st.warning("No se pudo cargar el periodo desde ninguna fuente.")
+            elif fuente_datos != fuente_rango:
+                st.caption(f"Fuente del periodo: {fuente_datos}")
 
             # Filtro por tipo de dia (cambio 7)
             if not df_periodo.empty and tipo_dia != "Todos":

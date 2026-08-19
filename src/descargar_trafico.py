@@ -265,6 +265,20 @@ def main() -> int:
         except Exception as e:
             print(f"  [DB] Aviso: no se pudo insertar en PostgreSQL: {e}")
 
+    # Snapshot a Firestore: alimenta el motor de ETAs de la app TransCaribe.
+    # Tampoco interrumpe el flujo si falla.
+    if config.SUBIR_A_FIRESTORE:
+        print(f"\nSubiendo snapshot a Firestore (TransCaribe)...")
+        try:
+            import subir_firestore
+            res = subir_firestore.subir_snapshot(df_resultados)
+            if res["ok"]:
+                print(f"  [Firestore] {res['count']} nodos subidos a traffic/latest")
+            else:
+                print(f"  [Firestore] Aviso: {res['error']}")
+        except Exception as e:
+            print(f"  [Firestore] Aviso: {e}")
+
     print(f"{'='*60}\n")
 
     registrar_log(inicio, total, ok_count, None if ok_count > 0 else "Todas las consultas fallaron")

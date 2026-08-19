@@ -15,6 +15,8 @@ data/resultados/*.xlsx
 logs/*.log
 logs/*.jsonl
 backups/
+*.sql
+*.sql.gz
 
 # Documentos LaTeX y diagramas
 *.tex

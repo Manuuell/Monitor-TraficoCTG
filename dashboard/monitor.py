@@ -586,6 +586,62 @@ def verificar_token_google() -> dict:
         return {"ok": False, "estado": "Error", "detalle": str(e)[:120]}
 
 
+@st.cache_data(ttl=3600)
+def capacidad_sheet() -> dict:
+    """
+    Ocupacion del Google Sheet frente al limite duro de Google (10 millones
+    de celdas por hoja de calculo). Al alcanzarlo, las escrituras a Sheets
+    empiezan a fallar en silencio: el ETL sigue y PostgreSQL/Drive/Firestore
+    conservan los datos, pero se pierde la capa de respaldo documental.
+
+    Cachea 1 hora: el tamano crece despacio y es una llamada extra a la API.
+    """
+    LIMITE = 10_000_000
+    try:
+        creds = google_upload.cargar_credenciales()
+        if creds is None:
+            return {"ok": False, "detalle": "Sin credenciales Google"}
+
+        from googleapiclient.discovery import build
+        svc = build("sheets", "v4", credentials=creds, cache_discovery=False)
+        meta = svc.spreadsheets().get(
+            spreadsheetId=config.SHEET_ID,
+            fields="sheets(properties(title,gridProperties))",
+        ).execute()
+
+        celdas = 0
+        cols_datos = 0
+        for s in meta.get("sheets", []):
+            p = s["properties"]
+            g = p.get("gridProperties", {})
+            filas = g.get("rowCount", 0)
+            cols = g.get("columnCount", 0)
+            celdas += filas * cols
+            if p.get("title") == config.SHEET_TAB:
+                cols_datos = cols
+
+        if cols_datos == 0:
+            cols_datos = 29  # ancho tipico de la tabla de mediciones
+
+        # Consumo diario: 113 nodos x 28 ejecuciones programadas
+        celdas_dia = 113 * 28 * cols_datos
+        restantes = max(LIMITE - celdas, 0)
+        dias = int(restantes / celdas_dia) if celdas_dia > 0 else None
+        fecha_llena = (datetime.now() + timedelta(days=dias)).strftime("%d/%m/%Y") if dias is not None else None
+
+        return {
+            "ok": True,
+            "celdas": celdas,
+            "limite": LIMITE,
+            "pct": celdas / LIMITE * 100,
+            "dias": dias,
+            "fecha_llena": fecha_llena,
+            "detalle": None,
+        }
+    except Exception as e:
+        return {"ok": False, "detalle": str(e)[:120]}
+
+
 def calcular_proxima_ejecucion():
     ahora = datetime.now()
     horarios_hoy = []
@@ -636,6 +692,46 @@ with st.sidebar:
             <div style="color:{COLOR_CONGESTIONADO};font-size:11px;font-weight:700;">
                 ⚠ GOOGLE · {token_st['estado'].upper()}</div>
             <div style="color:{UTB_GRAY};font-size:11px;">{token_st['detalle']}</div>
+        </div>""", unsafe_allow_html=True)
+
+    # --- Capacidad del Google Sheet (limite 10M celdas) ---
+    cap = capacidad_sheet()
+    if cap["ok"]:
+        _pct = cap["pct"]
+        if _pct >= 90:
+            _color, _icono, _estado = COLOR_CONGESTIONADO, "⚠", "CRITICO"
+        elif _pct >= 75:
+            _color, _icono, _estado = COLOR_LENTO, "⚠", "ALTO"
+        elif _pct >= 50:
+            _color, _icono, _estado = COLOR_MODERADO, "●", "MODERADO"
+        else:
+            _color, _icono, _estado = COLOR_FLUIDO, "●", "OK"
+
+        _aviso = (
+            f"Se llena ~{cap['fecha_llena']} ({cap['dias']} dias)"
+            if cap["dias"] is not None else "Sin proyeccion"
+        )
+        st.markdown(f"""
+        <div style="background:rgba(255,255,255,0.06);border-left:3px solid {_color};
+             padding:10px 12px;border-radius:6px;margin-bottom:16px;">
+            <div style="color:{_color};font-size:11px;font-weight:700;">
+                {_icono} HOJA DE CALCULO · {_estado}</div>
+            <div style="background:rgba(0,0,0,0.25);border-radius:4px;height:6px;
+                 overflow:hidden;margin:6px 0;">
+                <div style="background:{_color};width:{min(_pct, 100):.1f}%;
+                     height:100%;border-radius:4px;"></div>
+            </div>
+            <div style="color:{UTB_GRAY};font-size:11px;">
+                {cap['celdas']:,} / {cap['limite']:,} celdas · {_pct:.1f}%</div>
+            <div style="color:{UTB_GRAY};font-size:11px;">{_aviso}</div>
+        </div>""", unsafe_allow_html=True)
+    else:
+        st.markdown(f"""
+        <div style="background:rgba(255,255,255,0.06);border-left:3px solid {UTB_GRAY};
+             padding:10px 12px;border-radius:6px;margin-bottom:16px;">
+            <div style="color:{UTB_GRAY};font-size:11px;font-weight:700;">
+                ● HOJA DE CALCULO · SIN DATO</div>
+            <div style="color:{UTB_GRAY};font-size:11px;">{cap.get('detalle') or 'No disponible'}</div>
         </div>""", unsafe_allow_html=True)
 
     st.markdown("### Archivo a visualizar")

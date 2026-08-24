@@ -20,6 +20,8 @@ El sistema implementa un proceso **ETL** (Extract–Transform–Load) que se eje
 - ⏱️ **Automatización** con cron en dos servidores VPS (Turnos 1–4)
 - 💾 **Almacenamiento dual:** Google Sheets/Drive + PostgreSQL
 - 📊 **Dashboard interactivo** con mapa, análisis, monitoreo e histórico
+- 🛣️ **Mapa de calles trazadas** con la geometría real de cada segmento vial
+- 🔥 **Snapshot a Firestore** que alimenta el motor de ETAs de la app TransCaribe
 - 📈 **Indicadores de congestión** alineados con el TomTom Traffic Index
 - 💰 **Costo de operación:** USD 0.00 (APIs dentro de su cuota gratuita)
 
@@ -57,6 +59,7 @@ VPS 2 ──────────────┬─→ Google Sheets     │ 
 | cron + Bash | Automatización |
 | Google Sheets / Drive | Almacenamiento documental |
 | PostgreSQL 14 | Almacenamiento relacional |
+| Firebase Firestore | Snapshot en vivo para la app TransCaribe |
 | Streamlit + Plotly | Dashboard web |
 | SQLAlchemy + psycopg2 | Acceso a PostgreSQL |
 
@@ -70,7 +73,8 @@ proyect_r/
 │   ├── config.py             # Configuración centralizada (variables de entorno)
 │   ├── descargar_trafico.py  # Proceso ETL principal
 │   ├── google_upload.py      # Subida/lectura de Google Sheets y Drive
-│   ├── db.py                 # Acceso a PostgreSQL
+│   ├── db.py                 # Acceso a PostgreSQL (lectura por rango de fechas)
+│   ├── subir_firestore.py    # Snapshot de tráfico para la app TransCaribe
 │   └── autorizar_google.py   # Generación del token OAuth (una vez)
 ├── dashboard/
 │   └── monitor.py            # Dashboard Streamlit
@@ -79,6 +83,7 @@ proyect_r/
 │   ├── crontab_vps1.txt      # Horarios de VPS 1
 │   └── crontab_vps2.txt      # Horarios de VPS 2
 ├── migrar_a_postgres.py      # Migración Sheets → PostgreSQL (verificada)
+├── capturar_geometria.py     # Captura única de la traza real de cada vía
 ├── nodos.xlsx                # Catálogo de los 113 nodos
 └── requirements.txt          # Dependencias
 ```
@@ -114,6 +119,9 @@ DB_USER=trafico_user
 DB_PASSWORD=tu_clave
 GUARDAR_EN_DB=true
 FUENTE_DASHBOARD=db
+
+# Firestore (opcional — app TransCaribe)
+SUBIR_A_FIRESTORE=true
 ```
 
 ---
@@ -130,10 +138,34 @@ python3 src/descargar_trafico.py
 streamlit run dashboard/monitor.py
 ```
 
+**Capturar la geometría de las calles** (una sola vez, habilita el modo "Calles" del mapa):
+```bash
+python3 capturar_geometria.py
+```
+
 **Automatizar con cron** (instalar la tabla de horarios):
 ```bash
 crontab deploy/crontab_vps1.txt
 ```
+
+---
+
+## 💾 Capas de almacenamiento
+
+Cada ejecución escribe en varias capas independientes. Si una falla, el ETL
+continúa y las demás conservan el dato.
+
+| Capa | Contenido | Rol |
+|------|-----------|-----|
+| **PostgreSQL** | Histórico completo | Fuente de lectura del dashboard (`FUENTE_DASHBOARD=db`) |
+| **Google Sheets** | Histórico fila por fila | Respaldo documental y consulta manual |
+| **Google Drive** | Un CSV por ejecución + volcado diario de la base | Copia off-site |
+| **Firestore** | Solo el último snapshot (`traffic/latest`) | Velocidades en vivo para la app TransCaribe |
+
+> ⚠️ Google limita cada hoja de cálculo a **10 millones de celdas**. El dashboard
+> muestra en la barra lateral el porcentaje ocupado y la fecha estimada en que
+> se alcanzará el límite, porque al llegar las escrituras a Sheets fallan en
+> silencio.
 
 ---
 

@@ -66,6 +66,11 @@ SHEET_ID = os.environ.get(
 )
 SHEET_TAB = os.environ.get("SHEET_TAB", "datos")
 
+# Nombre base de los libros. Google limita cada hoja de calculo a 10 millones
+# de celdas; al alcanzarlo el ETL crea "<base>_Parte2", "_Parte3"... en la
+# misma carpeta de Drive y sigue escribiendo alli (ver google_upload.rotar_sheet).
+SHEET_NOMBRE_BASE = os.environ.get("SHEET_NOMBRE_BASE", "TomTom_Cartagena_Datos")
+
 # Carpeta exclusiva en Drive para los backups de PostgreSQL (off-site)
 DRIVE_BACKUP_FOLDER_ID = os.environ.get("DRIVE_BACKUP_FOLDER_ID", "")
 

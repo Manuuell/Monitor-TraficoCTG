@@ -31,3 +31,6 @@ backups/
 
 # Sistema
 .DS_Store
+
+# Puntero al libro de Sheets en uso (estado de runtime por VPS)
+data/sheet_activo.json

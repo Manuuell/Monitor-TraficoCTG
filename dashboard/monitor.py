@@ -590,9 +590,9 @@ def verificar_token_google() -> dict:
 def capacidad_sheet() -> dict:
     """
     Ocupacion del Google Sheet frente al limite duro de Google (10 millones
-    de celdas por hoja de calculo). Al alcanzarlo, las escrituras a Sheets
-    empiezan a fallar en silencio: el ETL sigue y PostgreSQL/Drive/Firestore
-    conservan los datos, pero se pierde la capa de respaldo documental.
+    de celdas por hoja de calculo). Al alcanzarlo el ETL rota solo a un libro
+    nuevo ("<base>_ParteN") y sigue escribiendo alli, asi que este indicador
+    mide el libro ACTIVO y avisa cuando toca la proxima rotacion.
 
     Cachea 1 hora: el tamano crece despacio y es una llamada extra a la API.
     """
@@ -604,9 +604,13 @@ def capacidad_sheet() -> dict:
 
         from googleapiclient.discovery import build
         svc = build("sheets", "v4", credentials=creds, cache_discovery=False)
+        # Se mide el libro ACTIVO: tras una rotacion el original queda lleno
+        # y congelado, y lo que importa es cuanto le queda al que se escribe.
+        sheet_id = google_upload.sheet_activo()
+        parte = google_upload.parte_activa()
         meta = svc.spreadsheets().get(
-            spreadsheetId=config.SHEET_ID,
-            fields="sheets(properties(title,gridProperties))",
+            spreadsheetId=sheet_id,
+            fields="properties(title),sheets(properties(title,gridProperties))",
         ).execute()
 
         celdas = 0
@@ -636,6 +640,8 @@ def capacidad_sheet() -> dict:
             "pct": celdas / LIMITE * 100,
             "dias": dias,
             "fecha_llena": fecha_llena,
+            "parte": parte,
+            "nombre": meta.get("properties", {}).get("title", ""),
             "detalle": None,
         }
     except Exception as e:
@@ -711,11 +717,13 @@ with st.sidebar:
             f"Se llena ~{cap['fecha_llena']} ({cap['dias']} dias)"
             if cap["dias"] is not None else "Sin proyeccion"
         )
+        # Al llenarse se rota automaticamente: el aviso deja de ser una alarma.
+        _parte_txt = f" · PARTE {cap['parte']}" if cap.get("parte", 1) > 1 else ""
         st.markdown(f"""
         <div style="background:rgba(255,255,255,0.06);border-left:3px solid {_color};
              padding:10px 12px;border-radius:6px;margin-bottom:16px;">
             <div style="color:{_color};font-size:11px;font-weight:700;">
-                {_icono} HOJA DE CALCULO · {_estado}</div>
+                {_icono} HOJA DE CALCULO · {_estado}{_parte_txt}</div>
             <div style="background:rgba(0,0,0,0.25);border-radius:4px;height:6px;
                  overflow:hidden;margin:6px 0;">
                 <div style="background:{_color};width:{min(_pct, 100):.1f}%;
@@ -848,6 +856,17 @@ if not token_st["ok"]:
         </div>
     </div>""", unsafe_allow_html=True)
 
+def _mascara_ok(df: pd.DataFrame) -> pd.Series:
+    """
+    Filas cuya consulta a TomTom fue exitosa. La columna 'ok' llega como bool
+    desde PostgreSQL y como texto ("TRUE") desde Sheets y los CSV, asi que se
+    normaliza en ambos casos.
+    """
+    if df.empty or "ok" not in df.columns:
+        return pd.Series(False, index=df.index, dtype=bool)
+    return df["ok"].astype(str).str.lower().isin(["true", "1"])
+
+
 # ============================================================
 # CARGAR DATOS BASE
 # ============================================================
@@ -876,6 +895,52 @@ else:
     df_snapshot = df_actual.copy()
     snapshot_label = archivo_actual.name if archivo_actual else "Sin datos"
 
+# ── Respaldo cuando la ultima corrida no dejo ni un nodo valido ──
+# Pasa cuando la API rechaza las 113 consultas (p.ej. 403 InsufficientFunds).
+# Sin esto el mapa filtra por ok=true, se queda sin filas y pydeck dibuja un
+# lienzo vacio sin explicar nada. Se guarda el diagnostico y se retrocede al
+# ultimo snapshot con datos reales, rotulado como desactualizado.
+snapshot_degradado = None
+
+if not df_snapshot.empty and not _mascara_ok(df_snapshot).any():
+    _motivo = ""
+    if "error_msg" in df_snapshot.columns:
+        _msgs = df_snapshot["error_msg"].dropna().astype(str)
+        _msgs = _msgs[_msgs.str.strip() != ""]
+        if not _msgs.empty:
+            _motivo = _msgs.value_counts().index[0]
+
+    _http = ""
+    if "http_status" in df_snapshot.columns:
+        _hs = pd.to_numeric(df_snapshot["http_status"], errors="coerce").dropna()
+        if not _hs.empty:
+            _http = str(int(_hs.mode().iloc[0]))
+
+    snapshot_degradado = {
+        "label_fallido": snapshot_label,
+        "nodos": len(df_snapshot),
+        "http": _http,
+        "motivo": _motivo,
+        "label_valido": None,
+        "hora_valida": None,
+    }
+
+    _pool = _df_sheets_1d if not _df_sheets_1d.empty else df_actual
+    if not _pool.empty and "consultation_time" in _pool.columns:
+        _ok_pool = _pool[_mascara_ok(_pool)]
+        if not _ok_pool.empty:
+            _t_ok = _ok_pool["consultation_time"].max()
+            df_snapshot = _ok_pool[_ok_pool["consultation_time"] == _t_ok].copy()
+            _vps_ok = (
+                str(df_snapshot["vps_id"].iloc[0])
+                if "vps_id" in df_snapshot.columns and len(df_snapshot) else "?"
+            )
+            snapshot_degradado["label_valido"] = (
+                f"VPS {_vps_ok} · {_t_ok.strftime('%d/%m/%Y %H:%M')}"
+            )
+            snapshot_degradado["hora_valida"] = _t_ok
+            snapshot_label = f"{snapshot_degradado['label_valido']} · DESACTUALIZADO"
+
 # ============================================================
 # METRICAS PRINCIPALES
 # ============================================================
@@ -886,6 +951,10 @@ hoy = datetime.now().date()
 # VPS 1: desde log local
 logs_hoy = logs[logs["timestamp"].dt.date == hoy] if not logs.empty else pd.DataFrame()
 llamadas_vps1 = int(logs_hoy["total_nodos"].sum()) if not logs_hoy.empty else 0
+# Consultas que de verdad devolvieron datos. El total intentado no sirve para
+# saber si el sistema esta sano: con la API caida sigue marcando 1.582.
+exitosas_vps1 = int(logs_hoy["consultas_ok"].sum()) if not logs_hoy.empty and "consultas_ok" in logs_hoy.columns else 0
+fallidas_vps1 = max(llamadas_vps1 - exitosas_vps1, 0)
 ejec_vps1     = len(logs_hoy)
 ultima_vps1   = logs.iloc[-1]["timestamp"] if not logs.empty else None
 estado_vps1   = logs.iloc[-1]["estado"]    if not logs.empty else "—"
@@ -898,6 +967,8 @@ if not _df_sheets_1d.empty and "consultation_time" in _df_sheets_1d.columns:
         (_df_sheets_1d["vps_id"].astype(str) == "2")
     ]
 llamadas_vps2 = len(df_sheets_hoy)
+exitosas_vps2 = int(_mascara_ok(df_sheets_hoy).sum())
+fallidas_vps2 = max(llamadas_vps2 - exitosas_vps2, 0)
 ejec_vps2     = df_sheets_hoy["consultation_time"].nunique() if not df_sheets_hoy.empty else 0
 ultima_vps2   = df_sheets_hoy["consultation_time"].max()    if not df_sheets_hoy.empty else None
 
@@ -916,12 +987,19 @@ else:
 
 ejec_total = ejec_vps1 + ejec_vps2
 
+def _delta_consultas(llamadas: int, fallidas: int) -> tuple:
+    """Delta de la tarjeta: en rojo si hubo consultas fallidas hoy."""
+    if fallidas > 0:
+        return f"-{fallidas:,} fallidas", "normal"
+    return f"{llamadas/config.LIMITE_API_DIARIO*100:.1f}% de 2,500", "off"
+
+
 with col1:
-    st.metric("VPS 1 · Llamadas hoy", f"{llamadas_vps1:,}",
-              f"{llamadas_vps1/config.LIMITE_API_DIARIO*100:.1f}% de 2,500", delta_color="off")
+    _d, _dc = _delta_consultas(llamadas_vps1, fallidas_vps1)
+    st.metric("VPS 1 · Nodos OK", f"{exitosas_vps1:,}", _d, delta_color=_dc)
 with col2:
-    st.metric("VPS 2 · Llamadas hoy", f"{llamadas_vps2:,}",
-              f"{llamadas_vps2/config.LIMITE_API_DIARIO*100:.1f}% de 2,500", delta_color="off")
+    _d, _dc = _delta_consultas(llamadas_vps2, fallidas_vps2)
+    st.metric("VPS 2 · Nodos OK", f"{exitosas_vps2:,}", _d, delta_color=_dc)
 with col3:
     st.metric("Ejecuciones hoy", ejec_total, "de 28 programadas", delta_color="off")
 with col4:
@@ -988,6 +1066,45 @@ for vps_label, usado in [("VPS 1", llamadas_vps1), ("VPS 2", llamadas_vps2)]:
 st.markdown("<div style='margin-bottom:8px;'></div>", unsafe_allow_html=True)
 
 # ============================================================
+# AVISO DE CAPTURA DETENIDA
+# ============================================================
+# Un mapa vacio no explica nada. Si la ultima corrida no trajo un solo nodo
+# valido, se dice por que y desde cuando, con el error crudo de la API.
+if snapshot_degradado:
+    _sd = snapshot_degradado
+    _motivo_txt = (_sd["motivo"] or "sin detalle en error_msg")
+    _motivo_txt = _motivo_txt.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    if len(_motivo_txt) > 300:
+        _motivo_txt = _motivo_txt[:300] + "..."
+    _http_txt = f"HTTP {_sd['http']} · " if _sd["http"] else ""
+
+    if _sd["label_valido"]:
+        _horas = (datetime.now() - _sd["hora_valida"]).total_seconds() / 3600
+        _respaldo = (
+            f"El mapa y el analisis muestran el ultimo dato bueno: "
+            f"<b style='color:{UTB_WHITE};'>{_sd['label_valido']}</b> "
+            f"({_horas:.1f} h de antiguedad). No es la situacion actual del trafico."
+        )
+    else:
+        _respaldo = "No hay ninguna corrida reciente con datos validos para mostrar."
+
+    st.markdown(f"""
+    <div style="background:rgba(239,68,68,0.12);border-left:4px solid {COLOR_CONGESTIONADO};
+         padding:14px 18px;border-radius:8px;margin-bottom:16px;">
+        <div style="color:{COLOR_CONGESTIONADO};font-size:13px;font-weight:800;
+             letter-spacing:1px;margin-bottom:6px;">
+            &#9888; CAPTURA DE DATOS DETENIDA</div>
+        <div style="color:{UTB_GRAY};font-size:13px;line-height:1.6;">
+            La corrida <b style="color:{UTB_WHITE};">{_sd['label_fallido']}</b> devolvio
+            <b style="color:{COLOR_CONGESTIONADO};">0 de {_sd['nodos']} nodos validos</b>.<br/>
+            {_http_txt}Respuesta de la API:
+            <code style="background:{UTB_NAVY_LIGHT};color:{COLOR_LENTO};padding:2px 6px;
+             border-radius:4px;font-size:12px;">{_motivo_txt}</code><br/>
+            {_respaldo}
+        </div>
+    </div>""", unsafe_allow_html=True)
+
+# ============================================================
 # TABS
 # ============================================================
 tab_mapa, tab_datos, tab_proceso, tab_historia = st.tabs(
@@ -1007,7 +1124,13 @@ with tab_mapa:
             f"{snapshot_label}</code> · {len(df_snapshot)} nodos</div>",
             unsafe_allow_html=True,
         )
-        df_ok = df_snapshot[df_snapshot["ok"].astype(str).str.lower().isin(["true", "1"])].dropna(subset=["lat", "lon"]).copy()
+        df_ok = df_snapshot[_mascara_ok(df_snapshot)].dropna(subset=["lat", "lon"]).copy()
+
+        if df_ok.empty:
+            st.warning(
+                "Ningun nodo de esta corrida tiene lectura valida, "
+                "asi que el mapa no puede dibujar puntos."
+            )
 
         if "velocidad_ratio" in df_ok.columns:
             df_ok["color"] = df_ok["velocidad_ratio"].apply(color_por_ratio)

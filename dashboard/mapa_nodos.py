@@ -546,8 +546,12 @@ def escala_metrica(m: folium.Map, metrica: str, metrica_label: str):
     """Escala de color de las velocidades (con su leyenda), o None para el ratio."""
     if metrica == "ratio":
         return None
+    # Azul de claro (lento) a oscuro (rapido): rojo y verde quedan solo para el
+    # indice de fluidez. Con rojo-verde, una calle del centro despejada a
+    # 30 km/h salia roja y se leia como trancon. Parte de un azul medio para
+    # que los puntos lentos se vean sobre el mapa claro.
     escala = LinearColormap(
-        ["#ef4444", "#f59e0b", "#10b981"],
+        ["#93c5fd", "#3b82f6", "#1e3a8a"],
         vmin=VEL_MIN, vmax=VEL_MAX, caption=metrica_label,
     )
     escala.add_to(m)

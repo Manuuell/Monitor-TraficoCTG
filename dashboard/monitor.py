@@ -2773,12 +2773,14 @@ with tab_historia:
                             .agg(ratio_prom=("velocidad_ratio", "mean"), vel_prom=("currentSpeed", "mean"))
                             .reset_index().sort_values("ratio_prom").head(15)
                         )
+                        # Color fijo por nivel: una escala continua se ajustaba al
+                        # minimo y maximo del top 15 y pintaba verde un nodo moderado
+                        por_nodo2["color"] = por_nodo2["ratio_prom"].apply(lambda r: clasificar_ratio(r)[0])
                         fig_r2 = px.bar(por_nodo2, x="ratio_prom", y="nombre_nodo", orientation="h",
-                            color="ratio_prom",
-                            color_continuous_scale=[[0,"#EF4444"],[0.5,"#F59E0B"],[1,"#10B981"]],
+                            color="color", color_discrete_map="identity",
                             labels={"ratio_prom": "Ratio promedio", "nombre_nodo": ""},
                             title="Nodos mas congestionados")
-                        fig_r2.update_coloraxes(showscale=False)
+                        fig_r2.update_layout(showlegend=False)
                         fig_r2.update_layout(paper_bgcolor="#FFFFFF", plot_bgcolor="#FFFFFF",
                             font_color="#12307A", height=420,
                             xaxis=dict(range=[0,1.15], gridcolor="#E3EAF7"),

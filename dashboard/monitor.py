@@ -604,11 +604,14 @@ st.markdown(f"""
     [data-testid="stSidebarCollapseButton"] button {{ color: #ffffff !important; }}
 
     /* ── Footer editorial inspirado en la composicion de Innvita ── */
+    /* Azul de la pagina (misma familia que la barra lateral y el encabezado),
+       un poco mas oscuro a la derecha para que el texto pequeno se lea. */
     .dashboard-footer {{
         margin: 44px 0 4px;
         padding: 42px 44px 24px;
         border-radius: 40px;
-        background: #232326;
+        background: linear-gradient(120deg, #172f86 0%, #1f48b8 55%, #2a5bd0 100%);
+        box-shadow: 0 10px 30px rgba(31,72,184,.25);
         color: #ffffff;
         overflow: hidden;
     }}
@@ -625,7 +628,7 @@ st.markdown(f"""
     .footer-lead {{
         max-width: 650px;
         margin: 0 0 34px;
-        color: #a9a9af !important;
+        color: #dbe7ff !important;
         font-size: 19px;
         line-height: 1.45;
         letter-spacing: -.01em;
@@ -636,8 +639,8 @@ st.markdown(f"""
         grid-template-columns: 1.1fr 1.25fr 1.1fr;
         gap: 34px;
         padding: 30px 0;
-        border-top: 1px solid rgba(255,255,255,.10);
-        border-bottom: 1px solid rgba(255,255,255,.10);
+        border-top: 1px solid rgba(255,255,255,.18);
+        border-bottom: 1px solid rgba(255,255,255,.18);
     }}
     .footer-kicker {{
         margin-bottom: 12px;
@@ -648,7 +651,7 @@ st.markdown(f"""
     }}
     .footer-copy {{
         margin: 0;
-        color: #94949b !important;
+        color: #d6e2fb !important;
         font-size: 13px;
         line-height: 1.7;
     }}
@@ -658,7 +661,7 @@ st.markdown(f"""
         align-items: center;
         gap: 16px;
         padding-top: 20px;
-        color: #77777f;
+        color: #c9d8f7;
         font-size: 11px;
         letter-spacing: .02em;
     }}
@@ -689,7 +692,7 @@ st.markdown(f"""
         width: 24px;
         height: 24px;
         border-radius: 50%;
-        background: #111113;
+        background: {R_AZUL_OSC};
         color: #ffffff !important;
         font-size: 14px;
         line-height: 1;

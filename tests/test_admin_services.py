@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -157,6 +158,31 @@ class AdminServicesTests(unittest.TestCase):
         self.assertTrue(pd.isna(resumen["ultima"]))
         self.assertTrue(servicios.ejecuciones_por_hora(vacio).empty)
         self.assertTrue(servicios.errores_recientes(vacio).empty)
+
+    def test_estado_google_persistente_se_lee_sin_consulta_externa(self) -> None:
+        google = {"ok": True, "estado": "Activo", "detalle": "Disponible"}
+        sheets = {"ok": True, "partes": [{"parte": 1}], "errores": []}
+        instante = pd.Timestamp("2026-10-11 06:15:00").to_pydatetime()
+
+        with tempfile.TemporaryDirectory() as directorio:
+            ruta = Path(directorio) / "estado_google.json"
+            servicios.guardar_estado_google(google, sheets, ruta, instante)
+            resultado = servicios.cargar_estado_google(ruta)
+
+            self.assertEqual(resultado["actualizado"], "2026-10-11T06:15:00")
+            self.assertEqual(resultado["google"]["estado"], "Activo")
+            self.assertEqual(resultado["sheets"]["partes"][0]["parte"], 1)
+            self.assertEqual(ruta.stat().st_mode & 0o777, 0o600)
+
+    def test_estado_google_invalido_vuelve_a_pendiente(self) -> None:
+        with tempfile.TemporaryDirectory() as directorio:
+            ruta = Path(directorio) / "estado_google.json"
+            ruta.write_text("{incompleto", encoding="utf-8")
+
+            resultado = servicios.cargar_estado_google(ruta)
+
+            self.assertIsNone(resultado["google"]["ok"])
+            self.assertEqual(resultado["google"]["estado"], "Pendiente")
 
 
 if __name__ == "__main__":

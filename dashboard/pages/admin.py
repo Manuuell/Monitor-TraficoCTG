@@ -361,20 +361,17 @@ with st.spinner("Cargando monitor operativo..."):
     resumen = servicios.resumen_operativo_ejecuciones(ejecuciones)
     api_keys = servicios.estado_api_keys()
 
-# Los servicios externos se verifican bajo demanda y el resultado queda en la
-# sesion. No se confunde "aun no consultado" con un fallo real.
-google_consultado = "admin_google" in st.session_state
-google = st.session_state.get("admin_google", {
-    "ok": None,
-    "estado": "Sin verificar",
-    "detalle": "Pulsa «Verificar Google y Sheets» para consultar los servicios externos.",
-})
-sheets = st.session_state.get("admin_sheets", {
-    "ok": None,
-    "partes": [],
-    "errores": [],
-    "detalle": "Capacidad todavía no consultada.",
-})
+# Google se comprueba por cron tres veces al dia. El panel solo lee el ultimo
+# resultado persistido: no hace llamadas externas ni retrasa el ingreso.
+estado_google_guardado = servicios.cargar_estado_google()
+google = estado_google_guardado["google"]
+sheets = estado_google_guardado["sheets"]
+google_actualizado = estado_google_guardado.get("actualizado")
+try:
+    google_actualizado_dt = datetime.fromisoformat(google_actualizado)
+    google_revision = google_actualizado_dt.strftime("%d/%m %H:%M")
+except (TypeError, ValueError):
+    google_revision = "pendiente automática"
 sheet = servicios.capacidad_sheet(sheets) if sheets.get("ok") else {}
 
 proxima = servicios.proxima_ejecucion()
@@ -382,7 +379,7 @@ ultima = resumen["ultima"]
 
 m1, m2, m3, m4 = st.columns(4)
 with m1:
-    st.metric("Google", google["estado"], "bajo demanda", delta_color="off")
+    st.metric("Google", google["estado"], google_revision, delta_color="off")
 with m2:
     st.metric("Ejecuciones hoy", resumen["ejecuciones"], "28 programadas", delta_color="off")
 with m3:
@@ -410,7 +407,9 @@ with tab_resumen:
         st.markdown('<div class="section-title">Servicios conectados</div>', unsafe_allow_html=True)
         color_google = VERDE if google["ok"] is True else (ROJO if google["ok"] is False else AMBAR)
         estado_google = texto_html(google["estado"])
-        detalle_google = texto_html(google["detalle"])
+        detalle_google = texto_html(
+            f"{google['detalle']} Última verificación: {google_revision}."
+        )
         st.markdown(
             f"""
             <div class="status-card">
@@ -423,18 +422,6 @@ with tab_resumen:
             """,
             unsafe_allow_html=True,
         )
-        if st.button(
-            "Verificar Google y Sheets",
-            width="stretch",
-            key="admin_verificar_google",
-        ):
-            with st.spinner("Consultando Drive y la capacidad de Sheets..."):
-                servicios.verificar_google.clear()
-                servicios.capacidad_sheets.clear()
-                st.session_state["admin_google"] = servicios.verificar_google()
-                st.session_state["admin_sheets"] = servicios.capacidad_sheets()
-            st.rerun()
-        st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
         if sheets.get("ok"):
             for libro in sheets.get("partes", []):
                 porcentaje_sheet = min(float(libro["pct"]), 100)
@@ -465,10 +452,13 @@ with tab_resumen:
                 )
             if sheets.get("errores"):
                 st.warning("Algunas partes no pudieron consultarse: " + " · ".join(sheets["errores"]))
-        elif google_consultado:
+        elif google.get("ok") is False:
             st.error(f"No se pudo consultar la capacidad de Sheets: {sheets.get('detalle', 'Sin detalle')}")
         else:
-            st.info("La capacidad de Sheets se consulta solo cuando la necesitas para acelerar el ingreso.")
+            st.info(
+                "La verificación automática de Google se ejecuta a las "
+                "06:15, 14:15 y 22:15."
+            )
 
     with derecha:
         st.markdown('<div class="section-title">Accesos rápidos</div>', unsafe_allow_html=True)
@@ -508,6 +498,7 @@ with tab_resumen:
         diagnostico_json = json.dumps(
             {
                 "generado": datetime.now().isoformat(timespec="seconds"),
+                "google_actualizado": google_actualizado,
                 "google": google,
                 "sheets": [
                     {k: v for k, v in libro.items() if k != "sheet_id"}

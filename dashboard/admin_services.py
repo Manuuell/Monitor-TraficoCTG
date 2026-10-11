@@ -18,6 +18,14 @@ import google_upload  # noqa: E402
 import rotacion_llaves  # noqa: E402
 
 
+ESTADO_GOOGLE_FILE = Path(
+    os.environ.get(
+        "ADMIN_GOOGLE_STATUS_FILE",
+        str(PROJECT_ROOT / "data" / "estado_google.json"),
+    )
+)
+
+
 COLUMNAS_EJECUCION = [
     "timestamp", "vps_id", "total_nodos", "consultas_ok",
     "consultas_error", "estado", "error",
@@ -35,6 +43,81 @@ def ejecuciones_vacias() -> pd.DataFrame:
         "estado": pd.Series(dtype="string"),
         "error": pd.Series(dtype="object"),
     })
+
+
+def estado_google_pendiente() -> dict:
+    """Estructura estable antes de la primera comprobacion programada."""
+    return {
+        "version": 1,
+        "actualizado": None,
+        "google": {
+            "ok": None,
+            "estado": "Pendiente",
+            "detalle": "La primera verificación automática aún no se ha ejecutado.",
+        },
+        "sheets": {
+            "ok": None,
+            "partes": [],
+            "errores": [],
+            "detalle": "Capacidad todavía no consultada.",
+        },
+    }
+
+
+def cargar_estado_google(archivo: Path | None = None) -> dict:
+    """Lee el ultimo chequeo persistente sin conectarse a Google."""
+    ruta = Path(archivo or ESTADO_GOOGLE_FILE)
+    try:
+        with ruta.open(encoding="utf-8") as entrada:
+            estado = json.load(entrada)
+        if not isinstance(estado, dict):
+            return estado_google_pendiente()
+        base = estado_google_pendiente()
+        base["actualizado"] = estado.get("actualizado")
+        for clave in ("google", "sheets"):
+            if isinstance(estado.get(clave), dict):
+                base[clave].update(estado[clave])
+        return base
+    except (FileNotFoundError, json.JSONDecodeError, OSError, TypeError):
+        return estado_google_pendiente()
+
+
+def guardar_estado_google(
+    google: dict,
+    sheets: dict,
+    archivo: Path | None = None,
+    ahora: datetime | None = None,
+) -> dict:
+    """Guarda de forma atomica el chequeo con permisos exclusivos (0600)."""
+    ruta = Path(archivo or ESTADO_GOOGLE_FILE)
+    estado = {
+        "version": 1,
+        "actualizado": (ahora or datetime.now()).isoformat(timespec="seconds"),
+        "google": google,
+        "sheets": sheets,
+    }
+    ruta.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    temporal = ruta.with_name(f".{ruta.name}.{os.getpid()}.tmp")
+    descriptor = os.open(
+        temporal,
+        os.O_WRONLY | os.O_CREAT | os.O_TRUNC,
+        0o600,
+    )
+    try:
+        os.fchmod(descriptor, 0o600)
+        with os.fdopen(descriptor, "w", encoding="utf-8") as salida:
+            descriptor = -1
+            json.dump(estado, salida, ensure_ascii=False, indent=2, default=str)
+            salida.flush()
+            os.fsync(salida.fileno())
+        os.replace(temporal, ruta)
+        os.chmod(ruta, 0o600)
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+        if temporal.exists():
+            temporal.unlink()
+    return estado
 
 
 @st.cache_data(ttl=60, show_spinner=False)
@@ -452,6 +535,15 @@ def capacidad_sheets() -> dict:
         return {"ok": True, "partes": resultados, "errores": errores}
     except Exception as error:
         return {"ok": False, "detalle": str(error)[:160]}
+
+
+def actualizar_estado_google() -> dict:
+    """Fuerza un chequeo externo y publica el resultado para el panel."""
+    verificar_google.clear()
+    capacidad_sheets.clear()
+    google = verificar_google()
+    sheets = capacidad_sheets()
+    return guardar_estado_google(google, sheets)
 
 
 def capacidad_sheet(estado: dict | None = None) -> dict:

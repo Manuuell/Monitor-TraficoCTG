@@ -61,6 +61,7 @@ fi
 
 # 7. Dar permisos al script de ejecucion
 chmod +x deploy/run.sh
+chmod +x deploy/check_google.sh
 
 echo ""
 echo "============================================"

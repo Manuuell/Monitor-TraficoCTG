@@ -36,6 +36,7 @@ backups/
 # Puntero al libro de Sheets en uso (estado de runtime por VPS)
 data/sheet_activo.json
 data/estado_llaves.json
+data/estado_google.json
 
 # Checkpoints de Jupyter y configuracion local de Claude Code
 .ipynb_checkpoints/

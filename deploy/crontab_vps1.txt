@@ -24,3 +24,6 @@
 0 12 * * * /home/ubuntu/proyect_r/deploy/run.sh
 30 12 * * * /home/ubuntu/proyect_r/deploy/run.sh
 0 13 * * * /home/ubuntu/proyect_r/deploy/run.sh
+
+# ============ ESTADO DE GOOGLE (mañana, tarde y noche) ============
+15 6,14,22 * * * /home/ubuntu/proyect_r/deploy/check_google.sh >> /home/ubuntu/proyect_r/logs/google_status.log 2>&1

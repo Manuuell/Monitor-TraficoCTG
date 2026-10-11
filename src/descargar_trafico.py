@@ -342,7 +342,9 @@ def main() -> int:
         llave_id=rotacion_llaves.mask(llave_actual),
         llaves=rotacion_llaves.resumen(),
     )
-    return 0
+    # Si no salio ni una lectura, cron y quien mire el codigo de salida deben
+    # ver el fallo (los datos fallidos igual quedaron guardados arriba)
+    return 0 if ok_count > 0 or total == 0 else 1
 
 
 if __name__ == "__main__":

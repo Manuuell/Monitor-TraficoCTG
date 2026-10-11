@@ -1085,7 +1085,7 @@ with st.sidebar:
         archivo_actual = None
         st.warning("Sin archivos aun")
 
-    if st.button("Recargar datos", use_container_width=True):
+    if st.button("Recargar datos", width="stretch"):
         st.cache_data.clear()
         st.rerun()
 
@@ -1590,7 +1590,7 @@ with tab_datos:
                 xaxis=dict(range=[0, 1.15]),
                 showlegend=False,
             )
-            st.plotly_chart(fig_top, use_container_width=True)
+            st.plotly_chart(fig_top, theme=None, config=PLOTLY_CONFIG)
             leyenda_ratio("ratio")
 
         st.markdown("### Tabla completa")
@@ -1608,7 +1608,7 @@ with tab_datos:
         if zona_sel != "Todas" and "zona" in df_filt.columns:
             df_filt = df_filt[df_filt["zona"] == zona_sel]
 
-        st.dataframe(df_filt, use_container_width=True, hide_index=True)
+        st.dataframe(df_filt, width="stretch", hide_index=True)
         st.download_button(
             "Descargar CSV filtrado",
             df_filt.to_csv(index=False).encode("utf-8"),
@@ -1653,7 +1653,7 @@ with tab_historia:
             )
         with hf4:
             st.markdown("<div style='height:28px;'></div>", unsafe_allow_html=True)
-            if st.button("Recargar datos", use_container_width=True):
+            if st.button("Recargar datos", width="stretch"):
                 st.cache_data.clear()
                 st.rerun()
 
@@ -1740,7 +1740,7 @@ with tab_historia:
                 ))
                 fig_line.update_layout(xaxis_title="Fecha/Hora", yaxis_title="km/h")
                 fig_line = plotly_base(fig_line, height=320)
-                st.plotly_chart(fig_line, use_container_width=True)
+                st.plotly_chart(fig_line, theme=None, config=PLOTLY_CONFIG)
                 leyenda_ratio("velocidad")
 
                 # --- Grafica 2: Top nodos mas congestionados en el periodo ---
@@ -1767,7 +1767,7 @@ with tab_historia:
                 fig_nodos.update_traces(textposition="outside")
                 fig_nodos = plotly_base(fig_nodos, height=430)
                 fig_nodos.update_layout(xaxis=dict(range=[0, 1.15]), showlegend=False)
-                st.plotly_chart(fig_nodos, use_container_width=True)
+                st.plotly_chart(fig_nodos, theme=None, config=PLOTLY_CONFIG)
                 leyenda_ratio("ratio")
 
                 # --- Grafica 3: Heatmap hora x dia de semana ---
@@ -1818,7 +1818,7 @@ with tab_historia:
                             tickfont=dict(color=R_TENUE), automargin=True,
                         ),
                     )
-                    st.plotly_chart(fig_heat, use_container_width=True)
+                    st.plotly_chart(fig_heat, theme=None, config=PLOTLY_CONFIG)
 
                 # ------------------------------------------------
                 # Grafica 4: Hora pico vs hora valle
@@ -1899,7 +1899,7 @@ with tab_historia:
                         ),
                     )
                     fig_franjas = plotly_base(fig_franjas, height=370)
-                    st.plotly_chart(fig_franjas, use_container_width=True)
+                    st.plotly_chart(fig_franjas, theme=None, config=PLOTLY_CONFIG)
                     leyenda_ratio("velocidad")
 
                     # Mini tabla resumen
@@ -1911,7 +1911,7 @@ with tab_historia:
                         "franja": "Franja", "vel_actual": "Vel. actual",
                         "vel_libre": "Vel. libre", "ratio": "Ratio", "n_muestras": "Muestras",
                     })
-                    st.dataframe(df_f_disp, use_container_width=True, hide_index=True)
+                    st.dataframe(df_f_disp, width="stretch", hide_index=True)
                     st.markdown(
                         f"<div style='background:{SUPERFICIE_SUAVE};border:1px solid {UTB_BORDER};border-left:3px solid {R_MENTA};"
                         f"border-radius:6px;padding:10px 14px;margin-top:6px;font-size:12px;"
@@ -1986,7 +1986,7 @@ with tab_historia:
                             title=dict(text=nodo_sel, font=dict(color=UTB_WHITE, size=13)),
                         )
                         fig_nodo = plotly_base(fig_nodo, height=300)
-                        st.plotly_chart(fig_nodo, use_container_width=True)
+                        st.plotly_chart(fig_nodo, theme=None, config=PLOTLY_CONFIG)
                         leyenda_ratio("velocidad")
 
                         # Ratio promedio por hora del dia (barras)
@@ -2015,7 +2015,7 @@ with tab_historia:
                             yaxis=dict(range=[0, 1.2]),
                         )
                         fig_hora_n = plotly_base(fig_hora_n, height=280)
-                        st.plotly_chart(fig_hora_n, use_container_width=True)
+                        st.plotly_chart(fig_hora_n, theme=None, config=PLOTLY_CONFIG)
                         leyenda_ratio("ratio")
 
                         # Peor hora / Mejor hora
@@ -2052,7 +2052,7 @@ with tab_historia:
                 st.markdown("### Exportar reporte")
                 st.caption("Descarga un reporte HTML con todos los graficos — abre en tu navegador y usa Ctrl+P para exportar a PDF")
 
-                if st.button("📥 Generar reporte HTML", use_container_width=False):
+                if st.button("📥 Generar reporte HTML", width="content"):
                     with st.spinner("Generando reporte..."):
                         # Construir HTML con plotly embebido
                         periodo_label = f"{fecha_ini.strftime('%d/%m/%Y')} — {fecha_fin.strftime('%d/%m/%Y')}"
@@ -2166,7 +2166,7 @@ Fuente: TomTom Traffic Flow · VPS 1 + VPS 2</p>
                         data=html_final.encode("utf-8"),
                         file_name=f"reporte_trafico_{fecha_ini.strftime('%Y%m%d')}_{fecha_fin.strftime('%Y%m%d')}.html",
                         mime="text/html",
-                        use_container_width=False,
+                        width="content",
                     )
                     st.success("Reporte generado. Haz clic en el boton de descarga.")
 

@@ -187,22 +187,26 @@ def main() -> int:
         resp = consultar_flow(nodo["lat"], nodo["lon"], llave_actual)
 
         # Failover: si TomTom rechaza la llave (sin creditos, bloqueada o
-        # limite de llamadas), marcarla y rotar.
+        # limite de llamadas), marcarla y probar la siguiente con el MISMO
+        # nodo hasta que una responda o no quede ninguna con saldo. Cada llave
+        # se prueba a lo sumo una vez por nodo, asi el bucle siempre termina.
+        probadas = {llave_actual}
         motivo = rotacion_llaves.motivo_descarte(resp)
-        if motivo:
+        while motivo:
             _alerta = "ALERTA " if motivo == rotacion_llaves.BLOQUEADA else ""
             print(f"  [Llaves] {_alerta}{rotacion_llaves.mask(llave_actual)} "
                   f"descartada: {motivo} (HTTP {resp['status']}: "
                   f"{(resp['error'] or '')[:120]}); rotando...")
             rotacion_llaves.marcar_agotada(llave_actual, resp["error"], motivo)
             nueva = rotacion_llaves.siguiente_llave()
-            # Solo reintentar si hay otra llave con saldo; si todas estan
-            # agotadas, repetir la llamada solo duplica el 403.
-            if nueva != llave_actual and rotacion_llaves.disponible(nueva):
+            # Sin otra llave con saldo, repetir la llamada solo duplica el 403
+            if nueva in probadas or not rotacion_llaves.disponible(nueva):
                 llave_actual = nueva
-                resp = consultar_flow(nodo["lat"], nodo["lon"], llave_actual)
-            else:
-                llave_actual = nueva
+                break
+            llave_actual = nueva
+            probadas.add(nueva)
+            resp = consultar_flow(nodo["lat"], nodo["lon"], llave_actual)
+            motivo = rotacion_llaves.motivo_descarte(resp)
 
         metricas = extraer_metricas(resp)
 

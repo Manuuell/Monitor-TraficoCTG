@@ -25,6 +25,17 @@ OAUTH_TOKEN_FILE = CREDENCIALES_DIR / "token.json"
 # La clave se lee desde variable de entorno TOMTOM_API_KEY
 API_KEY = os.environ.get("TOMTOM_API_KEY", "")
 
+# Rotacion automatica de llaves: lista separada por comas de todas las llaves
+# disponibles. Cada llave pertenece a una cuenta con su propia cuota mensual.
+# El ETL reparte las llamadas entre ellas (round-robin) y, cuando una devuelve
+# 403 InsufficientFunds, salta a la siguiente sin perder la corrida.
+# Si TOMTOM_API_KEYS esta vacio, se usa TOMTOM_API_KEY como unica llave.
+API_KEYS = [
+    k.strip() for k in os.environ.get("TOMTOM_API_KEYS", "").split(",") if k.strip()
+]
+if not API_KEYS and API_KEY:
+    API_KEYS = [API_KEY]
+
 # Identificador del VPS (1 o 2) - para distinguir en los logs
 VPS_ID = os.environ.get("VPS_ID", "local")
 

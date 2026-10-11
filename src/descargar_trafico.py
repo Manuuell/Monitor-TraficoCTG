@@ -82,6 +82,29 @@ def cargar_nodos(path: Path) -> pd.DataFrame:
     return df.reset_index(drop=True)
 
 
+def leer_conexiones(path: Path) -> list:
+    """
+    Pares de nodos vecinos (a, b), con a < b, de la hoja REDES del Excel.
+    REDES es una matriz id_nodo x id_nodo con 1 donde dos nodos son vecinos.
+    Se toma la union de ambos sentidos: la matriz no esta llena de forma
+    simetrica y no representa el sentido vial (ver capturar_red.py).
+    """
+    red = pd.read_excel(path, sheet_name="REDES")
+    red = red.set_index(red.columns[0])
+    red = red[red.index.notna()]
+    red.index = red.index.astype(str)
+    red.columns = red.columns.astype(str)
+    ids = [c for c in red.columns if c in red.index]   # descarta la columna SUM
+    marcas = red.loc[ids, ids].apply(pd.to_numeric, errors="coerce").fillna(0) > 0
+
+    pares = set()
+    for a in ids:
+        for b in ids:
+            if a != b and (marcas.at[a, b] or marcas.at[b, a]):
+                pares.add(tuple(sorted((a, b))))
+    return sorted(pares)
+
+
 def consultar_flow(lat: float, lon: float, api_key: str) -> dict:
     """Consulta el endpoint Traffic Flow de TomTom para un punto."""
     url = f"{config.URL_FLOWBASE}/{config.STYLE}/{config.ZOOM}/json"

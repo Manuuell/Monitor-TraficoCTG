@@ -576,7 +576,16 @@ st.markdown(f"""
     }}
     #MainMenu {{visibility: hidden;}}
     footer {{visibility: hidden;}}
-    [data-testid="stHeader"] {{ background: transparent; height: 0; }}
+    /* La barra superior de Streamlit mide 60 px (min-height fijo) y va encima
+       del contenido: transparente y sin capturar clics, salvo sus botones.
+       No se le quita el alto porque ahi vive el boton que reabre la barra
+       lateral: con height 0 ese boton quedaba en 0x0 y no se podia volver
+       a abrir. Antes se tragaba los clics de esa franja al hacer scroll. */
+    [data-testid="stHeader"] {{ background: transparent !important; }}
+    /* !important: Streamlit le pone pointer-events:auto a la barra de
+       herramientas, que ocupa todo el ancho */
+    [data-testid="stHeader"], [data-testid="stHeader"] * {{ pointer-events: none !important; }}
+    [data-testid="stHeader"] button, [data-testid="stHeader"] a {{ pointer-events: auto !important; }}
     [data-testid="stToolbar"], [data-testid="stDecoration"],
     [data-testid="stSidebarNav"] {{ display: none !important; }}
     h2, h3 {{ scroll-margin-top: 1rem; }}

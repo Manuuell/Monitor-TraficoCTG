@@ -16,6 +16,7 @@ import requests
 
 import config
 import google_upload
+import rotacion_llaves
 
 
 def determinar_turno(dt: datetime) -> str:
@@ -121,7 +122,10 @@ def extraer_metricas(resp: dict) -> dict:
     }
 
 
-def registrar_log(inicio: datetime, total: int, ok: int, error: str = None) -> None:
+def registrar_log(
+    inicio: datetime, total: int, ok: int, error: str = None,
+    llave_id: str = None, llaves: list = None,
+) -> None:
     """Agrega una entrada al log JSONL de ejecuciones."""
     entry = {
         "timestamp": inicio.strftime("%Y-%m-%d %H:%M:%S"),
@@ -132,6 +136,10 @@ def registrar_log(inicio: datetime, total: int, ok: int, error: str = None) -> N
         "estado": "OK" if error is None else "ERROR",
         "error": error,
     }
+    if llave_id:
+        entry["llave_id"] = llave_id
+    if llaves:
+        entry["llaves"] = llaves
     config.LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
     with open(config.LOG_FILE, "a", encoding="utf-8") as f:
         f.write(json.dumps(entry, ensure_ascii=False) + "\n")
@@ -144,11 +152,17 @@ def main() -> int:
     print(f"Hora: {inicio.strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"{'='*60}")
 
-    if not config.API_KEY:
-        msg = "TOMTOM_API_KEY no esta configurada"
+    if not config.API_KEYS:
+        msg = "TOMTOM_API_KEY / TOMTOM_API_KEYS no esta configurada"
         print(f"ERROR: {msg}")
         registrar_log(inicio, 0, 0, msg)
         return 1
+
+    print(f"Llaves disponibles: {len(config.API_KEYS)} "
+          f"({', '.join(rotacion_llaves.mask(k) for k in config.API_KEYS)})")
+    if config.API_KEYS_RESERVA:
+        print(f"Llaves de reserva: {len(config.API_KEYS_RESERVA)} "
+              f"({', '.join(rotacion_llaves.mask(k) for k in config.API_KEYS_RESERVA)})")
 
     config.RESULTADOS_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -164,9 +178,32 @@ def main() -> int:
 
     resultados = []
     ok_count = 0
+    consumo_por_llave = {}
+
+    llave_actual = rotacion_llaves.siguiente_llave()
+    print(f"Llave inicial: {rotacion_llaves.mask(llave_actual)}")
 
     for idx, nodo in nodos.iterrows():
-        resp = consultar_flow(nodo["lat"], nodo["lon"], config.API_KEY)
+        resp = consultar_flow(nodo["lat"], nodo["lon"], llave_actual)
+
+        # Failover: si TomTom rechaza la llave (sin creditos, bloqueada o
+        # limite de llamadas), marcarla y rotar.
+        motivo = rotacion_llaves.motivo_descarte(resp)
+        if motivo:
+            _alerta = "ALERTA " if motivo == rotacion_llaves.BLOQUEADA else ""
+            print(f"  [Llaves] {_alerta}{rotacion_llaves.mask(llave_actual)} "
+                  f"descartada: {motivo} (HTTP {resp['status']}: "
+                  f"{(resp['error'] or '')[:120]}); rotando...")
+            rotacion_llaves.marcar_agotada(llave_actual, resp["error"], motivo)
+            nueva = rotacion_llaves.siguiente_llave()
+            # Solo reintentar si hay otra llave con saldo; si todas estan
+            # agotadas, repetir la llamada solo duplica el 403.
+            if nueva != llave_actual and rotacion_llaves.disponible(nueva):
+                llave_actual = nueva
+                resp = consultar_flow(nodo["lat"], nodo["lon"], llave_actual)
+            else:
+                llave_actual = nueva
+
         metricas = extraer_metricas(resp)
 
         fila = {
@@ -194,6 +231,7 @@ def main() -> int:
             **metricas,
             "consultation_time": inicio.strftime("%Y-%m-%d %H:%M:%S"),
             "vps_id": config.VPS_ID,
+            "llave_id": rotacion_llaves.mask(llave_actual),
             "error_msg": resp["error"],
         }
 
@@ -224,6 +262,7 @@ def main() -> int:
         resultados.append(fila)
         if resp["ok"]:
             ok_count += 1
+            consumo_por_llave[llave_actual] = consumo_por_llave.get(llave_actual, 0) + 1
 
         # Pequeno respiro entre llamadas para no saturar
         time.sleep(0.05)
@@ -281,7 +320,20 @@ def main() -> int:
 
     print(f"{'='*60}\n")
 
-    registrar_log(inicio, total, ok_count, None if ok_count > 0 else "Todas las consultas fallaron")
+    # Registrar consumo de la corrida y el estado de las llaves
+    rotacion_llaves.registrar_consumo(consumo_por_llave)
+    for r in rotacion_llaves.resumen():
+        _flag = f" [{(r['motivo'] or 'agotada').upper()}]" if r["agotada"] else ""
+        if r["tipo"] == "reserva":
+            _flag += " (reserva)"
+        print(f"  [Llaves] {r['llave_id']}: {r['consumo']:,} / {r['cuota']:,}{_flag}")
+
+    registrar_log(
+        inicio, total, ok_count,
+        None if ok_count > 0 else "Todas las consultas fallaron",
+        llave_id=rotacion_llaves.mask(llave_actual),
+        llaves=rotacion_llaves.resumen(),
+    )
     return 0
 
 

@@ -118,8 +118,6 @@ st.markdown(
         min-height:50px; background:#f7f9fc !important; border-radius:12px !important;
     }}
     .st-key-admin_login_card .stButton button {{ width:100%; min-height:50px; margin-top:4px; }}
-    .login-nota {{ margin-top:16px; padding:12px 14px; border-radius:14px; background:#f6f8fc;
-        color:{TENUE}; font-size:12px; line-height:1.5; }}
     .login-volver {{ display:inline-block; margin-top:18px; color:{AZUL} !important; font-size:13px;
         font-weight:700; text-decoration:none !important; }}
     .login-volver:hover {{ text-decoration:underline !important; }}
@@ -229,9 +227,9 @@ def proteger_panel() -> None:
                 <p class="login-copy">Consulta conexiones, cuotas, servidores y estado operativo
                     desde un espacio reservado para administradores.</p>
                 <ul class="login-lista">
-                    <li><span>✓</span>Conexión con Google y capacidad de los libros de Sheets</li>
-                    <li><span>✓</span>Cuota diaria y llaves TomTom de cada VPS</li>
-                    <li><span>✓</span>Ejecuciones, errores y diagnóstico del sistema</li>
+                    <li><span>✓</span>Verifica que la información de tráfico se guarde sin interrupciones</li>
+                    <li><span>✓</span>Consulta cuánto del servicio de datos se ha usado este mes</li>
+                    <li><span>✓</span>Detecta a tiempo cualquier falla en la recolección de datos</li>
                 </ul>
                 <div class="login-pie">Universidad Tecnológica de Bolívar · Monitoreo de tráfico urbano</div>
             </div>
@@ -265,8 +263,6 @@ def proteger_panel() -> None:
                     st.rerun()
                 st.error("Contraseña incorrecta.")
             st.markdown(
-                '<div class="login-nota">Por seguridad, la sesión termina al recargar '
-                'o cerrar la pestaña.</div>'
                 '<a class="login-volver" href="/" target="_self">← Volver al dashboard</a>',
                 unsafe_allow_html=True,
             )

@@ -1864,17 +1864,29 @@ with tab_historia:
 
                 if filas_f:
                     df_f = pd.DataFrame(filas_f)
+                    etiquetas_franja = {
+                        "Madrugada (00–05)": "00–05",
+                        "Mañana temprano (06–07)": "06–07",
+                        "Hora pico AM (08–09)": "08–09",
+                        "Media mañana (10–11)": "10–11",
+                        "Hora pico medio (12–13)": "12–13",
+                        "Tarde (14–15)": "14–15",
+                        "Pre-pico PM (16)": "16:00",
+                        "Hora pico PM (17–18)": "17–18",
+                        "Noche (19–23)": "19–23",
+                    }
+                    x_franjas = df_f["franja"].map(etiquetas_franja).fillna(df_f["franja"])
                     fig_franjas = go.Figure()
                     fig_franjas.add_trace(go.Bar(
                         name="Velocidad libre",
-                        x=df_f["franja"],
+                        x=x_franjas,
                         y=df_f["vel_libre"],
                         marker_color=SERIE_LIBRE,
                         opacity=0.55,
                     ))
                     fig_franjas.add_trace(go.Bar(
                         name="Velocidad actual",
-                        x=df_f["franja"],
+                        x=x_franjas,
                         y=df_f["vel_actual"],
                         marker_color=[
                             COLOR_FLUIDO if r > 0.75 else (COLOR_LENTO if r > 0.5 else COLOR_CONGESTIONADO)
@@ -1884,7 +1896,7 @@ with tab_historia:
                     # Linea de ratio superpuesta (eje Y secundario)
                     fig_franjas.add_trace(go.Scatter(
                         name="Ratio (eje →)",
-                        x=df_f["franja"],
+                        x=x_franjas,
                         y=df_f["ratio"],
                         mode="lines+markers",
                         yaxis="y2",
@@ -1893,8 +1905,8 @@ with tab_historia:
                     ))
                     fig_franjas.update_layout(
                         barmode="group",
-                        xaxis_title="",
-                        yaxis=dict(title="km/h", gridcolor="rgba(138,154,184,0.15)"),
+                        xaxis=dict(title="", tickangle=-35, tickfont=dict(size=9)),
+                        yaxis=dict(title="km/h", gridcolor=REJILLA),
                         yaxis2=dict(
                             title=dict(text="Ratio (0–1)", font=dict(color=TEXTO_MENTA)),
                             overlaying="y",

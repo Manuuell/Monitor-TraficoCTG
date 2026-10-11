@@ -259,3 +259,52 @@ def rango_fechas() -> tuple:
             f'SELECT MIN("consultation_time"), MAX("consultation_time") FROM {TABLA};'
         )).fetchone()
     return row[0], row[1]
+
+
+# ============================================================
+# ESTADO DE LAS LLAVES TOMTOM DE CADA VPS
+# ============================================================
+# Cada VPS solo conoce las llaves de su propio .env y su estado_llaves.json.
+# Para que el panel administrativo muestre las de todos, cada ETL publica aqui
+# su resumen al final de la corrida. Solo IDs enmascarados (rotacion_llaves.
+# mask), nunca la llave completa.
+TABLA_LLAVES = "estado_llaves"
+
+
+def guardar_estado_llaves(vps_id: str, llaves: list) -> int:
+    """
+    Reemplaza las filas de vps_id con su resumen actual de llaves
+    (rotacion_llaves.resumen()). Crea la tabla si no existe.
+    """
+    engine = get_engine()
+    with engine.begin() as conn:
+        conn.execute(text(
+            f"CREATE TABLE IF NOT EXISTS {TABLA_LLAVES} ("
+            "vps_id TEXT NOT NULL, llave_id TEXT NOT NULL, orden INTEGER, tipo TEXT, "
+            "consumo INTEGER, cuota INTEGER, agotada BOOLEAN, motivo TEXT, "
+            "ultima_vez TEXT, agotada_desde TEXT, actualizado TIMESTAMP DEFAULT now(), "
+            "PRIMARY KEY (vps_id, llave_id));"
+        ))
+        conn.execute(text(f"DELETE FROM {TABLA_LLAVES} WHERE vps_id = :vps;"), {"vps": str(vps_id)})
+        for orden, llave in enumerate(llaves, start=1):
+            conn.execute(text(
+                f"INSERT INTO {TABLA_LLAVES} (vps_id, llave_id, orden, tipo, consumo, cuota, "
+                "agotada, motivo, ultima_vez, agotada_desde) VALUES (:vps, :llave, :orden, "
+                ":tipo, :consumo, :cuota, :agotada, :motivo, :ultima, :desde);"
+            ), {
+                "vps": str(vps_id), "llave": llave["llave_id"], "orden": orden,
+                "tipo": llave.get("tipo"), "consumo": int(llave.get("consumo") or 0),
+                "cuota": int(llave.get("cuota") or 0), "agotada": bool(llave.get("agotada")),
+                "motivo": llave.get("motivo"), "ultima": llave.get("ultima_vez"),
+                "desde": llave.get("agotada_desde"),
+            })
+    return len(llaves)
+
+
+def leer_estado_llaves() -> pd.DataFrame:
+    """Estado publicado por cada VPS (ver guardar_estado_llaves), vacio si no hay tabla."""
+    with get_engine().connect() as conn:
+        existe = conn.execute(text("SELECT to_regclass(:t);"), {"t": TABLA_LLAVES}).scalar()
+        if existe is None:
+            return pd.DataFrame()
+        return pd.read_sql(text(f"SELECT * FROM {TABLA_LLAVES} ORDER BY vps_id, orden;"), conn)

@@ -184,6 +184,66 @@ def leer_rango(fecha_ini: date, fecha_fin: date) -> pd.DataFrame:
     return _postprocesar_lectura(df)
 
 
+def promedios_por_nodo(
+    fecha_ini: date = None, fecha_fin: date = None,
+    hora_ini: int = 0, hora_fin: int = 23, mes: int = None,
+    dia_semana: int = None, quincena: bool = False, ids: list = None,
+) -> pd.DataFrame:
+    """
+    Promedio por nodo de las lecturas validas que cumplen los filtros del
+    mapa. Agrega en PostgreSQL y devuelve una fila por nodo (113), en vez de
+    traer cientos de miles de mediciones al dashboard.
+
+        fecha_ini, fecha_fin  dias inclusive, o None para no acotar
+        hora_ini, hora_fin  rango de horas inclusive (05 incluye 05:30)
+        mes                 1-12, o None para todos
+        dia_semana          1=Lunes ... 7=Domingo (ISODOW), o None
+        quincena            solo el dia 15 y el ultimo dia de cada mes
+        ids                 lista de id_nodo, o None para todos
+
+    Columnas: id_nodo, vel_actual, vel_libre, ratio, n.
+
+    A diferencia de leer_rango, un error de conexion se propaga: un resultado
+    vacio es normal (un mes sin datos) y el dashboard solo debe caer a Sheets
+    cuando la BD no responde.
+    """
+    ts = '"consultation_time"'
+    condiciones = [
+        "ok", f"{ts} IS NOT NULL",
+        f"EXTRACT(HOUR FROM {ts}) BETWEEN :h0 AND :h1",
+    ]
+    params = {"h0": hora_ini, "h1": hora_fin}
+    # Comparar el timestamp directo (no su fecha) usa idx_mediciones_ct
+    if fecha_ini is not None:
+        condiciones.append(f"{ts} >= :ini")
+        params["ini"] = fecha_ini
+    if fecha_fin is not None:
+        condiciones.append(f"{ts} < :fin")
+        params["fin"] = fecha_fin + timedelta(days=1)
+    if mes is not None:
+        condiciones.append(f"EXTRACT(MONTH FROM {ts}) = :mes")
+        params["mes"] = mes
+    if dia_semana is not None:
+        condiciones.append(f"EXTRACT(ISODOW FROM {ts}) = :dow")
+        params["dow"] = dia_semana
+    if quincena:
+        condiciones.append(
+            f"(EXTRACT(DAY FROM {ts}) = 15 OR {ts}::date = "
+            f"(date_trunc('month', {ts}) + interval '1 month - 1 day')::date)"
+        )
+    if ids:
+        condiciones.append("id_nodo = ANY(:ids)")
+        params["ids"] = list(ids)
+
+    query = text(
+        f'SELECT id_nodo, AVG("currentSpeed") AS vel_actual, '
+        f'AVG("freeFlowSpeed") AS vel_libre, AVG(velocidad_ratio) AS ratio, '
+        f'COUNT(*) AS n FROM {TABLA} '
+        f'WHERE {" AND ".join(condiciones)} GROUP BY id_nodo;'
+    )
+    return pd.read_sql(query, get_engine(), params=params)
+
+
 def contar_filas() -> int:
     """Cuenta el total de filas en la tabla (para verificacion de migracion)."""
     engine = get_engine()

@@ -1232,11 +1232,6 @@ def render_analisis_temporal():
         serie = analisis_temporal.serie_por_ejecucion(filtrado, columna)
 
     with col_graficos:
-        st.caption(
-            f"Fuente: {fuente or fuente_rango} · Periodo: "
-            f"{fecha_ini.strftime('%d/%m/%Y')}–{fecha_fin.strftime('%d/%m/%Y')} · "
-            f"Solo mediciones válidas"
-        )
         if serie.empty:
             st.info("No hay mediciones válidas con la combinación de filtros seleccionada.")
             return

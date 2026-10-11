@@ -378,17 +378,26 @@ with tab_resumen:
     with derecha:
         st.markdown('<div class="section-title">Accesos rápidos</div>', unsafe_allow_html=True)
         drive_url = f"https://drive.google.com/drive/folders/{config.DRIVE_FOLDER_ID}"
-        sheet_id = sheet.get("sheet_id", config.SHEET_ID)
-        sheets_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}"
+        # Un acceso por libro del historico (Parte 1, Parte 2, ...); si Drive
+        # no responde, al menos el libro activo
+        libros = [
+            (libro["parte"], libro["sheet_id"], libro.get("activa"))
+            for libro in sheets.get("partes", []) if libro.get("sheet_id")
+        ] or [(None, sheet.get("sheet_id", config.SHEET_ID), True)]
+        enlaces_sheets = "".join(
+            f'<a class="quick-link" href="https://docs.google.com/spreadsheets/d/{sheet_id}" target="_blank">'
+            f'<span class="quick-icon">📊</span><span><div class="quick-title">Google Sheets'
+            f'{f" · Parte {parte}" if parte else ""}</div><div class="quick-copy">'
+            f'{"Libro activo de mediciones" if activa else "Libro histórico (solo lectura)"}</div></span></a>'
+            for parte, sheet_id, activa in libros
+        )
         st.markdown(
             f"""
             <div class="quick-grid">
                 <a class="quick-link" href="{drive_url}" target="_blank">
                     <span class="quick-icon">📁</span><span><div class="quick-title">Google Drive</div><div class="quick-copy">Archivos CSV y respaldos</div></span>
                 </a>
-                <a class="quick-link" href="{sheets_url}" target="_blank">
-                    <span class="quick-icon">📊</span><span><div class="quick-title">Google Sheets</div><div class="quick-copy">Libro activo de mediciones</div></span>
-                </a>
+                {enlaces_sheets}
             </div>
             """,
             unsafe_allow_html=True,

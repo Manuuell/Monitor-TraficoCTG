@@ -1263,7 +1263,9 @@ def render_analisis_nodo():
             UMBRAL_MODERADO,
             UMBRAL_LENTO,
         )
-        ticks_hora = list(range(0, 24, 2)) + [23]
+        # Siete marcas caben incluso cuando los graficos quedan en dos columnas
+        # estrechas; los datos siguen conservando las 24 posiciones horarias.
+        ticks_hora = list(range(0, 24, 4)) + [23]
 
         fila_1a, fila_1b = st.columns(2, gap="medium")
         with fila_1a, st.container(border=True):

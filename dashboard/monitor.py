@@ -2475,7 +2475,12 @@ with tab_historia:
                         z=pivot.values,
                         x=x_labels,
                         y=y_labels,
-                        colorscale=[[0, COLOR_CONGESTIONADO], [0.5, COLOR_LENTO], [1, COLOR_FLUIDO]],
+                        # Cortes en los umbrales oficiales, igual que el mapa de calor
+                        # del analisis temporal (antes el naranja caia en 0.5)
+                        colorscale=[
+                            [0.0, COLOR_CONGESTIONADO], [0.60, COLOR_LENTO], [0.75, COLOR_MODERADO],
+                            [0.90, COLOR_FLUIDO], [1.0, "#047857"],
+                        ],
                         zmin=0, zmax=1,
                         colorbar=dict(
                             title=dict(text="Ratio", font=dict(color=R_AZUL_OSC)),

@@ -14,11 +14,14 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
+from streamlit_folium import st_folium
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BASE_DIR / "src"))
 import config        # noqa: E402
 import google_upload  # noqa: E402
+import mapa_nodos     # noqa: E402
+import red_nodos      # noqa: E402
 
 # ============================================================
 # CONFIGURACION DE PAGINA
@@ -835,6 +838,12 @@ def rango_fechas_historico() -> tuple:
     return fechas.dt.date.min(), fechas.dt.date.max(), "Google Sheets"
 
 
+def fechas_disponibles():
+    """(primera, ultima) fecha con datos para el filtro de rango, o None."""
+    fecha_min, fecha_max, _ = rango_fechas_historico()
+    return (fecha_min, fecha_max) if fecha_min is not None else None
+
+
 @st.cache_data(ttl=300)
 def cargar_historico(fecha_ini, fecha_fin) -> tuple:
     """
@@ -947,28 +956,79 @@ def leyenda_ratio(modo: str = "ratio"):
 
 
 @st.cache_data(ttl=3600)
-def cargar_geometria() -> dict:
-    """Carga la geometria de las calles (capturada con capturar_geometria.py)."""
-    path = BASE_DIR / "data" / "nodos_geometria.json"
-    if not path.exists():
-        return {}
+def cargar_catalogo() -> pd.DataFrame:
+    """
+    Datos fijos de cada nodo (nodos.xlsx) para el mapa y su ventana emergente.
+    El barrio y el punto de referencia salen del catalogo y no de las
+    mediciones: el ETL no guarda la columna 'Barrio/Lugar' del Excel.
+    """
     try:
-        with open(path, encoding="utf-8") as f:
-            return json.load(f)
+        import descargar_trafico  # import diferido: solo se usa cargar_nodos
+        nodos = descargar_trafico.cargar_nodos(config.NODOS_PATH)
+    except Exception as e:
+        print(f"  [Dashboard] No se pudo leer el catalogo de nodos: {e}")
+        return pd.DataFrame()
+    return pd.DataFrame({
+        "id_nodo": nodos["id_nodo"].astype(str),
+        "nombre_nodo": nodos["nombre_nodo"],
+        "lat": nodos["lat"],
+        "lon": nodos["lon"],
+        # 'Barrio/Lugar' queda como 'barriolugar' al normalizar las columnas
+        "barrio": nodos.get("barriolugar", nodos["barrios_que_colinda"]),
+        "punto_referencia": nodos.get("punto_referencia"),
+    })
+
+
+@st.cache_data(ttl=3600)
+def cargar_red() -> dict:
+    """
+    Conexiones de la red de nodos: data/red_nodos.json (capturar_red.py) o,
+    si falta, la hoja REDES en linea recta.
+    """
+    path = BASE_DIR / "data" / "red_nodos.json"
+    pares = []
+    if not path.exists():
+        try:
+            import descargar_trafico  # import diferido
+            pares = descargar_trafico.leer_conexiones(config.NODOS_PATH)
+        except Exception as e:
+            print(f"  [Dashboard] No se pudo leer la hoja REDES: {e}")
+    return red_nodos.cargar_red(path, cargar_catalogo(), pares)
+
+
+@st.cache_data(ttl=3600)
+def cargar_corredores() -> pd.DataFrame:
+    """Rutas con nombre de la hoja CORREDORES de nodos.xlsx, que llena el equipo."""
+    columnas = ["corredor", "nodo_inicio", "nodo_fin"]
+    try:
+        df = pd.read_excel(config.NODOS_PATH, sheet_name="CORREDORES", dtype=str)
     except Exception:
-        return {}
+        return pd.DataFrame(columns=columnas)
+    if not set(columnas) <= set(df.columns):
+        return pd.DataFrame(columns=columnas)
+    return df[columnas].dropna().apply(lambda col: col.str.strip())
 
 
-def color_por_ratio(ratio):
-    if pd.isna(ratio):
-        return [107, 114, 128, 160]   # gris — sin dato
-    if ratio > UMBRAL_FLUIDO:
-        return [34, 197, 94, 220]     # verde — Fluido
-    if ratio > UMBRAL_MODERADO:
-        return [163, 230, 53, 220]    # lima — Moderado
-    if ratio > UMBRAL_LENTO:
-        return [245, 158, 11, 220]    # naranja — Lento
-    return [239, 68, 68, 235]         # rojo — Congestionado
+@st.cache_data(ttl=300)
+def promedios_mapa(fecha_ini, fecha_fin, hora_ini, hora_fin, mes, dia_semana,
+                   quincena, ids) -> tuple:
+    """
+    Promedio por nodo con los filtros del mapa, y la fuente usada.
+    PostgreSQL agrega en la consulta (113 filas); Sheets descarga el
+    historico completo y agrega en pandas (respaldo si la BD no responde).
+    """
+    consulta = dict(fecha_ini=fecha_ini, fecha_fin=fecha_fin, hora_ini=hora_ini,
+                    hora_fin=hora_fin, mes=mes, dia_semana=dia_semana,
+                    quincena=quincena, ids=ids)
+    if getattr(config, "FUENTE_DASHBOARD", "sheets") == "db":
+        try:
+            import db  # import diferido
+            return db.promedios_por_nodo(**consulta), "PostgreSQL"
+        except Exception as e:
+            print(f"  [Dashboard] PostgreSQL no disponible, usando Sheets: {e}")
+
+    df = cargar_desde_sheets(n_dias=3650)
+    return mapa_nodos.promedios_por_nodo_df(df, **consulta), "Google Sheets"
 
 
 @st.cache_data(ttl=3600)
@@ -1288,6 +1348,25 @@ def _mascara_ok(df: pd.DataFrame) -> pd.Series:
     return df["ok"].astype(str).str.lower().isin(["true", "1"])
 
 
+def lecturas_ultima_ejecucion(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Lecturas validas de una ejecucion con las mismas columnas que los
+    promedios por nodo (n = 1): la vista inicial de los mapas, como en
+    produccion, antes de que el usuario toque un filtro.
+    """
+    columnas = ["id_nodo", "vel_actual", "vel_libre", "ratio", "n"]
+    if df.empty or "id_nodo" not in df.columns:
+        return pd.DataFrame(columns=columnas)
+    ok = df[_mascara_ok(df)]
+    return pd.DataFrame({
+        "id_nodo": ok["id_nodo"].astype(str),
+        "vel_actual": pd.to_numeric(ok.get("currentSpeed"), errors="coerce"),
+        "vel_libre": pd.to_numeric(ok.get("freeFlowSpeed"), errors="coerce"),
+        "ratio": pd.to_numeric(ok.get("velocidad_ratio"), errors="coerce"),
+        "n": 1,
+    }).drop_duplicates("id_nodo")[columnas]
+
+
 # ============================================================
 # CARGAR DATOS BASE
 # ============================================================
@@ -1322,9 +1401,9 @@ else:
 
 # ── Respaldo cuando la ultima corrida no dejo ni un nodo valido ──
 # Pasa cuando la API rechaza las 113 consultas (p.ej. 403 InsufficientFunds).
-# Sin esto el mapa filtra por ok=true, se queda sin filas y pydeck dibuja un
-# lienzo vacio sin explicar nada. Se guarda el diagnostico y se retrocede al
-# ultimo snapshot con datos reales, rotulado como desactualizado.
+# Sin esto el analisis de nodos filtra por ok=true y se queda sin filas sin
+# explicar nada. Se guarda el diagnostico y se retrocede al ultimo snapshot
+# con datos reales, rotulado como desactualizado.
 snapshot_degradado = None
 
 if not df_snapshot.empty and not _mascara_ok(df_snapshot).any():
@@ -1519,7 +1598,7 @@ if snapshot_degradado:
         _horas = _resto / 3600
         _antig = f"{int(_dias)} d {_horas:.0f} h" if _dias else f"{_horas:.1f} h"
         _respaldo = (
-            f"El mapa y el analisis muestran el ultimo dato bueno: "
+            f"El analisis de nodos muestra el ultimo dato bueno: "
             f"<b style='color:{UTB_WHITE};'>{_sd['label_valido']}</b> "
             f"(hace {_antig}). No es la situacion actual del trafico."
         )
@@ -1545,126 +1624,203 @@ if snapshot_degradado:
 # ============================================================
 # TABS
 # ============================================================
-tab_mapa, tab_datos, tab_proceso, tab_historia = st.tabs(
-    ["Mapa de Trafico", "Analisis de Nodos", "Monitor del Proceso", "Historico"]
+tab_mapa, tab_red, tab_datos, tab_proceso, tab_historia = st.tabs(
+    ["Mapa de Trafico", "Red de Nodos", "Analisis de Nodos", "Monitor del Proceso", "Historico"]
 )
 
 # ----------------------------------------------------------------
 # TAB MAPA
 # ----------------------------------------------------------------
 with tab_mapa:
-    if df_snapshot.empty:
-        st.info("No hay datos para mostrar.")
+    catalogo = cargar_catalogo()
+    if catalogo.empty:
+        st.info("No se pudo leer el catalogo de nodos (nodos.xlsx).")
     else:
-        st.markdown(
-            f"<div style='color:{UTB_GRAY};font-size:13px;margin-bottom:16px;'>"
-            f"Fuente: <code style='background:{UTB_NAVY_LIGHT};color:{UTB_CYAN};padding:4px 8px;border-radius:4px;'>"
-            f"{snapshot_label}</code> · {len(df_snapshot)} nodos</div>",
-            unsafe_allow_html=True,
-        )
-        df_ok = df_snapshot[_mascara_ok(df_snapshot)].dropna(subset=["lat", "lon"]).copy()
+        col_filtros, col_mapa = st.columns([1, 3])
+        with col_filtros, mapa_nodos.tarjeta_filtros("mapa", "Filtros del Mapa"):
+            filtros = mapa_nodos.panel_filtros(
+                "mapa", dict(zip(catalogo["id_nodo"], catalogo["nombre_nodo"])),
+                fechas_disponibles(),
+            )
+        consulta = filtros["consulta"]
+        en_vivo = filtros["en_vivo"]
 
-        if df_ok.empty:
-            st.warning(
-                "Ningun nodo de esta corrida tiene lectura valida, "
-                "asi que el mapa no puede dibujar puntos."
+        # Sin filtros de datos: la ultima ejecucion, como en produccion.
+        # Al tocar fechas, horas, mes o tipo de dia: promedios del periodo.
+        if en_vivo:
+            promedios = lecturas_ultima_ejecucion(df_snapshot)
+        else:
+            with st.spinner("Calculando promedios..."):
+                promedios, _ = promedios_mapa(**consulta)
+
+        nodos_mapa = catalogo
+        if consulta["ids"]:
+            nodos_mapa = catalogo[catalogo["id_nodo"].isin(consulta["ids"])]
+        nodos_mapa = nodos_mapa.merge(promedios, on="id_nodo", how="left")
+        n_con_datos = int(nodos_mapa["n"].notna().sum())
+
+        with col_mapa:
+            if n_con_datos == 0:
+                st.info("La ultima ejecucion no trajo lecturas validas." if en_vivo else
+                        "No hay mediciones con estos filtros. Los nodos se muestran en gris.")
+
+            mapa = mapa_nodos.construir_mapa(
+                nodos_mapa, filtros["metrica"], filtros["metrica_label"], clasificar_ratio,
+                en_vivo,
+            )
+            st_folium(mapa, height=560, use_container_width=True,
+                      returned_objects=[], key="mapa_nodos")
+            st.caption("Haz clic en un nodo para ver su detalle.")
+            if filtros["metrica"] == "ratio":
+                leyenda_ratio("ratio")
+
+        st.markdown("### Distribucion del trafico")
+        ca, cb, cc, cd = st.columns(4)
+        r_ok = nodos_mapa["ratio"].dropna()
+        n_fluido   = (r_ok > UMBRAL_FLUIDO).sum()
+        n_moderado = ((r_ok > UMBRAL_MODERADO) & (r_ok <= UMBRAL_FLUIDO)).sum()
+        n_lento    = ((r_ok > UMBRAL_LENTO) & (r_ok <= UMBRAL_MODERADO)).sum()
+        n_cong     = (r_ok <= UMBRAL_LENTO).sum()
+        # Los rangos de cada categoria ya estan en la leyenda del indice, arriba
+        for col_ui, n, color, label in [
+            (ca, n_fluido,   COLOR_FLUIDO,        "FLUIDO"),
+            (cb, n_moderado, COLOR_MODERADO,      "MODERADO"),
+            (cc, n_lento,    COLOR_LENTO,         "LENTO"),
+            (cd, n_cong,     COLOR_CONGESTIONADO, "CONGESTIONADO"),
+        ]:
+            with col_ui:
+                st.markdown(f"""
+                <div style="background:{UTB_NAVY_LIGHT};padding:22px 24px 20px;border-radius:28px;border:0;box-shadow:{R_SOMBRA}, inset 0 4px 0 {color};">
+                    <div style="color:{UTB_GRAY};font-size:12px;font-weight:600;letter-spacing:.8px;"><span style="color:{color};">●</span> {label}</div>
+                    <div style="color:{UTB_WHITE};font-size:36px;font-weight:800;margin:8px 0 0;">{n}</div>
+                </div>""", unsafe_allow_html=True)
+
+# ----------------------------------------------------------------
+# TAB RED DE NODOS
+# ----------------------------------------------------------------
+with tab_red:
+    catalogo = cargar_catalogo()
+    if catalogo.empty:
+        st.info("No se pudo leer el catalogo de nodos (nodos.xlsx).")
+    else:
+        red = cargar_red()
+        nombres = dict(zip(catalogo["id_nodo"], catalogo["nombre_nodo"]))
+        col_filtros, col_mapa = st.columns([1, 3])
+        with col_filtros, mapa_nodos.tarjeta_filtros("red", "Filtros del Mapa de Red"):
+            filtros_red = mapa_nodos.panel_filtros("red", nombres, fechas_disponibles())
+            mostrar_conexiones = st.checkbox("Mostrar conexiones", value=True, key="red_conexiones")
+            # La clave cambia con la disponibilidad del trazado: si el JSON
+            # aparece a mitad de sesion, la casilla vuelve a nacer marcada.
+            seguir_vias = st.checkbox(
+                "Seguir las carreteras", value=red["por_via"],
+                key=f"red_vias_{red['por_via']}", disabled=not red["por_via"],
+                help="Dibuja cada conexion por las vias reales (OpenStreetMap). "
+                     "Si esta deshabilitado, falta ejecutar capturar_red.py.",
             )
 
-        if "velocidad_ratio" in df_ok.columns:
-            df_ok["color"] = df_ok["velocidad_ratio"].apply(color_por_ratio)
-            geo = cargar_geometria()
-
-            # Selector de visualizacion: calles (si hay geometria) o puntos
-            opciones_vista = (["Calles", "Puntos"] if geo else ["Puntos"])
-            vista = st.radio(
-                "Visualizacion del mapa", opciones_vista,
-                horizontal=True, label_visibility="collapsed",
+            st.markdown("#### Ruta")
+            tipo_ruta = st.radio(
+                "Tipo de ruta", ["Origen–Destino", "Corredor"],
+                horizontal=True, key="red_tipo_ruta", label_visibility="collapsed",
             )
-            if not geo:
-                st.caption("Para ver las calles trazadas, ejecuta capturar_geometria.py una vez.")
-
-            try:
-                import pydeck as pdk
-
-                tooltip = {
-                    "html": "<b style='color:#5eead4;'>{nombre_nodo}</b><br/>"
-                            "<span style='color:rgba(255,255,255,0.6);'>Ratio:</span> <b>{ratio_txt}</b><br/>"
-                            "<span style='color:rgba(255,255,255,0.6);'>Actual:</span> <b>{currentSpeed}</b> km/h",
-                    "style": {
-                        "backgroundColor": UTB_NAVY_LIGHT, "color": UTB_WHITE,
-                        "padding": "10px", "borderRadius": "8px",
-                        "border": f"1px solid {UTB_BORDER}",
-                    },
-                }
-
-                if vista == "Calles":
-                    # Unir geometria (estatica) con el ratio actual de cada nodo
-                    ratio_nodo = dict(zip(df_ok["id_nodo"].astype(str), df_ok["velocidad_ratio"]))
-                    spd_nodo   = dict(zip(df_ok["id_nodo"].astype(str),
-                                          df_ok["currentSpeed"] if "currentSpeed" in df_ok.columns else []))
-                    path_rows = []
-                    for id_nodo, info in geo.items():
-                        r = ratio_nodo.get(str(id_nodo))
-                        path_rows.append({
-                            "path": info["path"],
-                            "color": color_por_ratio(r if r is not None else float("nan")),
-                            "nombre_nodo": info.get("nombre", ""),
-                            "ratio_txt": f"{r:.2f}" if r is not None and not pd.isna(r) else "—",
-                            "currentSpeed": spd_nodo.get(str(id_nodo), "—"),
-                        })
-                    capa = pdk.Layer(
-                        "PathLayer", data=path_rows,
-                        get_path="path", get_color="color",
-                        get_width=6, width_min_pixels=4,
-                        width_scale=1, cap_rounded=True, joint_rounded=True,
-                        pickable=True,
+            origen = destino = None
+            if tipo_ruta == "Origen–Destino":
+                origen = st.selectbox("Origen", list(nombres), index=None, key="red_origen",
+                                      format_func=nombres.get, placeholder="Elegir nodo")
+                destino = st.selectbox("Destino", list(nombres), index=None, key="red_destino",
+                                       format_func=nombres.get, placeholder="Elegir nodo")
+            else:
+                corredores = cargar_corredores()
+                if corredores.empty:
+                    st.info(
+                        "Todavia no hay corredores. Agregalos en la hoja CORREDORES de "
+                        "nodos.xlsx: nombre del corredor, nodo_inicio y nodo_fin (id_nodo)."
                     )
                 else:
-                    df_ok["ratio_txt"] = df_ok["velocidad_ratio"].apply(
-                        lambda x: f"{x:.2f}" if pd.notna(x) else "—")
-                    capa = pdk.Layer(
-                        "ScatterplotLayer", data=df_ok,
-                        get_position="[lon, lat]", get_fill_color="color",
-                        get_radius=100, pickable=True, opacity=0.8, stroked=True,
-                        get_line_color=[255, 255, 255, 80], line_width_min_pixels=1,
-                    )
+                    corredor = st.selectbox("Corredor", corredores["corredor"].tolist(),
+                                            index=None, key="red_corredor",
+                                            placeholder="Elegir corredor")
+                    if corredor:
+                        fila = corredores[corredores["corredor"] == corredor].iloc[0]
+                        faltan = [n for n in (fila["nodo_inicio"], fila["nodo_fin"]) if n not in nombres]
+                        if faltan:
+                            st.warning(f"El corredor usa nodos que no estan en el catalogo: {', '.join(faltan)}")
+                        else:
+                            origen, destino = fila["nodo_inicio"], fila["nodo_fin"]
 
-                st.pydeck_chart(pdk.Deck(
-                    layers=[capa],
-                    initial_view_state=pdk.ViewState(
-                        latitude=df_ok["lat"].mean(),
-                        longitude=df_ok["lon"].mean(),
-                        zoom=12.3, pitch=30,
-                    ),
-                    tooltip=tooltip,
-                    map_style="dark",
-                ), height=540)
-                leyenda_ratio("ratio")
-            except ImportError:
-                st.map(df_ok, latitude="lat", longitude="lon")
-
-            st.markdown("### Distribucion del trafico")
-            ca, cb, cc, cd = st.columns(4)
-            r_ok = df_ok["velocidad_ratio"]
-            n_fluido   = (r_ok > UMBRAL_FLUIDO).sum()
-            n_moderado = ((r_ok > UMBRAL_MODERADO) & (r_ok <= UMBRAL_FLUIDO)).sum()
-            n_lento    = ((r_ok > UMBRAL_LENTO) & (r_ok <= UMBRAL_MODERADO)).sum()
-            n_cong     = (r_ok <= UMBRAL_LENTO).sum()
-            for col_ui, n, color, label, desc in [
-                (ca, n_fluido,   COLOR_FLUIDO,        "FLUIDO",        "Ratio > 0.90"),
-                (cb, n_moderado, COLOR_MODERADO,      "MODERADO",      "0.75 – 0.90"),
-                (cc, n_lento,    COLOR_LENTO,         "LENTO",         "0.60 – 0.75"),
-                (cd, n_cong,     COLOR_CONGESTIONADO, "CONGESTIONADO", "Ratio < 0.60"),
-            ]:
-                with col_ui:
-                    st.markdown(f"""
-                    <div style="background:{UTB_NAVY_LIGHT};padding:20px;border-radius:12px;border-left:4px solid {color};border:1px solid {UTB_BORDER};box-shadow:0 2px 8px rgba(0,0,0,0.2);">
-                        <div style="color:{color};font-size:12px;font-weight:700;letter-spacing:1px;">● {label}</div>
-                        <div style="color:{UTB_WHITE};font-size:36px;font-weight:800;margin:8px 0;">{n}</div>
-                        <div style="color:{UTB_GRAY};font-size:12px;">{desc}</div>
-                    </div>""", unsafe_allow_html=True)
+        # La ruta se calcula sobre toda la red: el filtro de punto de
+        # monitoreo solo decide que nodos se dibujan.
+        consulta_red = {**filtros_red["consulta"], "ids": ()}
+        en_vivo_red = filtros_red["en_vivo"]
+        # Igual que el mapa de nodos: ultima ejecucion hasta que se toque un filtro
+        if en_vivo_red:
+            promedios_red = lecturas_ultima_ejecucion(df_snapshot)
         else:
-            st.map(df_ok, latitude="lat", longitude="lon")
+            with st.spinner("Calculando promedios..."):
+                promedios_red, _ = promedios_mapa(**consulta_red)
+        prom = promedios_red.set_index("id_nodo").to_dict("index")
+        ruta = (red_nodos.ruta_mas_rapida(origen, destino, red, prom)
+                if origen and destino else None)
+
+        nodos_red = catalogo.merge(promedios_red, on="id_nodo", how="left")
+        ids_vista = set(filtros_red["consulta"]["ids"])
+        if ids_vista:
+            ids_vista |= set(ruta["nodos"]) if ruta else set()
+            nodos_red = nodos_red[nodos_red["id_nodo"].isin(ids_vista)]
+
+        with col_mapa:
+            if origen and destino and origen == destino:
+                st.info("El origen y el destino son el mismo nodo.")
+            elif origen and destino and ruta is None:
+                st.warning("No hay un camino entre esos nodos con datos para estos filtros.")
+
+            mapa_red = red_nodos.construir_mapa_red(
+                nodos_red, red, prom, filtros_red["metrica"], filtros_red["metrica_label"],
+                clasificar_ratio, mostrar_conexiones, seguir_vias, ruta, en_vivo_red,
+            )
+            st_folium(mapa_red, height=560, use_container_width=True,
+                      returned_objects=[], key="mapa_red")
+            if filtros_red["metrica"] == "ratio":
+                leyenda_ratio("ratio")
+
+        if ruta:
+            st.markdown("### Ruta seleccionada")
+            km = ruta["dist_m"] / 1000
+            minutos = ruta["tiempo_s"] / 60
+            extra = minutos - ruta["tiempo_libre_s"] / 60
+            rc1, rc2, rc3, rc4 = st.columns(4)
+            with rc1: st.metric("Distancia total", f"{km:.1f} km")
+            with rc2: st.metric("Tiempo promedio de viaje", f"{minutos:.1f} min",
+                                f"+{extra:.1f} min vs. flujo libre", delta_color="inverse")
+            with rc3: st.metric("Velocidad promedio", f"{km / (minutos / 60):.1f} km/h")
+            with rc4: st.metric("Nodos en la ruta", len(ruta["nodos"]))
+
+            tabla_ruta = pd.DataFrame([{
+                "#": i + 1,
+                "Nodo": nombres[n],
+                "Velocidad (km/h)": prom.get(n, {}).get("vel_actual"),
+                "Indice de fluidez": prom.get(n, {}).get("ratio"),
+                "Estado": clasificar_ratio(prom.get(n, {}).get("ratio"))[1],
+            } for i, n in enumerate(ruta["nodos"])])
+            # En rutas cortas la tabla ya muestra todos los nodos
+            if len(tabla_ruta) > 3:
+                criticos = tabla_ruta.nsmallest(3, "Indice de fluidez")
+                st.markdown(
+                    "**Mayor congestion en la ruta:** " + " · ".join(
+                        f"{r['Nodo']} ({r['Indice de fluidez']:.2f}, {r['Estado'].lower()})"
+                        for _, r in criticos.iterrows()
+                    )
+                )
+            st.dataframe(
+                tabla_ruta.style.format({"Velocidad (km/h)": "{:.1f}", "Indice de fluidez": "{:.2f}"}),
+                width="stretch", hide_index=True,
+            )
+            st.caption(
+                "Tiempo estimado con las velocidades promedio de los nodos en el periodo "
+                "filtrado (media armonica por tramo) y la ruta mas rapida entre ellos. "
+                "Distancias y sentidos viales de OpenStreetMap, que puede no reflejar "
+                "cambios recientes del DATT."
+            )
 
 # ----------------------------------------------------------------
 # TAB ANALISIS DE NODOS

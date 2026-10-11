@@ -155,14 +155,16 @@ st.markdown(
 
 
 def proteger_panel() -> None:
-    """Activa contraseña cuando ADMIN_PASSWORD está configurada."""
+    """Pide la contraseña de ADMIN_PASSWORD; sin ella el panel queda cerrado."""
     esperada = os.environ.get("ADMIN_PASSWORD", "")
     if not esperada:
-        st.warning(
-            "Panel en modo local sin contraseña. Configura `ADMIN_PASSWORD` antes de "
-            "publicarlo o exponerlo en Internet."
+        # Falla cerrado: un despliegue sin la variable no debe dejar el panel
+        # abierto en Internet (el dashboard publico lo enlaza en el pie).
+        st.error(
+            "Panel administrativo deshabilitado: falta configurar `ADMIN_PASSWORD` "
+            "en el .env de este servidor."
         )
-        return
+        st.stop()
     huella = hashlib.sha256(esperada.encode("utf-8")).hexdigest()
     if st.session_state.get("admin_auth") == huella:
         return

@@ -1,0 +1,26 @@
+{
+  "tests": 13,
+  "failures": [
+    {
+      "test": "test_07_failover_preserves_node_when_two_keys_fail (__main__.Review)",
+      "detail": "Traceback (most recent call last):\n  File \"/tmp/proyect_r_revision/checks.py\", line 104, in test_07_failover_preserves_node_when_two_keys_fail\n    self.assertTrue(df.ok.all(),f'Available fake_B but lost node: calls={calls}; ok={df.ok.tolist()}')\nAssertionError: np.False_ is not true : Available fake_B but lost node: calls=['fake_A', 'fake_C', 'fake_C', 'fake_B', 'fake_B']; ok=[False, True, True]\n"
+    },
+    {
+      "test": "test_08_exhausted_key_stays_exhausted_after_earlier_success (__main__.Review)",
+      "detail": "Traceback (most recent call last):\n  File \"/tmp/proyect_r_revision/checks.py\", line 108, in test_08_exhausted_key_stays_exhausted_after_earlier_success\n    self.assertTrue(state['llaves']['fake_A']['agotada'],str(state['llaves']['fake_A']))\nAssertionError: False is not true : {'consumo': 1, 'agotada': False, 'ultimo_error': 'InsufficientFunds', 'ultima_vez': '2026-10-10 12:02:57', 'agotada_desde': '2026-10-10 12:02:57', 'motivo': 'sin_creditos'}\n"
+    },
+    {
+      "test": "test_09_sheet_schema_preserves_historical_positions (__main__.Review)",
+      "detail": "Traceback (most recent call last):\n  File \"/tmp/proyect_r_revision/checks.py\", line 120, in test_09_sheet_schema_preserves_historical_positions\n    self.assertEqual(reread['velocidad_ratio'],'OLD:velocidad_ratio')\nAssertionError: 'OLD:fecha' != 'OLD:velocidad_ratio'\n- OLD:fecha\n+ OLD:velocidad_ratio\n\n"
+    },
+    {
+      "test": "test_10_reverse_geometry_is_direction_specific (__main__.Review)",
+      "detail": "Traceback (most recent call last):\n  File \"/tmp/proyect_r_revision/checks.py\", line 124, in test_10_reverse_geometry_is_direction_specific\n    self.assertFalse(rn._trazo(c,{},True,-1)==c['path'][::-1],f'AB={c[\"d_ab_m\"]}m BA={c[\"d_ba_m\"]}m use identical road geometry')\nAssertionError: True is not false : AB=7939m BA=1616m use identical road geometry\n"
+    },
+    {
+      "test": "test_13_total_capture_failure_returns_nonzero (__main__.Review)",
+      "detail": "Traceback (most recent call last):\n  File \"/tmp/proyect_r_revision/checks.py\", line 142, in test_13_total_capture_failure_returns_nonzero\n    self.assertNotEqual(code,0,'All requests failed but main() reports success to cron')\nAssertionError: 0 == 0 : All requests failed but main() reports success to cron\n"
+    }
+  ],
+  "errors": []
+}

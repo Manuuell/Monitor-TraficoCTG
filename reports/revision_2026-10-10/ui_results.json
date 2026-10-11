@@ -1,0 +1,66 @@
+[
+  {
+    "case": "initial render with historical snapshot",
+    "exceptions": []
+  },
+  {
+    "case": "map month September",
+    "exceptions": []
+  },
+  {
+    "case": "morning hours callback",
+    "exceptions": []
+  },
+  {
+    "case": "custom hours callback",
+    "exceptions": []
+  },
+  {
+    "case": "Monday filter",
+    "exceptions": []
+  },
+  {
+    "case": "single node",
+    "exceptions": []
+  },
+  {
+    "case": "Velocidad actual (km/h)",
+    "exceptions": []
+  },
+  {
+    "case": "Velocidad de flujo libre (km/h)",
+    "exceptions": []
+  },
+  {
+    "case": "empty month grey nodes",
+    "exceptions": []
+  },
+  {
+    "case": "reset filters",
+    "exceptions": []
+  },
+  {
+    "case": "origin destination route",
+    "exceptions": []
+  },
+  {
+    "case": "same origin destination",
+    "exceptions": []
+  },
+  {
+    "case": "route without observations",
+    "exceptions": []
+  },
+  {
+    "case": "empty corridors",
+    "exceptions": []
+  },
+  {
+    "case": "inverted historical range",
+    "exceptions": []
+  },
+  {
+    "case": "HTML report generation",
+    "exceptions": []
+  }
+]

@@ -1,0 +1,14 @@
+Mediciones: 359,664
+Nodos: 113
+Periodo: 30/05/2026 a 30/09/2026 (124 días)
+Cell 1: PASS
+Cell 3: PASS
+Cell 4: PASS
+84 nodos caen en 29 tramos compartidos → 55 consultas redundantes por corrida
+Cell 6: PASS
+Cell 8: PASS
+Cell 10: PASS
+Cell 12: PASS
+Cell 14: PASS
+Cell 16: PASS
+Notebook completed without saving or modifying outputs

@@ -2693,10 +2693,8 @@ with tab_historia:
                         fig_hora_n.add_trace(go.Bar(
                             x=[f"{h:02d}:00" for h in por_hora_n["hora_num"]],
                             y=por_hora_n["ratio_h"],
-                            marker_color=[
-                                COLOR_FLUIDO if r > 0.75 else (COLOR_LENTO if r > 0.5 else COLOR_CONGESTIONADO)
-                                for r in por_hora_n["ratio_h"].fillna(0)
-                            ],
+                            # Mismo nivel que la leyenda que va debajo
+                            marker_color=[clasificar_ratio(r)[0] for r in por_hora_n["ratio_h"]],
                             name="Ratio por hora",
                             text=por_hora_n["ratio_h"].apply(lambda x: f"{x:.2f}" if pd.notna(x) else ""),
                             textposition="outside",

@@ -1085,10 +1085,8 @@ with st.sidebar:
         archivo_actual = None
         st.warning("Sin archivos aun")
 
-    if st.button("Recargar datos", width="stretch"):
-        st.cache_data.clear()
-        st.rerun()
-
+    # Sin boton "Recargar datos": st.cache_data.clear() vacia la cache de
+    # todos los visitantes. Recargar queda en el panel administrativo.
     st.divider()
     st.markdown("### Horarios programados")
     for turno, horas in config.HORARIOS.items():
@@ -1634,7 +1632,7 @@ with tab_historia:
         # Valor por defecto: ultimos 7 dias, recortado al rango disponible
         ini_default = max(min_fecha, max_fecha - timedelta(days=7))
 
-        hf1, hf2, hf3, hf4 = st.columns([2, 2, 2, 1])
+        hf1, hf2, hf3 = st.columns(3)
         with hf1:
             fecha_ini = st.date_input(
                 "Desde", value=ini_default,
@@ -1651,11 +1649,6 @@ with tab_historia:
                 ["Todos", "Solo laborables (L-V)", "Solo fin de semana",
                  "Lunes", "Martes", "Miercoles", "Jueves", "Viernes", "Sabado", "Domingo"],
             )
-        with hf4:
-            st.markdown("<div style='height:28px;'></div>", unsafe_allow_html=True)
-            if st.button("Recargar datos", width="stretch"):
-                st.cache_data.clear()
-                st.rerun()
 
         st.caption(
             f"Datos disponibles: {min_fecha.strftime('%d/%m/%Y')} → "

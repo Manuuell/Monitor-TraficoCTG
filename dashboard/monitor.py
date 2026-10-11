@@ -1,6 +1,6 @@
 """
-Dashboard Streamlit - Monitor de Trafico TomTom Cartagena
-Diseno con identidad visual UTB (navy + cyan).
+Dashboard Streamlit - Smart City Cartagena.
+Diseño claro con tarjetas, tipografía Inter y componentes de movilidad urbana.
 """
 import json
 import sys
@@ -24,7 +24,7 @@ import google_upload  # noqa: E402
 # CONFIGURACION DE PAGINA
 # ============================================================
 st.set_page_config(
-    page_title="UTB - Monitor de Trafico Cartagena",
+    page_title="Smart City Cartagena",
     layout="wide",
     page_icon="🚦",
     initial_sidebar_state="expanded",
@@ -1228,14 +1228,26 @@ proxima_str = proxima.strftime("%H:%M") if proxima else "—"
 
 st.markdown(f"""
 <div class="utb-header">
-    <div>
-        <h1 class="utb-brand">Monitor <span class="utb-brand-accent">Trafico</span></h1>
-        <p class="utb-subtitle">Cartagena · 113 nodos de monitoreo · Datos TomTom Traffic Flow</p>
+    <div class="utb-header-content">
+        <div class="utb-eyebrow"><span class="utb-live-dot"></span> Plataforma de movilidad inteligente</div>
+        <h1 class="utb-brand">Smart City <span class="utb-brand-accent">Cartagena</span></h1>
+        <div class="utb-header-chips">
+            <span class="utb-header-chip">113 nodos conectados</span>
+            <span class="utb-header-chip">Monitoreo en vivo</span>
+            <span class="utb-header-chip">TomTom Traffic Flow</span>
+        </div>
     </div>
-    <div style="text-align:right;">
+    <svg class="utb-route" viewBox="0 0 215 84" aria-hidden="true">
+        <path d="M8 62 C45 15, 74 74, 112 34 S169 12, 207 42" fill="none" stroke="rgba(255,255,255,.38)" stroke-width="2" stroke-linecap="round" stroke-dasharray="5 7"/>
+        <circle cx="10" cy="60" r="6" fill="#5eead4" stroke="rgba(255,255,255,.9)" stroke-width="2"/>
+        <circle cx="112" cy="34" r="5" fill="#ffffff" stroke="rgba(94,234,212,.8)" stroke-width="3"/>
+        <circle cx="205" cy="41" r="7" fill="#5eead4" stroke="rgba(255,255,255,.9)" stroke-width="2"/>
+    </svg>
+    <div class="utb-status">
+        <div class="utb-status-label">Hora local</div>
         <div class="utb-clock">{ahora.strftime("%H:%M")} · {ahora.strftime("%d/%m/%Y")}</div>
-        <div style="color:{UTB_GRAY};font-size:11px;margin-top:6px;">
-            Proxima ejecucion: <span style="color:{UTB_CYAN};font-weight:600;">{proxima_str}</span>
+        <div class="utb-next-run">
+            Proxima ejecucion: <span>{proxima_str}</span>
         </div>
     </div>
 </div>

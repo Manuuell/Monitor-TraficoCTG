@@ -1031,87 +1031,6 @@ def promedios_mapa(fecha_ini, fecha_fin, hora_ini, hora_fin, mes, dia_semana,
     return mapa_nodos.promedios_por_nodo_df(df, **consulta), "Google Sheets"
 
 
-@st.cache_data(ttl=3600)
-def verificar_token_google() -> dict:
-    """Verifica el estado del token OAuth de Google. Cachea 1 hora."""
-    try:
-        creds = google_upload.cargar_credenciales()
-        if creds is None:
-            return {"ok": False, "estado": "No encontrado", "detalle": "token.json no existe o esta corrupto"}
-        if creds.valid:
-            return {"ok": True, "estado": "Activo", "detalle": "Conexion con Google OK"}
-        elif creds.expired and creds.refresh_token:
-            from google.auth.transport.requests import Request
-            creds.refresh(Request())
-            return {"ok": True, "estado": "Renovado", "detalle": "Token renovado automaticamente"}
-        else:
-            return {"ok": False, "estado": "Expirado", "detalle": "Requiere re-autorizacion manual en tu PC"}
-    except Exception as e:
-        return {"ok": False, "estado": "Error", "detalle": str(e)[:120]}
-
-
-@st.cache_data(ttl=3600)
-def capacidad_sheet() -> dict:
-    """
-    Ocupacion del Google Sheet frente al limite duro de Google (10 millones
-    de celdas por hoja de calculo). Al alcanzarlo el ETL rota solo a un libro
-    nuevo ("<base>_ParteN") y sigue escribiendo alli, asi que este indicador
-    mide el libro ACTIVO y avisa cuando toca la proxima rotacion.
-
-    Cachea 1 hora: el tamano crece despacio y es una llamada extra a la API.
-    """
-    LIMITE = 10_000_000
-    try:
-        creds = google_upload.cargar_credenciales()
-        if creds is None:
-            return {"ok": False, "detalle": "Sin credenciales Google"}
-
-        from googleapiclient.discovery import build
-        svc = build("sheets", "v4", credentials=creds, cache_discovery=False)
-        # Se mide el libro ACTIVO: tras una rotacion el original queda lleno
-        # y congelado, y lo que importa es cuanto le queda al que se escribe.
-        sheet_id = google_upload.sheet_activo()
-        parte = google_upload.parte_activa()
-        meta = svc.spreadsheets().get(
-            spreadsheetId=sheet_id,
-            fields="properties(title),sheets(properties(title,gridProperties))",
-        ).execute()
-
-        celdas = 0
-        cols_datos = 0
-        for s in meta.get("sheets", []):
-            p = s["properties"]
-            g = p.get("gridProperties", {})
-            filas = g.get("rowCount", 0)
-            cols = g.get("columnCount", 0)
-            celdas += filas * cols
-            if p.get("title") == config.SHEET_TAB:
-                cols_datos = cols
-
-        if cols_datos == 0:
-            cols_datos = 29  # ancho tipico de la tabla de mediciones
-
-        # Consumo diario: 113 nodos x 28 ejecuciones programadas
-        celdas_dia = 113 * 28 * cols_datos
-        restantes = max(LIMITE - celdas, 0)
-        dias = int(restantes / celdas_dia) if celdas_dia > 0 else None
-        fecha_llena = (datetime.now() + timedelta(days=dias)).strftime("%d/%m/%Y") if dias is not None else None
-
-        return {
-            "ok": True,
-            "celdas": celdas,
-            "limite": LIMITE,
-            "pct": celdas / LIMITE * 100,
-            "dias": dias,
-            "fecha_llena": fecha_llena,
-            "parte": parte,
-            "nombre": meta.get("properties", {}).get("title", ""),
-            "detalle": None,
-        }
-    except Exception as e:
-        return {"ok": False, "detalle": str(e)[:120]}
-
-
 def calcular_proxima_ejecucion():
     ahora = datetime.now()
     horarios_hoy = []
@@ -1145,67 +1064,11 @@ with st.sidebar:
         </div>
         """, unsafe_allow_html=True)
 
-    # --- Estado del token Google ---
-    token_st = verificar_token_google()
-    if token_st["ok"]:
-        st.markdown(f"""
-        <div style="background:rgba(16,185,129,0.1);border-left:3px solid {COLOR_FLUIDO};
-             padding:10px 12px;border-radius:6px;margin-bottom:16px;">
-            <div style="color:{COLOR_FLUIDO};font-size:11px;font-weight:700;">
-                ● GOOGLE · {token_st['estado'].upper()}</div>
-            <div style="color:{UTB_GRAY};font-size:11px;">{token_st['detalle']}</div>
-        </div>""", unsafe_allow_html=True)
-    else:
-        st.markdown(f"""
-        <div style="background:rgba(239,68,68,0.15);border-left:3px solid {COLOR_CONGESTIONADO};
-             padding:10px 12px;border-radius:6px;margin-bottom:16px;animation:pulse 2s infinite;">
-            <div style="color:{COLOR_CONGESTIONADO};font-size:11px;font-weight:700;">
-                ⚠ GOOGLE · {token_st['estado'].upper()}</div>
-            <div style="color:{UTB_GRAY};font-size:11px;">{token_st['detalle']}</div>
-        </div>""", unsafe_allow_html=True)
-
-    # --- Capacidad del Google Sheet (limite 10M celdas) ---
-    cap = capacidad_sheet()
-    if cap["ok"]:
-        _pct = cap["pct"]
-        if _pct >= 90:
-            _color, _icono, _estado = COLOR_CONGESTIONADO, "⚠", "CRITICO"
-        elif _pct >= 75:
-            _color, _icono, _estado = COLOR_LENTO, "⚠", "ALTO"
-        elif _pct >= 50:
-            _color, _icono, _estado = COLOR_MODERADO, "●", "MODERADO"
-        else:
-            _color, _icono, _estado = COLOR_FLUIDO, "●", "OK"
-
-        _aviso = (
-            f"Se llena ~{cap['fecha_llena']} ({cap['dias']} dias)"
-            if cap["dias"] is not None else "Sin proyeccion"
-        )
-        # Al llenarse se rota automaticamente: el aviso deja de ser una alarma.
-        _parte_txt = f" · PARTE {cap['parte']}" if cap.get("parte", 1) > 1 else ""
-        st.markdown(f"""
-        <div style="background:rgba(255,255,255,0.06);border-left:3px solid {_color};
-             padding:10px 12px;border-radius:6px;margin-bottom:16px;">
-            <div style="color:{_color};font-size:11px;font-weight:700;">
-                {_icono} HOJA DE CALCULO · {_estado}{_parte_txt}</div>
-            <div style="background:rgba(0,0,0,0.25);border-radius:4px;height:6px;
-                 overflow:hidden;margin:6px 0;">
-                <div style="background:{_color};width:{min(_pct, 100):.1f}%;
-                     height:100%;border-radius:4px;"></div>
-            </div>
-            <div style="color:{UTB_GRAY};font-size:11px;">
-                {cap['celdas']:,} / {cap['limite']:,} celdas · {_pct:.1f}%</div>
-            <div style="color:{UTB_GRAY};font-size:11px;">{_aviso}</div>
-        </div>""", unsafe_allow_html=True)
-    else:
-        st.markdown(f"""
-        <div style="background:rgba(255,255,255,0.06);border-left:3px solid {UTB_GRAY};
-             padding:10px 12px;border-radius:6px;margin-bottom:16px;">
-            <div style="color:{UTB_GRAY};font-size:11px;font-weight:700;">
-                ● HOJA DE CALCULO · SIN DATO</div>
-            <div style="color:{UTB_GRAY};font-size:11px;">{cap.get('detalle') or 'No disponible'}</div>
-        </div>""", unsafe_allow_html=True)
-
+    st.markdown(
+        "<div style='color:#5eead4;font-size:11px;font-weight:800;"
+        "letter-spacing:1.5px;margin-bottom:8px;'>VISTA DE MOVILIDAD</div>",
+        unsafe_allow_html=True,
+    )
     st.markdown("### Archivo a visualizar")
     archivos = listar_archivos()
     if archivos:
@@ -1227,58 +1090,13 @@ with st.sidebar:
         st.rerun()
 
     st.divider()
-
-    # --- Links directos Google ---
-    drive_url  = f"https://drive.google.com/drive/folders/{config.DRIVE_FOLDER_ID}"
-    sheets_url = f"https://docs.google.com/spreadsheets/d/{config.SHEET_ID}"
-
-    st.markdown(f"""
-    <div style="margin-bottom:16px;">
-        <div style="color:{UTB_CYAN};font-size:11px;font-weight:700;letter-spacing:1.5px;margin-bottom:10px;">
-            ACCESO RÁPIDO
-        </div>
-        <a href="{drive_url}" target="_blank" style="
-            display:flex; align-items:center; gap:10px;
-            background:rgba(255,255,255,0.07);
-            border:1px solid rgba(255,255,255,0.12);
-            border-radius:8px; padding:10px 14px;
-            color:#ffffff; text-decoration:none;
-            font-size:13px; font-weight:600;
-            margin-bottom:8px;
-            transition:all 0.2s;">
-            <span style="font-size:18px;">📁</span>
-            <div>
-                <div style="color:#ffffff;font-size:13px;font-weight:600;">Google Drive</div>
-                <div style="color:rgba(255,255,255,0.5);font-size:11px;">Carpeta de CSVs</div>
-            </div>
-            <span style="margin-left:auto;color:rgba(255,255,255,0.4);font-size:16px;">↗</span>
-        </a>
-        <a href="{sheets_url}" target="_blank" style="
-            display:flex; align-items:center; gap:10px;
-            background:rgba(255,255,255,0.07);
-            border:1px solid rgba(255,255,255,0.12);
-            border-radius:8px; padding:10px 14px;
-            color:#ffffff; text-decoration:none;
-            font-size:13px; font-weight:600;
-            transition:all 0.2s;">
-            <span style="font-size:18px;">📊</span>
-            <div>
-                <div style="color:#ffffff;font-size:13px;font-weight:600;">Google Sheets</div>
-                <div style="color:rgba(255,255,255,0.5);font-size:11px;">Base de datos principal</div>
-            </div>
-            <span style="margin-left:auto;color:rgba(255,255,255,0.4);font-size:16px;">↗</span>
-        </a>
-    </div>
-    """, unsafe_allow_html=True)
-
-    st.divider()
-
     st.markdown("### Horarios programados")
     for turno, horas in config.HORARIOS.items():
         with st.expander(turno, expanded=False):
-            for h in horas:
+            for hora in horas:
                 st.markdown(
-                    f"<div style='padding:4px 0;color:{UTB_GRAY};font-size:13px;'>• {h}</div>",
+                    f"<div style='padding:4px 0;color:{UTB_GRAY};font-size:13px;'>"
+                    f"• {hora}</div>",
                     unsafe_allow_html=True,
                 )
 
@@ -1316,25 +1134,6 @@ st.markdown(f"""
     </div>
 </div>
 """, unsafe_allow_html=True)
-
-# Banner de alerta si el token esta expirado
-token_st = verificar_token_google()
-if not token_st["ok"]:
-    st.markdown(f"""
-    <div style="background:rgba(239,68,68,0.12);border:1px solid {COLOR_CONGESTIONADO};
-         padding:16px 20px;border-radius:8px;margin-bottom:20px;">
-        <div style="color:{COLOR_CONGESTIONADO};font-size:16px;font-weight:700;margin-bottom:8px;">
-            ⚠ Token Google expirado — los datos no se estan subiendo a Drive ni Sheets
-        </div>
-        <div style="color:{UTB_WHITE};font-size:13px;line-height:1.6;">
-            <b>Pasos para renovarlo:</b><br>
-            1. En tu PC: <code style="background:{UTB_BG};border:1px solid {UTB_BORDER};color:{UTB_NAVY};padding:2px 8px;border-radius:4px;">python src/autorizar_google.py</code><br>
-            2. Sube el nuevo token:
-            <code style="background:{UTB_BG};border:1px solid {UTB_BORDER};color:{UTB_NAVY};padding:2px 8px;border-radius:4px;">
-            scp credenciales/token.json ubuntu@158.101.105.13:/home/ubuntu/proyect_r/credenciales/</code><br>
-            3. Recarga esta pagina.
-        </div>
-    </div>""", unsafe_allow_html=True)
 
 # Cuanto retroceder buscando el ultimo snapshot valido cuando la captura
 # lleva caida mas de un dia. Acota el costo de la lectura de respaldo.
@@ -1464,124 +1263,54 @@ aviso_carga.empty()
 # ============================================================
 col1, col2, col3, col4 = st.columns(4)
 
-hoy = datetime.now().date()
-
-# VPS 1: desde log local
-logs_hoy = logs[logs["timestamp"].dt.date == hoy] if not logs.empty else pd.DataFrame()
-llamadas_vps1 = int(logs_hoy["total_nodos"].sum()) if not logs_hoy.empty else 0
-# Consultas que de verdad devolvieron datos. El total intentado no sirve para
-# saber si el sistema esta sano: con la API caida sigue marcando 1.582.
-exitosas_vps1 = int(logs_hoy["consultas_ok"].sum()) if not logs_hoy.empty and "consultas_ok" in logs_hoy.columns else 0
-fallidas_vps1 = max(llamadas_vps1 - exitosas_vps1, 0)
-ejec_vps1     = len(logs_hoy)
-ultima_vps1   = logs.iloc[-1]["timestamp"] if not logs.empty else None
-estado_vps1   = logs.iloc[-1]["estado"]    if not logs.empty else "—"
-
-# VPS 2: desde Google Sheets (el log de VPS 2 esta en otro servidor)
-df_sheets_hoy = pd.DataFrame()
-if not _df_sheets_1d.empty and "consultation_time" in _df_sheets_1d.columns:
-    df_sheets_hoy = _df_sheets_1d[
-        (_df_sheets_1d["consultation_time"].dt.date == hoy) &
-        (_df_sheets_1d["vps_id"].astype(str) == "2")
-    ]
-llamadas_vps2 = len(df_sheets_hoy)
-exitosas_vps2 = int(_mascara_ok(df_sheets_hoy).sum())
-fallidas_vps2 = max(llamadas_vps2 - exitosas_vps2, 0)
-ejec_vps2     = df_sheets_hoy["consultation_time"].nunique() if not df_sheets_hoy.empty else 0
-ultima_vps2   = df_sheets_hoy["consultation_time"].max()    if not df_sheets_hoy.empty else None
-
-# Ultima ejecucion global (el mas reciente entre ambos VPS)
-if ultima_vps1 and ultima_vps2 and pd.notna(ultima_vps2):
-    if ultima_vps2 > ultima_vps1:
-        ultima_str, estado_str = ultima_vps2.strftime("%H:%M"), "VPS2 OK"
-    else:
-        ultima_str, estado_str = ultima_vps1.strftime("%H:%M"), estado_vps1
-elif ultima_vps2 and pd.notna(ultima_vps2):
-    ultima_str, estado_str = ultima_vps2.strftime("%H:%M"), "VPS2 OK"
-elif ultima_vps1:
-    ultima_str, estado_str = ultima_vps1.strftime("%H:%M"), estado_vps1
-else:
-    ultima_str, estado_str = "—", "Sin datos"
-
-ejec_total = ejec_vps1 + ejec_vps2
-
-def _delta_consultas(llamadas: int, fallidas: int) -> tuple:
-    """Delta de la tarjeta: en rojo si hubo consultas fallidas hoy."""
-    if fallidas > 0:
-        return f"-{fallidas:,} fallidas", "normal"
-    return f"{llamadas/config.LIMITE_API_DIARIO*100:.1f}% de 2,500", "off"
-
-
-with col1:
-    _d, _dc = _delta_consultas(llamadas_vps1, fallidas_vps1)
-    st.metric("VPS 1 · Nodos OK", f"{exitosas_vps1:,}", _d, delta_color=_dc)
-with col2:
-    _d, _dc = _delta_consultas(llamadas_vps2, fallidas_vps2)
-    st.metric("VPS 2 · Nodos OK", f"{exitosas_vps2:,}", _d, delta_color=_dc)
-with col3:
-    st.metric("Ejecuciones hoy", ejec_total, "de 28 programadas", delta_color="off")
-with col4:
-    st.metric("Ultima ejecucion", ultima_str, estado_str, delta_color="off")
-
-if logs.empty and df_sheets_hoy.empty:
-    st.info("Aun no hay ejecuciones registradas.")
-
-# ============================================================
-# CUOTA DIARIA API TOMTOM
-# ============================================================
-LIMITE = config.LIMITE_API_DIARIO  # 2500
-
-def _semaforo_cuota(usado: int, limite: int) -> tuple:
-    """Devuelve (color_hex, emoji, texto_estado) segun el porcentaje de cuota usada."""
-    pct = usado / limite if limite > 0 else 0
-    if pct >= 0.95:
-        return "#FF4B4B", "🔴", "CRITICO"
-    elif pct >= 0.80:
-        return "#FFA500", "🟠", "ALTO"
-    elif pct >= 0.60:
-        return "#FFD700", "🟡", "MODERADO"
-    else:
-        return "#00C48C", "🟢", "OK"
-
-st.markdown(
-    f"<h4 style='color:{UTB_CYAN};margin-top:24px;margin-bottom:4px;letter-spacing:1px;'>"
-    f"CUOTA DIARIA API TOMTOM</h4>",
-    unsafe_allow_html=True,
+_snapshot_ok = df_snapshot[_mascara_ok(df_snapshot)].copy()
+_nodos_observados = (
+    _snapshot_ok["id_nodo"].astype(str).nunique()
+    if not _snapshot_ok.empty and "id_nodo" in _snapshot_ok.columns else 0
+)
+_velocidad_promedio = (
+    pd.to_numeric(_snapshot_ok["currentSpeed"], errors="coerce").mean()
+    if not _snapshot_ok.empty and "currentSpeed" in _snapshot_ok.columns
+    else float("nan")
+)
+_fluidez_promedio = (
+    pd.to_numeric(_snapshot_ok["velocidad_ratio"], errors="coerce").mean()
+    if not _snapshot_ok.empty and "velocidad_ratio" in _snapshot_ok.columns
+    else float("nan")
+)
+_, _estado_movilidad = clasificar_ratio(_fluidez_promedio)
+_hora_snapshot = (
+    pd.to_datetime(_snapshot_ok["consultation_time"], errors="coerce").max()
+    if not _snapshot_ok.empty and "consultation_time" in _snapshot_ok.columns
+    else pd.NaT
 )
 
-qa, qb = st.columns(2)
+with col1:
+    st.metric("Nodos observados", f"{_nodos_observados:,}", "última medición", delta_color="off")
+with col2:
+    st.metric(
+        "Velocidad promedio",
+        f"{_velocidad_promedio:.1f} km/h" if pd.notna(_velocidad_promedio) else "—",
+        "red monitoreada",
+        delta_color="off",
+    )
+with col3:
+    st.metric(
+        "Índice de fluidez",
+        f"{_fluidez_promedio:.2f}" if pd.notna(_fluidez_promedio) else "—",
+        _estado_movilidad,
+        delta_color="off",
+    )
+with col4:
+    st.metric(
+        "Actualización",
+        _hora_snapshot.strftime("%H:%M") if pd.notna(_hora_snapshot) else "—",
+        _hora_snapshot.strftime("%d/%m/%Y") if pd.notna(_hora_snapshot) else "Sin datos",
+        delta_color="off",
+    )
 
-for col_q, vps_label, usado in [(qa, "VPS 1", llamadas_vps1), (qb, "VPS 2", llamadas_vps2)]:
-    pct       = min(usado / LIMITE, 1.0)
-    color, emoji, estado = _semaforo_cuota(usado, LIMITE)
-    restantes = max(LIMITE - usado, 0)
-    with col_q:
-        st.markdown(
-            f"<div style='background:{UTB_NAVY_LIGHT};border-radius:10px;padding:14px 18px;border-left:4px solid {color};box-shadow:0 1px 3px rgba(0,48,135,0.06);border:1px solid {UTB_BORDER};border-left:4px solid {color};'>"
-            f"<div style='display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;'>"
-            f"  <span style='color:#FFFFFF;font-weight:700;font-size:15px;'>{emoji} {vps_label}</span>"
-            f"  <span style='color:{color};font-weight:700;font-size:13px;'>{estado}</span>"
-            f"</div>"
-            f"<div style='background:rgba(0,0,0,0.25);border-radius:6px;height:12px;overflow:hidden;margin-bottom:8px;'>"
-            f"  <div style='background:{color};width:{pct*100:.1f}%;height:100%;border-radius:6px;transition:width 0.4s;'></div>"
-            f"</div>"
-            f"<div style='display:flex;justify-content:space-between;'>"
-            f"  <span style='color:{UTB_GRAY};font-size:12px;'>{usado:,} / {LIMITE:,} llamadas</span>"
-            f"  <span style='color:{UTB_GRAY};font-size:12px;'>{restantes:,} restantes · {pct*100:.1f}%</span>"
-            f"</div>"
-            f"</div>",
-            unsafe_allow_html=True,
-        )
-
-# Advertencia si alguno supera el 80%
-for vps_label, usado in [("VPS 1", llamadas_vps1), ("VPS 2", llamadas_vps2)]:
-    pct = usado / LIMITE if LIMITE > 0 else 0
-    if pct >= 0.95:
-        st.error(f"⛔ {vps_label} ha alcanzado el {pct*100:.1f}% de la cuota — riesgo de error 403 InsufficientFunds.")
-    elif pct >= 0.80:
-        st.warning(f"⚠️ {vps_label} lleva el {pct*100:.1f}% de la cuota diaria. Evita ejecutar pruebas manuales hoy.")
-
-st.markdown("<div style='margin-bottom:8px;'></div>", unsafe_allow_html=True)
+if _snapshot_ok.empty:
+    st.info("Aún no hay mediciones válidas para mostrar.")
 
 # ============================================================
 # AVISO DE CAPTURA DETENIDA
@@ -1628,8 +1357,8 @@ if snapshot_degradado:
 # ============================================================
 # TABS
 # ============================================================
-tab_mapa, tab_red, tab_datos, tab_proceso, tab_historia = st.tabs(
-    ["Mapa de Trafico", "Red de Nodos", "Analisis de Nodos", "Monitor del Proceso", "Historico"]
+tab_mapa, tab_red, tab_datos, tab_historia = st.tabs(
+    ["Mapa de Trafico", "Red de Nodos", "Analisis de Nodos", "Historico"]
 )
 
 # ----------------------------------------------------------------
@@ -1886,88 +1615,6 @@ with tab_datos:
             file_name=f"trafico_filtrado_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
             mime="text/csv",
         )
-
-# ----------------------------------------------------------------
-# TAB MONITOR DEL PROCESO
-# ----------------------------------------------------------------
-with tab_proceso:
-    # Reconstruir ejecuciones de VPS 2 desde Sheets (su log esta en otro servidor)
-    logs_vps2 = pd.DataFrame()
-    if not _df_sheets_1d.empty and "consultation_time" in _df_sheets_1d.columns:
-        df_v2 = _df_sheets_1d[_df_sheets_1d["vps_id"].astype(str) == "2"].copy()
-        if not df_v2.empty:
-            df_v2["ok_bool"] = df_v2["ok"].astype(str).str.upper() == "TRUE"
-            grp = df_v2.groupby("consultation_time").agg(
-                total_nodos=("ok_bool", "count"),
-                consultas_ok=("ok_bool", "sum"),
-            ).reset_index()
-            grp["consultas_error"] = grp["total_nodos"] - grp["consultas_ok"]
-            grp["vps_id"] = "2"
-            grp["estado"] = grp["consultas_error"].apply(lambda x: "ERROR" if x > 0 else "OK")
-            grp["error"] = None
-            grp = grp.rename(columns={"consultation_time": "timestamp"})
-            logs_vps2 = grp[["timestamp", "vps_id", "total_nodos", "consultas_ok", "consultas_error", "estado", "error"]]
-
-    # Combinar VPS 1 (log local) + VPS 2 (reconstruido desde Sheets)
-    if not logs_vps2.empty:
-        logs_combined = pd.concat([logs, logs_vps2], ignore_index=True).sort_values("timestamp")
-    else:
-        logs_combined = logs.copy()
-
-    if logs_combined.empty:
-        st.info("No hay registros de ejecuciones aun.")
-    else:
-        st.markdown("### Ultimas 20 ejecuciones (VPS 1 + VPS 2)")
-        st.caption("VPS 1 desde log local · VPS 2 reconstruido desde Google Sheets")
-        st.dataframe(
-            logs_combined.tail(20).sort_values("timestamp", ascending=False),
-            use_container_width=True, hide_index=True,
-        )
-
-        st.markdown("### Ejecuciones por hora (hoy)")
-        hoy_p = datetime.now().date()
-        logs_hoy2 = logs_combined[logs_combined["timestamp"].dt.date == hoy_p].copy()
-        if not logs_hoy2.empty:
-            logs_hoy2["hora"] = logs_hoy2["timestamp"].dt.strftime("%H:%M")
-            por_hora = logs_hoy2.groupby("hora").agg(
-                consultas_ok=("consultas_ok", "sum"),
-                consultas_error=("consultas_error", "sum"),
-                vps=("vps_id", lambda x: "+".join(sorted(x.unique()))),
-            ).reset_index()
-
-            fig_proc = go.Figure()
-            fig_proc.add_trace(go.Bar(
-                x=por_hora["hora"], y=por_hora["consultas_ok"],
-                name="OK", marker_color=UTB_CYAN,
-                text=por_hora["vps"].apply(lambda v: f"VPS{v}"),
-                textposition="inside",
-            ))
-            fig_proc.add_trace(go.Bar(
-                x=por_hora["hora"], y=por_hora["consultas_error"],
-                name="Error", marker_color=COLOR_CONGESTIONADO,
-            ))
-            fig_proc.update_layout(barmode="stack", xaxis_title="Hora", yaxis_title="Consultas")
-            fig_proc = plotly_base(fig_proc, height=300)
-            st.plotly_chart(fig_proc, use_container_width=True)
-            leyenda_ratio("proceso")
-        else:
-            st.info("Aun no hay ejecuciones hoy.")
-
-        st.markdown("### Errores en los ultimos 7 dias")
-        hace_7d = datetime.now() - timedelta(days=7)
-        errores = logs_combined[
-            (logs_combined["timestamp"] >= hace_7d) &
-            (logs_combined["estado"] == "ERROR")
-        ]
-        if errores.empty:
-            st.markdown(
-                f"<div style='background:rgba(16,185,129,0.1);border-left:4px solid {COLOR_FLUIDO};"
-                f"padding:16px;border-radius:8px;color:{COLOR_FLUIDO};font-weight:600;'>"
-                f"✓ Sin errores en los ultimos 7 dias</div>",
-                unsafe_allow_html=True,
-            )
-        else:
-            st.dataframe(errores, use_container_width=True, hide_index=True)
 
 # ----------------------------------------------------------------
 # TAB HISTORICO
@@ -2523,27 +2170,37 @@ Fuente: TomTom Traffic Flow · VPS 1 + VPS 2</p>
                     )
                     st.success("Reporte generado. Haz clic en el boton de descarga.")
 
-# ============================================================
-# FOOTER
-# ============================================================
-st.markdown(f"""
-<div class="utb-footer">
-    <strong style="color:{UTB_CYAN};">Universidad Tecnológica de Bolívar</strong> ·
-    Monitor de Trafico Cartagena ·
-    Fuente: <span style="color:{UTB_WHITE};">TomTom Traffic Flow API</span>
-</div>
-""", unsafe_allow_html=True)
 
 # ============================================================
-# NOTA DE ACTUALIZACION MANUAL
+# FOOTER — cierre editorial del dashboard principal
 # ============================================================
-# El auto-refresco fue desactivado: recargaba la pagina completa y
-# perdia los filtros seleccionados (feedback del asesor). Ahora la
-# actualizacion es manual con el boton "Recargar datos" del menu lateral.
-st.markdown(
-    f"<div style='text-align:center;color:{UTB_GRAY};font-size:11px;"
-    f"margin-top:6px;padding:4px;'>"
-    f"Los datos no se actualizan solos · usa <b style='color:{UTB_CYAN};'>Recargar datos</b> "
-    f"en el menu lateral para traer la informacion mas reciente</div>",
-    unsafe_allow_html=True,
-)
+st.markdown(f"""
+<div class="dashboard-footer">
+    <div class="footer-brand">Smart City <span>Cartagena</span></div>
+    <p class="footer-lead">
+        Datos de movilidad convertidos en información para
+        <strong>analizar el comportamiento vial de la ciudad.</strong>
+    </p>
+    <div class="footer-grid">
+        <div>
+            <div class="footer-kicker">Qué muestra</div>
+            <p class="footer-copy">Velocidad actual, nivel de fluidez, demoras, rutas y comportamiento histórico de los nodos.</p>
+        </div>
+        <div>
+            <div class="footer-kicker">Cómo se interpreta</div>
+            <p class="footer-copy">El índice de fluidez compara la velocidad actual con la velocidad de flujo libre. Verde indica circulación fluida; rojo, mayor congestión.</p>
+        </div>
+        <div>
+            <div class="footer-kicker">Fuente y actualización</div>
+            <p class="footer-copy">TomTom Traffic Flow<br>28 consultas programadas al día<br>Consolidación de VPS 1 y VPS 2</p>
+        </div>
+    </div>
+    <div class="footer-bottom">
+        <span>Movilidad urbana basada en datos</span>
+        <a class="footer-admin-link" href="/admin" target="_self">
+            Ingresar al panel administrativo
+            <span class="footer-admin-arrow">→</span>
+        </a>
+    </div>
+</div>
+""", unsafe_allow_html=True)

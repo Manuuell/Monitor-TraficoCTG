@@ -1719,11 +1719,17 @@ with tab_historia:
                 evo = evo.set_index("consultation_time")
                 gaps = evo.index.to_series().diff() > pd.Timedelta(minutes=90)
                 if gaps.any():
-                    filas_gap = []
-                    for ts in evo.index[gaps]:
-                        filas_gap.append(pd.Series({"vel_actual": None, "vel_libre": None},
-                                                   name=ts - pd.Timedelta(minutes=1)))
-                    evo = pd.concat([evo, pd.DataFrame(filas_gap)]).sort_index()
+                    indices_gap = [
+                        ts - pd.Timedelta(minutes=1) for ts in evo.index[gaps]
+                    ]
+                    filas_gap = pd.DataFrame(
+                        {
+                            "vel_actual": [float("nan")] * len(indices_gap),
+                            "vel_libre": [float("nan")] * len(indices_gap),
+                        },
+                        index=pd.DatetimeIndex(indices_gap, name=evo.index.name),
+                    )
+                    evo = pd.concat([evo, filas_gap]).sort_index()
                 evo = evo.reset_index().rename(columns={"index": "consultation_time"})
 
                 fig_line = go.Figure()

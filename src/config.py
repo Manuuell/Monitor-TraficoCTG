@@ -14,8 +14,13 @@ RESULTADOS_DIR = BASE_DIR / "data" / "resultados"
 LOG_FILE = BASE_DIR / "logs" / "ejecuciones.jsonl"
 CRON_LOG = BASE_DIR / "logs" / "cron.log"
 
-# Credenciales Google
-CREDENCIALES_DIR = BASE_DIR / "credenciales"
+# Credenciales Google. En produccion conviene apuntar CREDENCIALES_DIR a una
+# ruta fuera del repositorio y de carpetas sincronizadas (Drive/iCloud).
+_credenciales_dir = os.environ.get("CREDENCIALES_DIR", "").strip()
+CREDENCIALES_DIR = (
+    Path(_credenciales_dir).expanduser()
+    if _credenciales_dir else BASE_DIR / "credenciales"
+)
 OAUTH_CLIENT_FILE = CREDENCIALES_DIR / "oauth_client.json"
 OAUTH_TOKEN_FILE = CREDENCIALES_DIR / "token.json"
 

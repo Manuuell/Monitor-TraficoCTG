@@ -3,11 +3,13 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import html
 import json
 import os
 import sys
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
+from urllib.parse import quote
 
 import pandas as pd
 import plotly.graph_objects as go
@@ -40,6 +42,11 @@ VERDE = "#10b981"
 AMBAR = "#f59e0b"
 NARANJA = "#f97316"
 ROJO = "#ef4444"
+
+
+def texto_html(valor: object) -> str:
+    """Escapa datos externos antes de interpolarlos en HTML habilitado."""
+    return html.escape(str(valor), quote=True)
 
 
 st.markdown(
@@ -290,7 +297,7 @@ def tarjeta_cuota(nombre: str, datos: dict) -> str:
     ultima_txt = ultima.strftime("%d/%m %H:%M") if pd.notna(ultima) else "Sin ejecución"
     return (
         f'<div class="quota-card" style="--quota:{color}">'
-        f'<div class="status-row"><div class="status-title">{nombre} · TomTom API</div>'
+        f'<div class="status-row"><div class="status-title">{texto_html(nombre)} · TomTom API</div>'
         f'<span class="status-pill" style="background:{color}18;color:{color}">{estado}</span></div>'
         f'<div class="progress-track"><div class="progress-fill" '
         f'style="width:{porcentaje*100:.1f}%;background:{color}"></div></div>'
@@ -316,15 +323,17 @@ def tarjeta_api_key(datos: dict) -> str:
     rol = "En uso" if datos["tipo"] == "principal" else "Reserva"
     progreso = min(float(pct), 100) if pct is not None else 0
     limite = f"{pct:.1f}% del límite mensual" if pct is not None else "Sin límite configurado"
-    nota = f" · {datos['motivo']}" if datos.get("motivo") else ""
+    nota = f" · {texto_html(datos['motivo'])}" if datos.get("motivo") else ""
+    identificador = texto_html(datos["identificador"])
+    ultimo_uso = texto_html(datos["ultima_vez"])
     return (
         f'<div class="api-key-card" style="--key-color:{color}">'
-        f'<div class="status-row"><div><div class="api-key-id">ID · {datos["identificador"]}</div>'
+        f'<div class="status-row"><div><div class="api-key-id">ID · {identificador}</div>'
         f'<div class="api-key-service">TomTom Traffic Flow · {rol}</div></div>'
         f'<span class="status-pill" style="background:{color}18;color:{color}">{estado}</span></div>'
         f'<div class="progress-track"><div class="progress-fill" style="width:{progreso:.1f}%;background:{color}"></div></div>'
         f'<div class="quota-meta"><span>{datos["consumo"]:,} / {datos["cuota"]:,} llamadas</span><span>{limite}</span></div>'
-        f'<div class="status-copy">Último uso: {datos["ultima_vez"]}{nota}</div></div>'
+        f'<div class="status-copy">Último uso: {ultimo_uso}{nota}</div></div>'
     )
 
 
@@ -344,22 +353,36 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-with st.spinner("Actualizando estado operativo..."):
-    logs = servicios.cargar_logs()
-    mediciones, fuente_mediciones = servicios.cargar_mediciones_recientes(1)
-    resumen = servicios.resumen_operativo(logs, mediciones)
-    ejecuciones = servicios.combinar_ejecuciones(logs, mediciones)
-    google = servicios.verificar_google()
-    sheets = servicios.capacidad_sheets()
-    sheet = servicios.capacidad_sheet(sheets)
+# El primer render solo usa PostgreSQL agregado y archivos locales. Consultar
+# Drive y la metadata de cada Sheet aqui hacia que el formulario de acceso
+# quedara atenuado durante varios segundos despues de ingresar la contraseña.
+with st.spinner("Cargando monitor operativo..."):
+    ejecuciones, fuente_ejecuciones = servicios.cargar_ejecuciones_recientes(7)
+    resumen = servicios.resumen_operativo_ejecuciones(ejecuciones)
     api_keys = servicios.estado_api_keys()
+
+# Los servicios externos se verifican bajo demanda y el resultado queda en la
+# sesion. No se confunde "aun no consultado" con un fallo real.
+google_consultado = "admin_google" in st.session_state
+google = st.session_state.get("admin_google", {
+    "ok": None,
+    "estado": "Sin verificar",
+    "detalle": "Pulsa «Verificar Google y Sheets» para consultar los servicios externos.",
+})
+sheets = st.session_state.get("admin_sheets", {
+    "ok": None,
+    "partes": [],
+    "errores": [],
+    "detalle": "Capacidad todavía no consultada.",
+})
+sheet = servicios.capacidad_sheet(sheets) if sheets.get("ok") else {}
 
 proxima = servicios.proxima_ejecucion()
 ultima = resumen["ultima"]
 
 m1, m2, m3, m4 = st.columns(4)
 with m1:
-    st.metric("Google", google["estado"], "Drive + Sheets", delta_color="off")
+    st.metric("Google", google["estado"], "bajo demanda", delta_color="off")
 with m2:
     st.metric("Ejecuciones hoy", resumen["ejecuciones"], "28 programadas", delta_color="off")
 with m3:
@@ -385,19 +408,32 @@ with tab_resumen:
     izquierda, derecha = st.columns([1.35, 1])
     with izquierda:
         st.markdown('<div class="section-title">Servicios conectados</div>', unsafe_allow_html=True)
-        color_google = VERDE if google["ok"] else ROJO
+        color_google = VERDE if google["ok"] is True else (ROJO if google["ok"] is False else AMBAR)
+        estado_google = texto_html(google["estado"])
+        detalle_google = texto_html(google["detalle"])
         st.markdown(
             f"""
             <div class="status-card">
                 <div class="status-row">
                     <div class="status-title">Conexión con Google</div>
-                    <span class="status-pill" style="background:{color_google}18;color:{color_google}">{google['estado']}</span>
+                    <span class="status-pill" style="background:{color_google}18;color:{color_google}">{estado_google}</span>
                 </div>
-                <div class="status-copy">{google['detalle']}</div>
+                <div class="status-copy">{detalle_google}</div>
             </div>
             """,
             unsafe_allow_html=True,
         )
+        if st.button(
+            "Verificar Google y Sheets",
+            width="stretch",
+            key="admin_verificar_google",
+        ):
+            with st.spinner("Consultando Drive y la capacidad de Sheets..."):
+                servicios.verificar_google.clear()
+                servicios.capacidad_sheets.clear()
+                st.session_state["admin_google"] = servicios.verificar_google()
+                st.session_state["admin_sheets"] = servicios.capacidad_sheets()
+            st.rerun()
         st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
         if sheets.get("ok"):
             for libro in sheets.get("partes", []):
@@ -409,16 +445,19 @@ with tab_resumen:
                     else "Libro histórico; solo lectura"
                 )
                 etiqueta = "ACTIVA" if libro.get("activa") else f"{porcentaje_sheet:.1f}%"
+                parte = texto_html(libro["parte"])
+                nombre_libro = texto_html(libro["nombre"])
+                proyeccion_html = texto_html(proyeccion)
                 st.markdown(
                     f"""
                     <div class="status-card">
                         <div class="status-row">
-                            <div class="status-title">Google Sheets · Parte {libro['parte']}</div>
+                            <div class="status-title">Google Sheets · Parte {parte}</div>
                             <span class="status-pill" style="background:{color_sheet}18;color:{color_sheet}">{etiqueta}</span>
                         </div>
                         <div class="progress-track"><div class="progress-fill" style="width:{porcentaje_sheet:.1f}%;background:{color_sheet}"></div></div>
                         <div class="quota-meta"><span>{libro['celdas']:,} celdas asignadas</span><span>{porcentaje_sheet:.1f}% de {libro['limite']:,}</span></div>
-                        <div class="status-copy">{libro['nombre']} · {libro['filas']:,} filas × {libro['columnas']} columnas · {proyeccion}</div>
+                        <div class="status-copy">{nombre_libro} · {libro['filas']:,} filas × {libro['columnas']} columnas · {proyeccion_html}</div>
                     </div>
                     <div style="height:12px"></div>
                     """,
@@ -426,12 +465,15 @@ with tab_resumen:
                 )
             if sheets.get("errores"):
                 st.warning("Algunas partes no pudieron consultarse: " + " · ".join(sheets["errores"]))
-        else:
+        elif google_consultado:
             st.error(f"No se pudo consultar la capacidad de Sheets: {sheets.get('detalle', 'Sin detalle')}")
+        else:
+            st.info("La capacidad de Sheets se consulta solo cuando la necesitas para acelerar el ingreso.")
 
     with derecha:
         st.markdown('<div class="section-title">Accesos rápidos</div>', unsafe_allow_html=True)
-        drive_url = f"https://drive.google.com/drive/folders/{config.DRIVE_FOLDER_ID}"
+        drive_id = quote(str(config.DRIVE_FOLDER_ID), safe="")
+        drive_url = f"https://drive.google.com/drive/folders/{drive_id}"
         # Un acceso por libro del historico (Parte 1, Parte 2, ...); si Drive
         # no responde, al menos el libro activo
         libros = [
@@ -439,16 +481,17 @@ with tab_resumen:
             for libro in sheets.get("partes", []) if libro.get("sheet_id")
         ] or [(None, sheet.get("sheet_id", config.SHEET_ID), True)]
         enlaces_sheets = "".join(
-            f'<a class="quick-link" href="https://docs.google.com/spreadsheets/d/{sheet_id}" target="_blank">'
+            f'<a class="quick-link" href="https://docs.google.com/spreadsheets/d/{quote(str(sheet_id), safe="")}" '
+            f'target="_blank" rel="noopener noreferrer">'
             f'<span class="quick-icon">📊</span><span><div class="quick-title">Google Sheets'
-            f'{f" · Parte {parte}" if parte else ""}</div><div class="quick-copy">'
+            f'{f" · Parte {texto_html(parte)}" if parte else ""}</div><div class="quick-copy">'
             f'{"Libro activo de mediciones" if activa else "Libro histórico (solo lectura)"}</div></span></a>'
             for parte, sheet_id, activa in libros
         )
         st.markdown(
             f"""
             <div class="quick-grid">
-                <a class="quick-link" href="{drive_url}" target="_blank">
+                <a class="quick-link" href="{drive_url}" target="_blank" rel="noopener noreferrer">
                     <span class="quick-icon">📁</span><span><div class="quick-title">Google Drive</div><div class="quick-copy">Archivos CSV y respaldos</div></span>
                 </a>
                 {enlaces_sheets}
@@ -457,8 +500,10 @@ with tab_resumen:
             unsafe_allow_html=True,
         )
         st.markdown('<div class="section-title">Acciones seguras</div>', unsafe_allow_html=True)
-        if st.button("↻ Actualizar todos los indicadores", width="stretch", type="primary"):
-            st.cache_data.clear()
+        if st.button("↻ Actualizar monitor operativo", width="stretch", type="primary"):
+            servicios.cargar_logs.clear()
+            servicios.cargar_ejecuciones_recientes.clear()
+            servicios.estado_api_keys.clear()
             st.rerun()
         diagnostico_json = json.dumps(
             {
@@ -503,9 +548,12 @@ with tab_resumen:
         )
     for vps in api_keys["vps"]:
         turnos = " y ".join(vps["turnos"]) if vps["turnos"] else "sin turnos asignados"
+        vps_id = texto_html(vps["vps_id"])
+        turnos_html = texto_html(turnos)
+        actualizado = texto_html(vps["actualizado"])
         st.markdown(
-            f'<div class="vps-keys-head"><span class="vps-keys-name">VPS {vps["vps_id"]}</span>'
-            f'<span class="vps-keys-meta">{turnos} · actualizado {vps["actualizado"]}</span></div>',
+            f'<div class="vps-keys-head"><span class="vps-keys-name">VPS {vps_id}</span>'
+            f'<span class="vps-keys-meta">{turnos_html} · actualizado {actualizado}</span></div>',
             unsafe_allow_html=True,
         )
         for grupo, titulo in (("principal", "En uso"), ("reserva", "Reserva")):
@@ -532,62 +580,135 @@ with tab_resumen:
 
 with tab_ejecuciones:
     st.markdown('<div class="section-title">Monitor del proceso</div>', unsafe_allow_html=True)
-    st.caption(f"VPS 1 desde el log local · VPS 2 reconstruido desde {fuente_mediciones}")
-    if ejecuciones.empty:
-        st.info("No hay ejecuciones registradas.")
-    else:
-        columnas_visibles = [
-            columna for columna in [
-                "timestamp", "vps_id", "total_nodos", "consultas_ok",
-                "consultas_error", "estado", "error",
-            ] if columna in ejecuciones.columns
-        ]
-        recientes = ejecuciones.tail(30).sort_values("timestamp", ascending=False)
-        st.dataframe(recientes[columnas_visibles], width="stretch", hide_index=True)
+    st.caption(
+        f"Ventana móvil de 7 días · Fuente: {fuente_ejecuciones}. "
+        "Una ejecución agrupa todos los nodos consultados por un VPS en el mismo instante."
+    )
+
+    errores = servicios.errores_recientes(ejecuciones, 7)
+    total_parciales = int((errores["estado"] == "PARCIAL").sum()) if not errores.empty else 0
+    total_fallidas = int((errores["estado"] == "ERROR").sum()) if not errores.empty else 0
+    k1, k2, k3 = st.columns(3)
+    k1.metric("Ejecuciones · 7 días", len(ejecuciones))
+    k2.metric("Parciales · 7 días", total_parciales)
+    k3.metric("Fallidas · 7 días", total_fallidas)
+
+    st.markdown(
+        '<div class="section-title">Últimas 20 ejecuciones por VPS</div>',
+        unsafe_allow_html=True,
+    )
+    tab_vps1, tab_vps2 = st.tabs(["VPS 1", "VPS 2"])
+    for contenedor, vps_id in ((tab_vps1, "1"), (tab_vps2, "2")):
+        with contenedor:
+            recientes = servicios.ultimas_ejecuciones(ejecuciones, vps_id, 20)
+            if recientes.empty:
+                st.info(f"No hay ejecuciones del VPS {vps_id} en los últimos 7 días.")
+                continue
+            tabla = recientes.rename(columns={
+                "timestamp": "Fecha y hora",
+                "total_nodos": "Nodos",
+                "consultas_ok": "Correctas",
+                "consultas_error": "Fallidas",
+                "estado": "Estado",
+                "error": "Detalle",
+            })[["Fecha y hora", "Nodos", "Correctas", "Fallidas", "Estado", "Detalle"]]
+            st.dataframe(
+                tabla,
+                width="stretch",
+                hide_index=True,
+                column_config={
+                    "Fecha y hora": st.column_config.DatetimeColumn(
+                        "Fecha y hora", format="DD/MM/YYYY HH:mm:ss"
+                    ),
+                    "Detalle": st.column_config.TextColumn("Detalle", width="large"),
+                },
+            )
+
+    if not ejecuciones.empty:
         st.download_button(
-            "Descargar registro de ejecuciones",
-            ejecuciones.to_csv(index=False).encode("utf-8"),
-            file_name=f"ejecuciones_{datetime.now():%Y%m%d_%H%M%S}.csv",
+            "Descargar ejecuciones de los últimos 7 días",
+            ejecuciones.sort_values("timestamp", ascending=False).to_csv(index=False).encode("utf-8"),
+            file_name=f"ejecuciones_7_dias_{datetime.now():%Y%m%d_%H%M%S}.csv",
             mime="text/csv",
         )
 
-        hoy = datetime.now().date()
-        ejecuciones_hoy = ejecuciones[ejecuciones["timestamp"].dt.date == hoy].copy()
-        if not ejecuciones_hoy.empty:
-            ejecuciones_hoy["hora"] = ejecuciones_hoy["timestamp"].dt.strftime("%H:%M")
-            por_hora = ejecuciones_hoy.groupby("hora").agg(
-                consultas_ok=("consultas_ok", "sum"),
-                consultas_error=("consultas_error", "sum"),
-            ).reset_index()
-            figura = go.Figure()
-            figura.add_bar(
-                x=por_hora["hora"], y=por_hora["consultas_ok"],
-                name="Correctas", marker_color=VERDE,
-            )
-            figura.add_bar(
-                x=por_hora["hora"], y=por_hora["consultas_error"],
-                name="Fallidas", marker_color=ROJO,
-            )
-            figura.update_layout(
-                barmode="stack", height=320, paper_bgcolor="rgba(0,0,0,0)",
-                plot_bgcolor="rgba(0,0,0,0)", font_color=AZUL_OSC,
-                margin=dict(l=20, r=20, t=40, b=35),
-                xaxis=dict(title="Hora", gridcolor="#e3eaf7"),
-                yaxis=dict(title="Consultas", gridcolor="#e3eaf7"),
-                legend=dict(orientation="h", y=1.08),
-            )
-            st.plotly_chart(figura, theme=None, config={"displayModeBar": False})
+    st.markdown(
+        '<div class="section-title">Ejecuciones por hora · últimos 7 días</div>',
+        unsafe_allow_html=True,
+    )
+    por_hora = servicios.ejecuciones_por_hora(ejecuciones, 7)
+    if por_hora.empty:
+        st.info("No hay datos suficientes para construir el gráfico por hora.")
+    else:
+        figura = go.Figure()
+        figura.add_bar(
+            x=por_hora["hora"], y=por_hora["completas"],
+            name="Completas", marker_color=VERDE,
+            hovertemplate="%{x}<br>Completas: %{y}<extra></extra>",
+        )
+        figura.add_bar(
+            x=por_hora["hora"], y=por_hora["parciales"],
+            name="Parciales", marker_color=AMBAR,
+            hovertemplate="%{x}<br>Parciales: %{y}<extra></extra>",
+        )
+        figura.add_bar(
+            x=por_hora["hora"], y=por_hora["fallidas"],
+            name="Fallidas", marker_color=ROJO,
+            hovertemplate="%{x}<br>Fallidas: %{y}<extra></extra>",
+        )
+        figura.update_layout(
+            barmode="stack",
+            height=360,
+            paper_bgcolor="rgba(0,0,0,0)",
+            plot_bgcolor="rgba(0,0,0,0)",
+            font_color=AZUL_OSC,
+            margin=dict(l=20, r=20, t=30, b=45),
+            xaxis=dict(
+                title="Hora del día",
+                categoryorder="array",
+                categoryarray=[f"{hora:02d}:00" for hora in range(24)],
+                gridcolor="#e3eaf7",
+            ),
+            yaxis=dict(title="Número de ejecuciones", gridcolor="#e3eaf7", dtick=1),
+            legend=dict(orientation="h", y=1.12, x=0),
+            hovermode="x unified",
+        )
+        st.plotly_chart(
+            figura,
+            use_container_width=True,
+            theme=None,
+            config={"displayModeBar": False},
+        )
 
-        desde = datetime.now() - timedelta(days=7)
-        errores = ejecuciones[
-            (ejecuciones["timestamp"] >= desde)
-            & (ejecuciones["estado"].astype(str).str.upper() == "ERROR")
-        ]
-        st.markdown('<div class="section-title">Errores de los últimos 7 días</div>', unsafe_allow_html=True)
-        if errores.empty:
-            st.success("Sin errores registrados durante los últimos 7 días.")
-        else:
-            st.dataframe(errores.sort_values("timestamp", ascending=False), width="stretch", hide_index=True)
+    st.markdown(
+        '<div class="section-title">Errores de los últimos 7 días</div>',
+        unsafe_allow_html=True,
+    )
+    st.caption(
+        "Incluye fallos totales del proceso y ejecuciones parciales con uno o más nodos fallidos."
+    )
+    if errores.empty:
+        st.success("Sin errores ni ejecuciones parciales durante los últimos 7 días.")
+    else:
+        tabla_errores = errores.rename(columns={
+            "timestamp": "Fecha y hora",
+            "vps_id": "VPS",
+            "consultas_ok": "Correctas",
+            "consultas_error": "Nodos fallidos",
+            "estado": "Estado",
+            "error": "Detalle",
+        })[["Fecha y hora", "VPS", "Estado", "Correctas", "Nodos fallidos", "Detalle"]]
+        st.dataframe(
+            tabla_errores,
+            width="stretch",
+            hide_index=True,
+            column_config={
+                "Fecha y hora": st.column_config.DatetimeColumn(
+                    "Fecha y hora", format="DD/MM/YYYY HH:mm:ss"
+                ),
+                "Detalle": st.column_config.TextColumn("Detalle", width="large"),
+            },
+        )
 
 with tab_diagnostico:
     st.markdown('<div class="section-title">Configuración y servicios</div>', unsafe_allow_html=True)

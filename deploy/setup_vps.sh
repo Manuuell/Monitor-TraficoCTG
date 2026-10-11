@@ -7,6 +7,7 @@
 #   ./deploy/setup_vps.sh
 
 set -e
+umask 077
 
 PROJECT_DIR="/home/ubuntu/proyect_r"
 
@@ -21,7 +22,7 @@ sudo apt upgrade -y
 
 # 2. Instalar dependencias
 echo ">>> Instalando Python y herramientas..."
-sudo apt install -y python3 python3-pip python3-venv git cron
+sudo apt install -y python3 python3-pip python3-venv git cron nginx
 
 # 3. Configurar zona horaria
 echo ">>> Configurando zona horaria America/Bogota..."
@@ -30,6 +31,7 @@ sudo timedatectl set-timezone America/Bogota
 # 4. Crear venv e instalar paquetes
 echo ">>> Creando entorno virtual..."
 cd "$PROJECT_DIR"
+python3 -c 'import sys; assert sys.version_info >= (3, 10), "Se requiere Python 3.10 o superior"'
 python3 -m venv venv
 source venv/bin/activate
 pip install --upgrade pip
@@ -37,6 +39,7 @@ pip install -r requirements.txt
 
 # 5. Crear carpetas si no existen
 mkdir -p data/resultados logs
+install -d -m 700 /home/ubuntu/.config/proyect_r/credenciales
 
 # 6. Verificar que .env existe
 if [ ! -f "$PROJECT_DIR/.env" ]; then
@@ -46,6 +49,14 @@ if [ ! -f "$PROJECT_DIR/.env" ]; then
     echo "    cp .env.example .env"
     echo "    nano .env"
     echo ""
+fi
+
+# Los secretos no deben ser legibles por otros usuarios del VPS.
+if [ -f "$PROJECT_DIR/.env" ]; then
+    chmod 600 "$PROJECT_DIR/.env"
+fi
+if [ -d "$PROJECT_DIR/credenciales" ]; then
+    find "$PROJECT_DIR/credenciales" -type f -exec chmod 600 {} +
 fi
 
 # 7. Dar permisos al script de ejecucion

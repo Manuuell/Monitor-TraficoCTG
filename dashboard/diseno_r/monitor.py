@@ -1,0 +1,2410 @@
+"""
+Dashboard Streamlit - Monitor de Trafico TomTom Cartagena
+Variante de prueba con la paleta del dashboard en R (app_prueba.R): fondo
+claro, tarjetas blancas, azul + menta y tipografia Inter. Conserva los logos
+UTB. Copia de dashboard/monitor.py: el original no se toca.
+Se levanta con dashboard/diseno_r/correr.sh (puerto 8503).
+"""
+import json
+import sys
+import time
+import glob
+import streamlit.components.v1 as components
+from datetime import datetime, timedelta
+from pathlib import Path
+
+import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
+import streamlit as st
+from streamlit_folium import st_folium
+
+# Un nivel mas abajo que el original (dashboard/diseno_r/)
+BASE_DIR = Path(__file__).resolve().parent.parent.parent
+sys.path.insert(0, str(BASE_DIR / "src"))
+import config        # noqa: E402
+import google_upload  # noqa: E402
+import mapa_nodos     # noqa: E402
+import red_nodos      # noqa: E402
+
+# ============================================================
+# CONFIGURACION DE PAGINA
+# ============================================================
+st.set_page_config(
+    page_title="UTB - Monitor de Trafico Cartagena",
+    layout="wide",
+    page_icon="🚦",
+    initial_sidebar_state="expanded",
+)
+
+# ============================================================
+# PALETA DEL DASHBOARD R (app_prueba.R) — tema claro azul + menta
+# ============================================================
+R_AZUL_OSC    = "#12307a"   # --blue-d / --ink: tinta y titulos
+R_AZUL        = "#1f48b8"   # --blue: barra lateral, acentos de texto
+R_AZUL_MED    = "#2f66e0"   # --blue-m
+R_MENTA       = "#2dd4bf"   # --mint: bordes y detalles
+R_MENTA_OSC   = "#14b8a6"   # --mint-d
+R_MENTA_CLARA = "#5eead4"   # acento sobre los fondos azules (encabezado, barra lateral)
+R_LINEA       = "#ececf0"   # --line: divisores y bordes de controles
+R_TENUE       = "#58585d"   # --muted: texto secundario
+R_SOMBRA      = "0 1px 2px rgba(17,17,19,.06), 0 12px 28px -12px rgba(17,17,19,.14)"
+
+# Mismos nombres que el original para no reescribir cada uso. Cambia el
+# papel de algunos: UTB_WHITE pasa a ser la tinta (texto principal),
+# UTB_NAVY_LIGHT la superficie blanca de las tarjetas y UTB_CYAN el acento
+# de texto (la menta no se lee sobre blanco; queda para bordes y barras).
+UTB_NAVY       = R_AZUL
+UTB_NAVY_DARK  = R_AZUL_OSC
+UTB_NAVY_LIGHT = "#ffffff"
+UTB_BLUE_LIGHT = R_AZUL_MED
+UTB_CYAN       = R_AZUL
+UTB_CYAN_DARK  = R_MENTA_OSC
+UTB_BG         = "#fcfcfd"
+UTB_BORDER     = R_LINEA
+UTB_WHITE      = "#111113"
+UTB_GRAY       = R_TENUE
+SUPERFICIE_SUAVE = "#f6f6f8"   # avisos y leyendas sobre el fondo claro
+SERIE_ACTUAL   = "#3b82f6"     # COL$azul: serie principal de las graficas
+SERIE_LIBRE    = "#94a3b8"     # COL$gris: velocidad de flujo libre
+
+# Colores de nivel del R por nombre (Fluido verde, Moderado ambar,
+# Congestionado rojo). "Lento" no existe en el R: toma su naranja (bg-orange).
+# Los umbrales siguen siendo los del asesor (0.90 / 0.75 / 0.60).
+COLOR_FLUIDO        = "#10b981"   # verde esmeralda — ratio > 0.90
+COLOR_MODERADO      = "#f59e0b"   # ambar           — 0.75 a 0.90
+COLOR_LENTO         = "#f97316"   # naranja         — 0.60 a 0.75
+COLOR_CONGESTIONADO = "#ef4444"   # rojo            — ratio < 0.60
+
+# Umbrales de clasificacion de congestion (revisados tras feedback del asesor:
+# el esquema anterior 0.75/0.50 subestimaba nodos como Bazurto con ratio ~0.6)
+UMBRAL_FLUIDO   = 0.90
+UMBRAL_MODERADO = 0.75
+UMBRAL_LENTO    = 0.60
+
+
+def clasificar_ratio(r):
+    """Devuelve (color_hex, etiqueta) segun el ratio de velocidad."""
+    if r is None or (isinstance(r, float) and pd.isna(r)):
+        return UTB_GRAY, "Sin dato"
+    if r > UMBRAL_FLUIDO:
+        return COLOR_FLUIDO, "Fluido"
+    if r > UMBRAL_MODERADO:
+        return COLOR_MODERADO, "Moderado"
+    if r > UMBRAL_LENTO:
+        return COLOR_LENTO, "Lento"
+    return COLOR_CONGESTIONADO, "Congestionado"
+
+def _rgba(hex_color: str, alfa: float) -> str:
+    """'#rrggbb' -> 'rgba(r,g,b,alfa)' para fondos translucidos."""
+    h = hex_color.lstrip("#")
+    return f"rgba({int(h[0:2], 16)},{int(h[2:4], 16)},{int(h[4:6], 16)},{alfa})"
+
+
+NUMERIC_COLS = [
+    "lat", "lon", "currentSpeed", "freeFlowSpeed", "currentTravelTime",
+    "freeFlowTravelTime", "confidence", "delay_abs_seg", "delay_rel_pct",
+    "velocidad_ratio", "http_status",
+]
+
+LOGO_PATH = Path(__file__).parent / "assets" / "utb-logo.svg"
+
+
+def cargar_logo_utb() -> str:
+    if not LOGO_PATH.exists():
+        return ""
+    svg_text = LOGO_PATH.read_text(encoding="utf-8")
+    svg_text = svg_text.replace('width="183"', 'width="100%"').replace('height="46"', 'height="auto"')
+    return svg_text
+
+
+LOGO_UTB_SVG = cargar_logo_utb()
+
+# ============================================================
+# CSS PERSONALIZADO — Paleta del dashboard R + Inter
+# ============================================================
+st.markdown(f"""
+<style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+
+    .stApp, .stApp p, .stApp h1, .stApp h2, .stApp h3, .stApp h4,
+    .stApp label, .stApp a, .stApp td, .stApp th, .stApp button, .stApp input,
+    .stApp [data-testid="stMarkdown"],
+    .stApp [data-testid="stMetricLabel"],
+    .stApp [data-testid="stMetricValue"],
+    .stApp [data-testid="stMetricDelta"],
+    [data-testid="stSidebar"] p,
+    [data-testid="stSidebar"] h1,
+    [data-testid="stSidebar"] h2,
+    [data-testid="stSidebar"] h3,
+    [data-testid="stSidebar"] label {{
+        font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif !important;
+    }}
+
+    /* ── Fondo general (.content-wrapper del R) ── */
+    .stApp {{
+        background: #fcfcfd;
+        color: #111113;
+    }}
+    .block-container {{
+        padding-top: 1.5rem;
+        padding-bottom: 2rem;
+        max-width: 1480px;
+    }}
+
+    /* ── Encabezado grande (.hero del R) ── */
+    .utb-header {{
+        background: linear-gradient(120deg, #1b3fa6 0%, #2a5bd0 55%, #3f7cf0 100%);
+        padding: 28px 34px;
+        border-radius: 36px;
+        margin-bottom: 28px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 28px;
+        flex-wrap: wrap;
+        box-shadow: 0 1px 2px rgba(17,17,19,.06), 0 18px 36px -18px rgba(31,72,184,.38);
+        position: relative;
+        overflow: hidden;
+        isolation: isolate;
+    }}
+    .utb-header::before {{
+        content: "";
+        position: absolute;
+        z-index: -1;
+        width: 360px;
+        height: 360px;
+        right: -110px;
+        top: -205px;
+        border: 1px solid rgba(255,255,255,.18);
+        border-radius: 50%;
+        box-shadow: 0 0 0 46px rgba(255,255,255,.035), 0 0 0 92px rgba(255,255,255,.025);
+    }}
+    .utb-header::after {{
+        content: "";
+        position: absolute;
+        z-index: -1;
+        inset: 0;
+        opacity: .13;
+        background-image: radial-gradient(rgba(255,255,255,.8) .8px, transparent .8px);
+        background-size: 18px 18px;
+        mask-image: linear-gradient(90deg, transparent 28%, #000 68%, transparent 100%);
+    }}
+    .utb-header-content {{
+        position: relative;
+        z-index: 2;
+        min-width: 410px;
+    }}
+    .utb-eyebrow {{
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 9px;
+        color: #dbe7ff;
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: .13em;
+        text-transform: uppercase;
+    }}
+    .utb-live-dot {{
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: {R_MENTA_CLARA};
+        box-shadow: 0 0 0 5px rgba(94,234,212,.16);
+    }}
+    .utb-brand {{
+        color: #ffffff !important;
+        font-size: 44px !important;
+        font-weight: 800 !important;
+        margin: 0 0 14px !important;
+        padding: 0 !important;
+        letter-spacing: -1.6px;
+        line-height: 1.1 !important;
+    }}
+    .utb-brand-accent {{ color: {R_MENTA_CLARA}; font-weight: 800; }}
+    .utb-header-chips {{
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+    }}
+    .utb-header-chip {{
+        display: inline-flex;
+        align-items: center;
+        min-height: 28px;
+        padding: 5px 11px;
+        border: 1px solid rgba(255,255,255,.20);
+        border-radius: 999px;
+        background: rgba(255,255,255,.10);
+        color: #eef4ff;
+        font-size: 11px;
+        font-weight: 600;
+        letter-spacing: .02em;
+        backdrop-filter: blur(6px);
+    }}
+    .utb-route {{
+        position: absolute;
+        z-index: 1;
+        top: 50%;
+        right: 245px;
+        width: 215px;
+        height: 84px;
+        transform: translateY(-50%);
+        opacity: .78;
+        pointer-events: none;
+    }}
+    .utb-status {{
+        position: relative;
+        z-index: 2;
+        min-width: 210px;
+        text-align: right;
+    }}
+    .utb-status-label {{
+        margin-bottom: 7px;
+        color: rgba(255,255,255,.68);
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: .12em;
+        text-transform: uppercase;
+    }}
+    .utb-clock {{
+        color: {R_AZUL_OSC};
+        font-size: 14px;
+        font-weight: 600;
+        background: #ffffff;
+        padding: 9px 22px;
+        border-radius: 999px;
+        display: inline-block;
+    }}
+    .utb-next-run {{
+        margin-top: 9px;
+        color: #dbe7ff;
+        font-size: 12px;
+    }}
+    .utb-next-run span {{ color: {R_MENTA_CLARA}; font-weight: 700; }}
+
+    /* ── Tarjetas de indicadores (.small-box del R) ── */
+    [data-testid="stMetric"] {{
+        background: #ffffff;
+        padding: 22px 24px 20px;
+        border-radius: 28px;
+        border: 0;
+        box-shadow: {R_SOMBRA};
+        transition: all 0.2s;
+        position: relative;
+        overflow: hidden;
+    }}
+    [data-testid="stMetric"]::before {{
+        content: "";
+        display: block;
+        width: 34px;
+        height: 5px;
+        margin-bottom: 15px;
+        border-radius: 999px;
+        background: linear-gradient(90deg, {R_AZUL_MED}, {R_MENTA});
+    }}
+    [data-testid="stMetric"]:hover {{
+        box-shadow: 0 2px 4px rgba(17,17,19,.07), 0 20px 34px -14px rgba(17,17,19,.2);
+        transform: translateY(-2px);
+    }}
+    [data-testid="stMetricLabel"], [data-testid="stMetricLabel"] p {{
+        color: {R_TENUE} !important;
+        font-size: 13px !important;
+        font-weight: 600 !important;
+        text-transform: none;
+        letter-spacing: .02em;
+    }}
+    [data-testid="stMetricValue"] {{
+        color: {R_AZUL_OSC} !important;
+        font-size: 34px !important;
+        font-weight: 700 !important;
+        letter-spacing: -1px;
+    }}
+
+    /* ── Etiquetas y campos (controles del R) ── */
+    .stSelectbox label, .stTextInput label, .stDateInput label,
+    .stSelectbox label p, .stTextInput label p, .stDateInput label p {{
+        color: {R_TENUE} !important;
+        font-size: 11px !important;
+        font-weight: 700 !important;
+        text-transform: uppercase;
+        letter-spacing: 0.7px;
+    }}
+    .stApp [data-baseweb="select"] > div,
+    .stApp [data-baseweb="input"] {{
+        background: #f7faff !important;
+        border-color: #cbd9f3 !important;
+        border-radius: 10px !important;
+    }}
+    .stApp [data-baseweb="input"] > div, .stApp input {{ background: transparent !important; }}
+    [data-testid="stDataFrame"] {{
+        background: #ffffff;
+        border-radius: 24px;
+        border: 0;
+        box-shadow: {R_SOMBRA};
+        overflow: hidden;
+    }}
+
+    /* ── Graficas y mapas en caja blanca (.box del R) ── */
+    [data-testid="stPlotlyChart"] {{
+        background: #ffffff;
+        border: 0;
+        border-radius: 28px;
+        box-shadow: {R_SOMBRA};
+        padding: 14px 16px 10px;
+    }}
+    iframe[title="streamlit_folium.st_folium"] {{
+        border: 0 !important;
+        border-radius: 28px;
+        box-shadow: {R_SOMBRA};
+    }}
+
+    /* ── Barra lateral (degradado azul del R) ── */
+    [data-testid="stSidebar"] {{
+        background: linear-gradient(180deg, #1f48b8 0%, #2a5bd0 60%, #3b73e6 100%) !important;
+        border-right: 0;
+    }}
+    [data-testid="stSidebar"] > div {{ background: transparent !important; }}
+    [data-testid="stSidebar"] * {{ color: #dbe7ff !important; }}
+    [data-testid="stSidebar"] h1,
+    [data-testid="stSidebar"] h2,
+    [data-testid="stSidebar"] h3 {{ color: #ffffff !important; }}
+    [data-testid="stSidebar"] hr {{ border-color: rgba(255,255,255,0.2) !important; }}
+    [data-testid="stSidebar"] [data-testid="stExpander"] {{
+        background: rgba(255,255,255,0.08);
+        border: 1px solid rgba(255,255,255,0.2);
+        border-radius: 10px;
+    }}
+    [data-testid="stSidebar"] [data-testid="stExpander"] details,
+    [data-testid="stSidebar"] [data-testid="stExpander"] summary {{
+        background: transparent !important;
+        border: 0 !important;
+    }}
+    [data-testid="stSidebar"] [data-baseweb="select"] > div {{
+        background: rgba(255,255,255,0.12) !important;
+        border: 1px solid rgba(255,255,255,0.28) !important;
+        border-radius: 10px !important;
+    }}
+    [data-testid="stSidebar"] [data-baseweb="select"] svg {{ fill: #ffffff !important; }}
+    /* Los botones tipo pildora mantienen contraste sobre la barra lateral */
+    [data-testid="stSidebar"] .stButton button,
+    [data-testid="stSidebar"] .stButton button * {{ color: #ffffff !important; }}
+
+    /* ── Pestañas (.nav-tabs-custom del R) ── */
+    .stTabs [data-baseweb="tab-list"] {{
+        gap: 6px;
+        background: #ffffff;
+        border: 0;
+        border-radius: 999px;
+        padding: 6px;
+        box-shadow: {R_SOMBRA};
+        overflow-x: auto;
+    }}
+    .stTabs [data-baseweb="tab"] {{
+        background: transparent;
+        border-radius: 999px;
+        padding: 10px 20px;
+        color: {R_TENUE};
+        font-weight: 600;
+        font-size: 14px;
+    }}
+    .stTabs [data-baseweb="tab"] p {{ color: inherit; font-weight: 600; }}
+    .stTabs [aria-selected="true"] {{
+        background: #111113 !important;
+        color: #ffffff !important;
+        box-shadow: none;
+    }}
+    .stTabs [data-baseweb="tab-highlight"], .stTabs [data-baseweb="tab-border"] {{
+        display: none;
+    }}
+
+    /* ── Botones (.btn-success del R) ── */
+    .stButton button, .stDownloadButton button {{
+        background: #111113;
+        color: #ffffff;
+        border: 1px solid #111113;
+        border-radius: 999px;
+        font-weight: 600;
+        padding: 8px 20px;
+        transition: all 0.2s;
+    }}
+    .stButton button p, .stDownloadButton button p {{ color: inherit; font-weight: 600; }}
+    .stButton button:hover, .stDownloadButton button:hover {{
+        background: {R_AZUL};
+        border-color: {R_AZUL};
+        color: #ffffff;
+        transform: translateY(-1px);
+    }}
+
+    /* ── Titulos de seccion (.sec-head del R): tinta, mayusculas, filete menta ── */
+    hr {{ border-color: {R_LINEA} !important; }}
+    h2 {{ color: #111113; font-weight: 700; letter-spacing: -.02em; margin-top: 0; }}
+    h3 {{
+        color: #111113 !important;
+        font-size: 20px !important;
+        font-weight: 700 !important;
+        text-transform: none;
+        letter-spacing: -.02em;
+        border-left: 0;
+        padding: 0 !important;
+        margin: 16px 0 14px !important;
+    }}
+    .badge-ok {{
+        background: rgba(16,185,129,0.12); color: {COLOR_FLUIDO};
+        padding: 4px 10px; border-radius: 6px; font-size: 12px; font-weight: 600;
+    }}
+    .badge-error {{
+        background: rgba(239,68,68,0.12); color: {COLOR_CONGESTIONADO};
+        padding: 4px 10px; border-radius: 6px; font-size: 12px; font-weight: 600;
+    }}
+    #MainMenu {{visibility: hidden;}}
+    footer {{visibility: hidden;}}
+    [data-testid="stHeader"] {{ background: transparent; height: 0; }}
+    [data-testid="stExpandSidebarButton"] {{
+        background: {R_MENTA} !important;
+        border-radius: 50%;
+        box-shadow: 0 4px 12px rgba(45,212,191,0.4);
+    }}
+    [data-testid="stExpandSidebarButton"] svg {{
+        color: {R_AZUL_OSC} !important;
+        fill: {R_AZUL_OSC} !important;
+    }}
+    [data-testid="stSidebarCollapseButton"] button {{ color: #ffffff !important; }}
+
+    /* ── Footer editorial inspirado en la composicion de Innvita ── */
+    .dashboard-footer {{
+        margin: 44px 0 4px;
+        padding: 42px 44px 24px;
+        border-radius: 40px;
+        background: #232326;
+        color: #ffffff;
+        overflow: hidden;
+    }}
+    .dashboard-footer * {{ font-family: 'Inter', system-ui, sans-serif !important; }}
+    .footer-brand {{
+        margin: 0 0 8px;
+        color: #ffffff;
+        font-size: 28px;
+        line-height: 1.1;
+        font-weight: 700;
+        letter-spacing: -.04em;
+    }}
+    .footer-brand span {{ color: {R_MENTA_CLARA}; }}
+    .footer-lead {{
+        max-width: 650px;
+        margin: 0 0 34px;
+        color: #a9a9af !important;
+        font-size: 19px;
+        line-height: 1.45;
+        letter-spacing: -.01em;
+    }}
+    .footer-lead strong {{ color: #ffffff; font-weight: 700; }}
+    .footer-grid {{
+        display: grid;
+        grid-template-columns: 1.1fr 1.25fr 1.1fr;
+        gap: 34px;
+        padding: 30px 0;
+        border-top: 1px solid rgba(255,255,255,.10);
+        border-bottom: 1px solid rgba(255,255,255,.10);
+    }}
+    .footer-kicker {{
+        margin-bottom: 12px;
+        color: #ffffff;
+        font-size: 13px;
+        font-weight: 700;
+        letter-spacing: .02em;
+    }}
+    .footer-copy {{
+        margin: 0;
+        color: #94949b !important;
+        font-size: 13px;
+        line-height: 1.7;
+    }}
+    .footer-bottom {{
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 16px;
+        padding-top: 20px;
+        color: #77777f;
+        font-size: 11px;
+        letter-spacing: .02em;
+    }}
+    .footer-admin-link {{
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        flex-shrink: 0;
+        min-height: 42px;
+        padding: 9px 16px 9px 18px;
+        border-radius: 999px;
+        background: #ffffff;
+        color: #111113 !important;
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: .01em;
+        text-decoration: none !important;
+        transition: transform .2s ease, background .2s ease;
+    }}
+    .footer-admin-link:hover {{
+        background: {R_MENTA_CLARA};
+        color: #111113 !important;
+        transform: translateY(-1px);
+    }}
+    .footer-admin-arrow {{
+        display: grid;
+        place-items: center;
+        width: 24px;
+        height: 24px;
+        border-radius: 50%;
+        background: #111113;
+        color: #ffffff !important;
+        font-size: 14px;
+        line-height: 1;
+    }}
+    @media (max-width: 800px) {{
+        .block-container {{ padding-left: 1rem; padding-right: 1rem; }}
+        .utb-header {{ border-radius: 28px; padding: 26px 24px; }}
+        .utb-header-content {{ min-width: 0; width: 100%; }}
+        .utb-brand {{ font-size: 36px !important; }}
+        .utb-route {{ display: none; }}
+        .utb-status {{ min-width: 0; text-align: left; }}
+        .dashboard-footer {{ margin-left: -1rem; margin-right: -1rem; padding: 34px 24px 22px; border-radius: 32px 32px 0 0; }}
+        .footer-grid {{ grid-template-columns: 1fr; gap: 24px; }}
+        .footer-bottom {{ flex-direction: column; align-items: flex-start; }}
+    }}
+    @media (min-width: 801px) and (max-width: 1120px) {{
+        .utb-route {{ display: none; }}
+    }}
+</style>
+""", unsafe_allow_html=True)
+
+
+# ============================================================
+# UTILIDADES
+# ============================================================
+# tema_plotly del R: fondo transparente (la caja blanca la pone el CSS),
+# tinta azul, rejilla celeste y etiqueta flotante azul oscuro
+REJILLA = "#e3eaf7"
+
+
+def plotly_base(fig, height: int = 340):
+    fig.update_layout(
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        font_color="#1e3a6e",
+        font_family="Inter, Segoe UI, Helvetica, Arial, sans-serif",
+        height=height,
+        margin=dict(l=0, r=0, t=30, b=0),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, bgcolor="rgba(0,0,0,0)"),
+        hoverlabel=dict(bgcolor=R_AZUL_OSC, font=dict(color="#ffffff", size=12)),
+        xaxis=dict(gridcolor=REJILLA, zerolinecolor="#d3def2", linecolor="#c9d6ee"),
+        yaxis=dict(gridcolor=REJILLA, zerolinecolor="#d3def2", linecolor="#c9d6ee"),
+    )
+    return fig
+
+
+# Las cargas que corren antes de las pestañas van sin show_spinner: el aviso
+# "Running ..." ocupa un lugar en la página, desplaza las pestañas y
+# Streamlit las vuelve a crear, devolviendo al usuario a la primera cada vez
+# que vence un cache (cargar_logs vence cada minuto). El indicador de carga
+# de la esquina superior sigue visible.
+@st.cache_data(ttl=60, show_spinner=False)
+def cargar_logs() -> pd.DataFrame:
+    if not config.LOG_FILE.exists():
+        return pd.DataFrame()
+    entries = []
+    with open(config.LOG_FILE, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                entries.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+    if not entries:
+        return pd.DataFrame()
+    df = pd.DataFrame(entries)
+    df["timestamp"] = pd.to_datetime(df["timestamp"])
+    return df.sort_values("timestamp")
+
+
+@st.cache_data(ttl=60)
+def listar_archivos() -> list:
+    files = sorted(glob.glob(str(config.RESULTADOS_DIR / "*.csv")))
+    return [Path(f) for f in files]
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def cargar_csv(path_str: str) -> pd.DataFrame:
+    df = pd.read_csv(path_str)
+    if "consultation_time" in df.columns:
+        df["consultation_time"] = pd.to_datetime(df["consultation_time"])
+    return df
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def cargar_desde_sheets(n_dias: int = 30) -> pd.DataFrame:
+    """
+    Carga el historico. Fuente segun config.FUENTE_DASHBOARD:
+      - "db"     → PostgreSQL (rapido). Si falla, cae a Sheets.
+      - "sheets" → Google Sheets (default).
+    El nombre se mantiene por compatibilidad con el resto del dashboard.
+    """
+    fuente = getattr(config, "FUENTE_DASHBOARD", "sheets")
+
+    if fuente == "db":
+        try:
+            import db  # import diferido
+            df = db.leer_datos(n_dias=n_dias)
+            if not df.empty:
+                return df
+            # BD vacia → intentar Sheets como respaldo
+        except Exception as e:
+            print(f"  [Dashboard] PostgreSQL no disponible, usando Sheets: {e}")
+
+    # Fuente Sheets (default o fallback)
+    try:
+        df = google_upload.leer_sheet(n_dias=n_dias)
+        if df.empty:
+            return pd.DataFrame()
+        if "consultation_time" in df.columns:
+            df["consultation_time"] = pd.to_datetime(df["consultation_time"], errors="coerce")
+        for col in NUMERIC_COLS:
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors="coerce")
+        return df
+    except Exception:
+        return pd.DataFrame()
+
+
+@st.cache_data(ttl=600)
+def rango_fechas_historico() -> tuple:
+    """
+    (fecha_min, fecha_max, fuente) del historico disponible, sin descargar
+    los datos. Con FUENTE_DASHBOARD=db lo responde PostgreSQL al instante;
+    si no, se obtiene del Sheet completo (comportamiento anterior).
+    """
+    if getattr(config, "FUENTE_DASHBOARD", "sheets") == "db":
+        try:
+            import db  # import diferido
+            mn, mx = db.rango_fechas()
+            if mn is not None and mx is not None:
+                return mn.date(), mx.date(), "PostgreSQL"
+        except Exception as e:
+            print(f"  [Dashboard] PostgreSQL no disponible para rango: {e}")
+
+    df = cargar_desde_sheets(n_dias=3650)
+    if df.empty or "consultation_time" not in df.columns:
+        return None, None, None
+    fechas = df["consultation_time"].dropna()
+    if fechas.empty:
+        return None, None, None
+    return fechas.dt.date.min(), fechas.dt.date.max(), "Google Sheets"
+
+
+def fechas_disponibles():
+    """(primera, ultima) fecha con datos para el filtro de rango, o None."""
+    fecha_min, fecha_max, _ = rango_fechas_historico()
+    return (fecha_min, fecha_max) if fecha_min is not None else None
+
+
+@st.cache_data(ttl=300)
+def cargar_historico(fecha_ini, fecha_fin) -> tuple:
+    """
+    Datos del periodo [fecha_ini, fecha_fin] y la fuente usada.
+    PostgreSQL consulta solo el rango pedido (rapido); Sheets descarga el
+    historico completo y recorta (respaldo si la BD no esta disponible).
+    """
+    if getattr(config, "FUENTE_DASHBOARD", "sheets") == "db":
+        try:
+            import db  # import diferido
+            df = db.leer_rango(fecha_ini, fecha_fin)
+            if not df.empty:
+                return df, "PostgreSQL"
+        except Exception as e:
+            print(f"  [Dashboard] PostgreSQL no disponible, usando Sheets: {e}")
+
+    df = cargar_desde_sheets(n_dias=3650)
+    if df.empty or "consultation_time" not in df.columns:
+        return pd.DataFrame(), None
+    mask = (
+        (df["consultation_time"].dt.date >= fecha_ini) &
+        (df["consultation_time"].dt.date <= fecha_fin)
+    )
+    return df[mask].copy(), "Google Sheets"
+
+
+def leyenda_ratio(modo: str = "ratio"):
+    """
+    Renderiza una leyenda de colores debajo de las graficas.
+    modo='ratio'  → explica el velocity ratio (0-1)
+    modo='velocidad' → explica velocidades en km/h
+    modo='proceso'   → explica OK/Error en ejecuciones
+    """
+    if modo == "ratio":
+        # Escala de fluidez: cuatro tramos de menor a mayor ratio, cada uno con
+        # su nombre y su rango, y la explicacion del indice en una sola linea
+        tramos = [
+            (COLOR_CONGESTIONADO, "Congestionado", f"&lt; {UMBRAL_LENTO:.2f}"),
+            (COLOR_LENTO,         "Lento",         f"{UMBRAL_LENTO:.2f} – {UMBRAL_MODERADO:.2f}"),
+            (COLOR_MODERADO,      "Moderado",      f"{UMBRAL_MODERADO:.2f} – {UMBRAL_FLUIDO:.2f}"),
+            (COLOR_FLUIDO,        "Fluido",        f"&gt; {UMBRAL_FLUIDO:.2f}"),
+        ]
+        segmentos = "".join(
+            f'<div style="flex:1;min-width:0;background:{_rgba(color, 0.14)};'
+            f'border-top:3px solid {color};border-radius:6px;padding:7px 10px;">'
+            f'<div style="color:{UTB_WHITE};font-size:12px;font-weight:700;white-space:nowrap;'
+            f'overflow:hidden;text-overflow:ellipsis;">{nombre}</div>'
+            f'<div style="color:{UTB_GRAY};font-size:11px;">{rango}</div></div>'
+            for color, nombre, rango in tramos
+        )
+        st.markdown(f"""
+        <div style="background:{UTB_NAVY_LIGHT};border:1px solid {UTB_BORDER};
+                    border-radius:10px;padding:10px 14px 12px;margin-top:6px;">
+            <div style="display:flex;justify-content:space-between;align-items:baseline;
+                        flex-wrap:wrap;gap:4px 16px;margin-bottom:8px;">
+                <span style="color:{UTB_CYAN};font-size:11px;font-weight:700;
+                             letter-spacing:1px;text-transform:uppercase;">Índice de fluidez</span>
+                <span style="color:{UTB_GRAY};font-size:11px;">
+                    velocidad actual ÷ velocidad libre · 1.0 = sin tráfico · 0 = detenido</span>
+            </div>
+            <div style="display:flex;gap:6px;">{segmentos}</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    elif modo == "velocidad":
+        st.markdown(f"""
+        <div style="display:flex;gap:20px;align-items:center;flex-wrap:wrap;
+                    background:{SUPERFICIE_SUAVE};border-radius:8px;
+                    padding:10px 16px;margin-top:4px;border:1px solid {UTB_BORDER};">
+            <span style="color:{UTB_GRAY};font-size:11px;font-weight:700;
+                         letter-spacing:1px;text-transform:uppercase;">Interpretación:</span>
+            <span style="display:flex;align-items:center;gap:6px;font-size:12px;color:{UTB_WHITE};">
+                <span style="width:12px;height:3px;background:{SERIE_ACTUAL};display:inline-block;"></span>
+                <b style="color:{SERIE_ACTUAL};">Velocidad actual</b>&nbsp;— km/h medidos en tiempo real con tráfico
+            </span>
+            <span style="display:flex;align-items:center;gap:6px;font-size:12px;color:{UTB_WHITE};">
+                <span style="width:12px;height:3px;background:{SERIE_LIBRE};
+                             display:inline-block;border-top:2px dashed {SERIE_LIBRE};"></span>
+                <b style="color:{UTB_GRAY};">Velocidad libre</b>&nbsp;— km/h que tendría la vía sin tráfico
+            </span>
+            <span style="color:{UTB_GRAY};font-size:11px;margin-left:auto;">
+                La brecha entre ambas líneas representa el tiempo perdido por congestión
+            </span>
+        </div>
+        """, unsafe_allow_html=True)
+
+    elif modo == "proceso":
+        st.markdown(f"""
+        <div style="display:flex;gap:20px;align-items:center;flex-wrap:wrap;
+                    background:{SUPERFICIE_SUAVE};border-radius:8px;
+                    padding:10px 16px;margin-top:4px;border:1px solid {UTB_BORDER};">
+            <span style="color:{UTB_GRAY};font-size:11px;font-weight:700;
+                         letter-spacing:1px;text-transform:uppercase;">Interpretación:</span>
+            <span style="display:flex;align-items:center;gap:6px;font-size:12px;color:{UTB_WHITE};">
+                <span style="width:12px;height:12px;border-radius:3px;
+                             background:{COLOR_FLUIDO};display:inline-block;"></span>
+                <b style="color:{COLOR_FLUIDO};">Consultas OK</b>&nbsp;— nodos respondidos correctamente por TomTom
+            </span>
+            <span style="display:flex;align-items:center;gap:6px;font-size:12px;color:{UTB_WHITE};">
+                <span style="width:12px;height:12px;border-radius:3px;
+                             background:{COLOR_CONGESTIONADO};display:inline-block;"></span>
+                <b style="color:{COLOR_CONGESTIONADO};">Errores</b>&nbsp;— nodos con fallo (red, cuota, API)
+            </span>
+            <span style="color:{UTB_GRAY};font-size:11px;margin-left:auto;">
+                Cada barra = una ejecución del cron · 113 nodos por ejecución
+            </span>
+        </div>
+        """, unsafe_allow_html=True)
+
+
+@st.cache_data(ttl=3600)
+def cargar_catalogo() -> pd.DataFrame:
+    """
+    Datos fijos de cada nodo (nodos.xlsx) para el mapa y su ventana emergente.
+    El barrio y el punto de referencia salen del catalogo y no de las
+    mediciones: el ETL no guarda la columna 'Barrio/Lugar' del Excel.
+    """
+    try:
+        import descargar_trafico  # import diferido: solo se usa cargar_nodos
+        nodos = descargar_trafico.cargar_nodos(config.NODOS_PATH)
+    except Exception as e:
+        print(f"  [Dashboard] No se pudo leer el catalogo de nodos: {e}")
+        return pd.DataFrame()
+    return pd.DataFrame({
+        "id_nodo": nodos["id_nodo"].astype(str),
+        "nombre_nodo": nodos["nombre_nodo"],
+        "lat": nodos["lat"],
+        "lon": nodos["lon"],
+        # 'Barrio/Lugar' queda como 'barriolugar' al normalizar las columnas
+        "barrio": nodos.get("barriolugar", nodos["barrios_que_colinda"]),
+        "punto_referencia": nodos.get("punto_referencia"),
+    })
+
+
+@st.cache_data(ttl=3600)
+def cargar_red() -> dict:
+    """
+    Conexiones de la red de nodos: data/red_nodos.json (capturar_red.py) o,
+    si falta, la hoja REDES en linea recta.
+    """
+    path = BASE_DIR / "data" / "red_nodos.json"
+    pares = []
+    if not path.exists():
+        try:
+            import descargar_trafico  # import diferido
+            pares = descargar_trafico.leer_conexiones(config.NODOS_PATH)
+        except Exception as e:
+            print(f"  [Dashboard] No se pudo leer la hoja REDES: {e}")
+    return red_nodos.cargar_red(path, cargar_catalogo(), pares)
+
+
+@st.cache_data(ttl=3600)
+def cargar_corredores() -> pd.DataFrame:
+    """Rutas con nombre de la hoja CORREDORES de nodos.xlsx, que llena el equipo."""
+    columnas = ["corredor", "nodo_inicio", "nodo_fin"]
+    try:
+        df = pd.read_excel(config.NODOS_PATH, sheet_name="CORREDORES", dtype=str)
+    except Exception:
+        return pd.DataFrame(columns=columnas)
+    if not set(columnas) <= set(df.columns):
+        return pd.DataFrame(columns=columnas)
+    return df[columnas].dropna().apply(lambda col: col.str.strip())
+
+
+@st.cache_data(ttl=300)
+def promedios_mapa(fecha_ini, fecha_fin, hora_ini, hora_fin, mes, dia_semana,
+                   quincena, ids) -> tuple:
+    """
+    Promedio por nodo con los filtros del mapa, y la fuente usada.
+    PostgreSQL agrega en la consulta (113 filas); Sheets descarga el
+    historico completo y agrega en pandas (respaldo si la BD no responde).
+    """
+    consulta = dict(fecha_ini=fecha_ini, fecha_fin=fecha_fin, hora_ini=hora_ini,
+                    hora_fin=hora_fin, mes=mes, dia_semana=dia_semana,
+                    quincena=quincena, ids=ids)
+    if getattr(config, "FUENTE_DASHBOARD", "sheets") == "db":
+        try:
+            import db  # import diferido
+            return db.promedios_por_nodo(**consulta), "PostgreSQL"
+        except Exception as e:
+            print(f"  [Dashboard] PostgreSQL no disponible, usando Sheets: {e}")
+
+    df = cargar_desde_sheets(n_dias=3650)
+    return mapa_nodos.promedios_por_nodo_df(df, **consulta), "Google Sheets"
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def verificar_token_google() -> dict:
+    """Verifica el estado del token OAuth de Google. Cachea 1 hora."""
+    try:
+        creds = google_upload.cargar_credenciales()
+        if creds is None:
+            return {"ok": False, "estado": "No encontrado", "detalle": "token.json no existe o esta corrupto"}
+        if creds.valid:
+            return {"ok": True, "estado": "Activo", "detalle": "Conexion con Google OK"}
+        elif creds.expired and creds.refresh_token:
+            from google.auth.transport.requests import Request
+            creds.refresh(Request())
+            return {"ok": True, "estado": "Renovado", "detalle": "Token renovado automaticamente"}
+        else:
+            return {"ok": False, "estado": "Expirado", "detalle": "Requiere re-autorizacion manual en tu PC"}
+    except Exception as e:
+        return {"ok": False, "estado": "Error", "detalle": str(e)[:120]}
+
+
+@st.cache_data(ttl=3600)
+def capacidad_sheet() -> dict:
+    """
+    Ocupacion del Google Sheet frente al limite duro de Google (10 millones
+    de celdas por hoja de calculo). Al alcanzarlo el ETL rota solo a un libro
+    nuevo ("<base>_ParteN") y sigue escribiendo alli, asi que este indicador
+    mide el libro ACTIVO y avisa cuando toca la proxima rotacion.
+
+    Cachea 1 hora: el tamano crece despacio y es una llamada extra a la API.
+    """
+    LIMITE = 10_000_000
+    try:
+        creds = google_upload.cargar_credenciales()
+        if creds is None:
+            return {"ok": False, "detalle": "Sin credenciales Google"}
+
+        from googleapiclient.discovery import build
+        svc = build("sheets", "v4", credentials=creds, cache_discovery=False)
+        # Se mide el libro ACTIVO: tras una rotacion el original queda lleno
+        # y congelado, y lo que importa es cuanto le queda al que se escribe.
+        sheet_id = google_upload.sheet_activo()
+        parte = google_upload.parte_activa()
+        meta = svc.spreadsheets().get(
+            spreadsheetId=sheet_id,
+            fields="properties(title),sheets(properties(title,gridProperties))",
+        ).execute()
+
+        celdas = 0
+        cols_datos = 0
+        for s in meta.get("sheets", []):
+            p = s["properties"]
+            g = p.get("gridProperties", {})
+            filas = g.get("rowCount", 0)
+            cols = g.get("columnCount", 0)
+            celdas += filas * cols
+            if p.get("title") == config.SHEET_TAB:
+                cols_datos = cols
+
+        if cols_datos == 0:
+            cols_datos = 29  # ancho tipico de la tabla de mediciones
+
+        # Consumo diario: 113 nodos x 28 ejecuciones programadas
+        celdas_dia = 113 * 28 * cols_datos
+        restantes = max(LIMITE - celdas, 0)
+        dias = int(restantes / celdas_dia) if celdas_dia > 0 else None
+        fecha_llena = (datetime.now() + timedelta(days=dias)).strftime("%d/%m/%Y") if dias is not None else None
+
+        return {
+            "ok": True,
+            "celdas": celdas,
+            "limite": LIMITE,
+            "pct": celdas / LIMITE * 100,
+            "dias": dias,
+            "fecha_llena": fecha_llena,
+            "parte": parte,
+            "nombre": meta.get("properties", {}).get("title", ""),
+            "detalle": None,
+        }
+    except Exception as e:
+        return {"ok": False, "detalle": str(e)[:120]}
+
+
+def calcular_proxima_ejecucion():
+    ahora = datetime.now()
+    horarios_hoy = []
+    for turno_horarios in config.HORARIOS.values():
+        for h in turno_horarios:
+            hh, mm = map(int, h.split(":"))
+            t = ahora.replace(hour=hh, minute=mm, second=0, microsecond=0)
+            if h == "00:00" and ahora.hour > 12:
+                t = t + timedelta(days=1)
+            if t > ahora:
+                horarios_hoy.append(t)
+    return min(horarios_hoy) if horarios_hoy else None
+
+
+# ============================================================
+# SIDEBAR
+# ============================================================
+with st.sidebar:
+    if LOGO_UTB_SVG:
+        st.markdown(f"""
+        <div style="text-align:center;padding:24px 16px;border-bottom:1px solid rgba(255,255,255,0.15);margin-bottom:20px;">
+            {LOGO_UTB_SVG}
+        </div>
+        """, unsafe_allow_html=True)
+    else:
+        st.markdown(f"""
+        <div style="text-align:center;padding:16px 0;border-bottom:1px solid rgba(255,255,255,0.15);margin-bottom:20px;">
+            <div style="color:{UTB_CYAN};font-size:11px;font-weight:700;letter-spacing:2px;">UNIVERSIDAD</div>
+            <div style="color:#ffffff;font-size:22px;font-weight:800;margin:4px 0;">TECNOLÓGICA</div>
+            <div style="color:#ffffff;font-size:14px;font-weight:600;">DE BOLÍVAR</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    # --- Estado del token Google ---
+    token_st = verificar_token_google()
+    if token_st["ok"]:
+        st.markdown(f"""
+        <div style="background:rgba(16,185,129,0.1);border-left:3px solid {COLOR_FLUIDO};
+             padding:10px 12px;border-radius:6px;margin-bottom:16px;">
+            <div style="color:{COLOR_FLUIDO};font-size:11px;font-weight:700;">
+                ● GOOGLE · {token_st['estado'].upper()}</div>
+            <div style="color:{UTB_GRAY};font-size:11px;">{token_st['detalle']}</div>
+        </div>""", unsafe_allow_html=True)
+    else:
+        st.markdown(f"""
+        <div style="background:rgba(239,68,68,0.15);border-left:3px solid {COLOR_CONGESTIONADO};
+             padding:10px 12px;border-radius:6px;margin-bottom:16px;animation:pulse 2s infinite;">
+            <div style="color:{COLOR_CONGESTIONADO};font-size:11px;font-weight:700;">
+                ⚠ GOOGLE · {token_st['estado'].upper()}</div>
+            <div style="color:{UTB_GRAY};font-size:11px;">{token_st['detalle']}</div>
+        </div>""", unsafe_allow_html=True)
+
+    # --- Capacidad del Google Sheet (limite 10M celdas) ---
+    cap = capacidad_sheet()
+    if cap["ok"]:
+        _pct = cap["pct"]
+        if _pct >= 90:
+            _color, _icono, _estado = COLOR_CONGESTIONADO, "⚠", "CRITICO"
+        elif _pct >= 75:
+            _color, _icono, _estado = COLOR_LENTO, "⚠", "ALTO"
+        elif _pct >= 50:
+            _color, _icono, _estado = COLOR_MODERADO, "●", "MODERADO"
+        else:
+            _color, _icono, _estado = COLOR_FLUIDO, "●", "OK"
+
+        _aviso = (
+            f"Se llena ~{cap['fecha_llena']} ({cap['dias']} dias)"
+            if cap["dias"] is not None else "Sin proyeccion"
+        )
+        # Al llenarse se rota automaticamente: el aviso deja de ser una alarma.
+        _parte_txt = f" · PARTE {cap['parte']}" if cap.get("parte", 1) > 1 else ""
+        st.markdown(f"""
+        <div style="background:rgba(255,255,255,0.06);border-left:3px solid {_color};
+             padding:10px 12px;border-radius:6px;margin-bottom:16px;">
+            <div style="color:{_color};font-size:11px;font-weight:700;">
+                {_icono} HOJA DE CALCULO · {_estado}{_parte_txt}</div>
+            <div style="background:rgba(0,0,0,0.25);border-radius:4px;height:6px;
+                 overflow:hidden;margin:6px 0;">
+                <div style="background:{_color};width:{min(_pct, 100):.1f}%;
+                     height:100%;border-radius:4px;"></div>
+            </div>
+            <div style="color:{UTB_GRAY};font-size:11px;">
+                {cap['celdas']:,} / {cap['limite']:,} celdas · {_pct:.1f}%</div>
+            <div style="color:{UTB_GRAY};font-size:11px;">{_aviso}</div>
+        </div>""", unsafe_allow_html=True)
+    else:
+        st.markdown(f"""
+        <div style="background:rgba(255,255,255,0.06);border-left:3px solid {UTB_GRAY};
+             padding:10px 12px;border-radius:6px;margin-bottom:16px;">
+            <div style="color:{UTB_GRAY};font-size:11px;font-weight:700;">
+                ● HOJA DE CALCULO · SIN DATO</div>
+            <div style="color:{UTB_GRAY};font-size:11px;">{cap.get('detalle') or 'No disponible'}</div>
+        </div>""", unsafe_allow_html=True)
+
+    st.markdown("### Archivo a visualizar")
+    archivos = listar_archivos()
+    if archivos:
+        opciones = ["Ultimo disponible"] + [f.name for f in reversed(archivos[-50:])]
+        seleccion = st.selectbox("", opciones, label_visibility="collapsed")
+        archivo_actual = archivos[-1] if seleccion == "Ultimo disponible" else next(
+            (f for f in archivos if f.name == seleccion), archivos[-1]
+        )
+    else:
+        archivo_actual = None
+        st.warning("Sin archivos aun")
+
+    if st.button("Recargar datos", use_container_width=True):
+        st.cache_data.clear()
+        st.rerun()
+
+    st.divider()
+
+    # --- Links directos Google ---
+    drive_url  = f"https://drive.google.com/drive/folders/{config.DRIVE_FOLDER_ID}"
+    sheets_url = f"https://docs.google.com/spreadsheets/d/{config.SHEET_ID}"
+
+    st.markdown(f"""
+    <div style="margin-bottom:16px;">
+        <div style="color:{UTB_CYAN};font-size:11px;font-weight:700;letter-spacing:1.5px;margin-bottom:10px;">
+            ACCESO RÁPIDO
+        </div>
+        <a href="{drive_url}" target="_blank" style="
+            display:flex; align-items:center; gap:10px;
+            background:rgba(255,255,255,0.07);
+            border:1px solid rgba(255,255,255,0.12);
+            border-radius:8px; padding:10px 14px;
+            color:#ffffff; text-decoration:none;
+            font-size:13px; font-weight:600;
+            margin-bottom:8px;
+            transition:all 0.2s;">
+            <span style="font-size:18px;">📁</span>
+            <div>
+                <div style="color:#ffffff;font-size:13px;font-weight:600;">Google Drive</div>
+                <div style="color:rgba(255,255,255,0.5);font-size:11px;">Carpeta de CSVs</div>
+            </div>
+            <span style="margin-left:auto;color:rgba(255,255,255,0.4);font-size:16px;">↗</span>
+        </a>
+        <a href="{sheets_url}" target="_blank" style="
+            display:flex; align-items:center; gap:10px;
+            background:rgba(255,255,255,0.07);
+            border:1px solid rgba(255,255,255,0.12);
+            border-radius:8px; padding:10px 14px;
+            color:#ffffff; text-decoration:none;
+            font-size:13px; font-weight:600;
+            transition:all 0.2s;">
+            <span style="font-size:18px;">📊</span>
+            <div>
+                <div style="color:#ffffff;font-size:13px;font-weight:600;">Google Sheets</div>
+                <div style="color:rgba(255,255,255,0.5);font-size:11px;">Base de datos principal</div>
+            </div>
+            <span style="margin-left:auto;color:rgba(255,255,255,0.4);font-size:16px;">↗</span>
+        </a>
+    </div>
+    """, unsafe_allow_html=True)
+
+    st.divider()
+
+    st.markdown("### Horarios programados")
+    for turno, horas in config.HORARIOS.items():
+        with st.expander(turno, expanded=False):
+            for h in horas:
+                st.markdown(
+                    f"<div style='padding:4px 0;color:{UTB_GRAY};font-size:13px;'>• {h}</div>",
+                    unsafe_allow_html=True,
+                )
+
+
+# ============================================================
+# HEADER
+# ============================================================
+ahora = datetime.now()
+proxima = calcular_proxima_ejecucion()
+proxima_str = proxima.strftime("%H:%M") if proxima else "—"
+
+st.markdown(f"""
+<div class="utb-header">
+    <div class="utb-header-content">
+        <div class="utb-eyebrow"><span class="utb-live-dot"></span> Plataforma de movilidad inteligente</div>
+        <h1 class="utb-brand">Smart City <span class="utb-brand-accent">Cartagena</span></h1>
+        <div class="utb-header-chips">
+            <span class="utb-header-chip">113 nodos conectados</span>
+            <span class="utb-header-chip">Monitoreo en vivo</span>
+            <span class="utb-header-chip">TomTom Traffic Flow</span>
+        </div>
+    </div>
+    <svg class="utb-route" viewBox="0 0 215 84" aria-hidden="true">
+        <path d="M8 62 C45 15, 74 74, 112 34 S169 12, 207 42" fill="none" stroke="rgba(255,255,255,.38)" stroke-width="2" stroke-linecap="round" stroke-dasharray="5 7"/>
+        <circle cx="10" cy="60" r="6" fill="#5eead4" stroke="rgba(255,255,255,.9)" stroke-width="2"/>
+        <circle cx="112" cy="34" r="5" fill="#ffffff" stroke="rgba(94,234,212,.8)" stroke-width="3"/>
+        <circle cx="205" cy="41" r="7" fill="#5eead4" stroke="rgba(255,255,255,.9)" stroke-width="2"/>
+    </svg>
+    <div class="utb-status">
+        <div class="utb-status-label">Hora local</div>
+        <div class="utb-clock">{ahora.strftime("%H:%M")} · {ahora.strftime("%d/%m/%Y")}</div>
+        <div class="utb-next-run">
+            Proxima ejecucion: <span>{proxima_str}</span>
+        </div>
+    </div>
+</div>
+""", unsafe_allow_html=True)
+
+# Banner de alerta si el token esta expirado
+token_st = verificar_token_google()
+if not token_st["ok"]:
+    st.markdown(f"""
+    <div style="background:rgba(239,68,68,0.12);border:1px solid {COLOR_CONGESTIONADO};
+         padding:16px 20px;border-radius:8px;margin-bottom:20px;">
+        <div style="color:{COLOR_CONGESTIONADO};font-size:16px;font-weight:700;margin-bottom:8px;">
+            ⚠ Token Google expirado — los datos no se estan subiendo a Drive ni Sheets
+        </div>
+        <div style="color:{UTB_WHITE};font-size:13px;line-height:1.6;">
+            <b>Pasos para renovarlo:</b><br>
+            1. En tu PC: <code style="background:{UTB_BG};border:1px solid {UTB_BORDER};color:{UTB_NAVY};padding:2px 8px;border-radius:4px;">python src/autorizar_google.py</code><br>
+            2. Sube el nuevo token:
+            <code style="background:{UTB_BG};border:1px solid {UTB_BORDER};color:{UTB_NAVY};padding:2px 8px;border-radius:4px;">
+            scp credenciales/token.json ubuntu@158.101.105.13:/home/ubuntu/proyect_r/credenciales/</code><br>
+            3. Recarga esta pagina.
+        </div>
+    </div>""", unsafe_allow_html=True)
+
+# Cuanto retroceder buscando el ultimo snapshot valido cuando la captura
+# lleva caida mas de un dia. Acota el costo de la lectura de respaldo.
+DIAS_RESPALDO_SNAPSHOT = 7
+
+
+def _mascara_ok(df: pd.DataFrame) -> pd.Series:
+    """
+    Filas cuya consulta a TomTom fue exitosa. La columna 'ok' llega como bool
+    desde PostgreSQL y como texto ("TRUE") desde Sheets y los CSV, asi que se
+    normaliza en ambos casos.
+    """
+    if df.empty or "ok" not in df.columns:
+        return pd.Series(False, index=df.index, dtype=bool)
+    return df["ok"].astype(str).str.lower().isin(["true", "1"])
+
+
+def lecturas_ultima_ejecucion(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Lecturas validas de una ejecucion con las mismas columnas que los
+    promedios por nodo (n = 1): la vista inicial de los mapas, como en
+    produccion, antes de que el usuario toque un filtro.
+    """
+    columnas = ["id_nodo", "vel_actual", "vel_libre", "ratio", "n"]
+    if df.empty or "id_nodo" not in df.columns:
+        return pd.DataFrame(columns=columnas)
+    ok = df[_mascara_ok(df)]
+    return pd.DataFrame({
+        "id_nodo": ok["id_nodo"].astype(str),
+        "vel_actual": pd.to_numeric(ok.get("currentSpeed"), errors="coerce"),
+        "vel_libre": pd.to_numeric(ok.get("freeFlowSpeed"), errors="coerce"),
+        "ratio": pd.to_numeric(ok.get("velocidad_ratio"), errors="coerce"),
+        "n": 1,
+    }).drop_duplicates("id_nodo")[columnas]
+
+
+# ============================================================
+# CARGAR DATOS BASE
+# ============================================================
+# Aviso de carga en un lugar fijo de la pagina (existe en todas las corridas,
+# asi no desplaza las pestanas como el spinner de cache; ver cargar_logs).
+aviso_carga = st.empty()
+aviso_carga.info("Cargando datos... la primera carga puede tardar un poco.")
+logs = cargar_logs()
+df_actual = cargar_csv(str(archivo_actual)) if archivo_actual else pd.DataFrame()
+
+# ── Snapshot: elige la ejecucion mas reciente entre VPS 1 (local) y VPS 2 (Sheets) ──
+_df_sheets_1d = cargar_desde_sheets(n_dias=1)
+
+_local_time = (
+    df_actual["consultation_time"].max()
+    if not df_actual.empty and "consultation_time" in df_actual.columns
+    else pd.NaT
+)
+_sheets_time = (
+    _df_sheets_1d["consultation_time"].max()
+    if not _df_sheets_1d.empty and "consultation_time" in _df_sheets_1d.columns
+    else pd.NaT
+)
+
+if pd.notna(_sheets_time) and (pd.isna(_local_time) or _sheets_time > _local_time):
+    df_snapshot = _df_sheets_1d[_df_sheets_1d["consultation_time"] == _sheets_time].copy()
+    _vps = str(df_snapshot["vps_id"].iloc[0]) if "vps_id" in df_snapshot.columns and len(df_snapshot) else "?"
+    snapshot_label = f"VPS {_vps} · Sheets · {_sheets_time.strftime('%d/%m/%Y %H:%M')}"
+else:
+    df_snapshot = df_actual.copy()
+    snapshot_label = archivo_actual.name if archivo_actual else "Sin datos"
+
+# ── Respaldo cuando la ultima corrida no dejo ni un nodo valido ──
+# Pasa cuando la API rechaza las 113 consultas (p.ej. 403 InsufficientFunds).
+# Sin esto el analisis de nodos filtra por ok=true y se queda sin filas sin
+# explicar nada. Se guarda el diagnostico y se retrocede al ultimo snapshot
+# con datos reales, rotulado como desactualizado.
+snapshot_degradado = None
+
+if not df_snapshot.empty and not _mascara_ok(df_snapshot).any():
+    _motivo = ""
+    if "error_msg" in df_snapshot.columns:
+        _msgs = df_snapshot["error_msg"].dropna().astype(str)
+        _msgs = _msgs[_msgs.str.strip() != ""]
+        if not _msgs.empty:
+            _motivo = _msgs.value_counts().index[0]
+
+    _http = ""
+    if "http_status" in df_snapshot.columns:
+        _hs = pd.to_numeric(df_snapshot["http_status"], errors="coerce").dropna()
+        if not _hs.empty:
+            _http = str(int(_hs.mode().iloc[0]))
+
+    snapshot_degradado = {
+        "label_fallido": snapshot_label,
+        "nodos": len(df_snapshot),
+        "http": _http,
+        "motivo": _motivo,
+        "label_valido": None,
+        "hora_valida": None,
+    }
+
+    # La ventana normal es de 1 dia. Cuando la caida se prolonga mas que eso,
+    # el ultimo dato bueno queda fuera y el mapa se quedaba sin nada que
+    # mostrar. Solo entonces se paga una lectura mas amplia.
+    _pool = _df_sheets_1d if not _df_sheets_1d.empty else df_actual
+    if _pool.empty or not _mascara_ok(_pool).any():
+        _pool_ancho = cargar_desde_sheets(n_dias=DIAS_RESPALDO_SNAPSHOT)
+        if not _pool_ancho.empty and _mascara_ok(_pool_ancho).any():
+            _pool = _pool_ancho
+
+    if not _pool.empty and "consultation_time" in _pool.columns:
+        _ok_pool = _pool[_mascara_ok(_pool)]
+        if not _ok_pool.empty:
+            _t_ok = _ok_pool["consultation_time"].max()
+            df_snapshot = _ok_pool[_ok_pool["consultation_time"] == _t_ok].copy()
+            _vps_ok = (
+                str(df_snapshot["vps_id"].iloc[0])
+                if "vps_id" in df_snapshot.columns and len(df_snapshot) else "?"
+            )
+            snapshot_degradado["label_valido"] = (
+                f"VPS {_vps_ok} · {_t_ok.strftime('%d/%m/%Y %H:%M')}"
+            )
+            snapshot_degradado["hora_valida"] = _t_ok
+            snapshot_label = f"{snapshot_degradado['label_valido']} · DESACTUALIZADO"
+
+aviso_carga.empty()
+
+# ============================================================
+# METRICAS PRINCIPALES
+# ============================================================
+col1, col2, col3, col4 = st.columns(4)
+
+hoy = datetime.now().date()
+
+# VPS 1: desde log local
+logs_hoy = logs[logs["timestamp"].dt.date == hoy] if not logs.empty else pd.DataFrame()
+llamadas_vps1 = int(logs_hoy["total_nodos"].sum()) if not logs_hoy.empty else 0
+# Consultas que de verdad devolvieron datos. El total intentado no sirve para
+# saber si el sistema esta sano: con la API caida sigue marcando 1.582.
+exitosas_vps1 = int(logs_hoy["consultas_ok"].sum()) if not logs_hoy.empty and "consultas_ok" in logs_hoy.columns else 0
+fallidas_vps1 = max(llamadas_vps1 - exitosas_vps1, 0)
+ejec_vps1     = len(logs_hoy)
+ultima_vps1   = logs.iloc[-1]["timestamp"] if not logs.empty else None
+estado_vps1   = logs.iloc[-1]["estado"]    if not logs.empty else "—"
+
+# VPS 2: desde Google Sheets (el log de VPS 2 esta en otro servidor)
+df_sheets_hoy = pd.DataFrame()
+if not _df_sheets_1d.empty and "consultation_time" in _df_sheets_1d.columns:
+    df_sheets_hoy = _df_sheets_1d[
+        (_df_sheets_1d["consultation_time"].dt.date == hoy) &
+        (_df_sheets_1d["vps_id"].astype(str) == "2")
+    ]
+llamadas_vps2 = len(df_sheets_hoy)
+exitosas_vps2 = int(_mascara_ok(df_sheets_hoy).sum())
+fallidas_vps2 = max(llamadas_vps2 - exitosas_vps2, 0)
+ejec_vps2     = df_sheets_hoy["consultation_time"].nunique() if not df_sheets_hoy.empty else 0
+ultima_vps2   = df_sheets_hoy["consultation_time"].max()    if not df_sheets_hoy.empty else None
+
+# Ultima ejecucion global (el mas reciente entre ambos VPS)
+if ultima_vps1 and ultima_vps2 and pd.notna(ultima_vps2):
+    if ultima_vps2 > ultima_vps1:
+        ultima_str, estado_str = ultima_vps2.strftime("%H:%M"), "VPS2 OK"
+    else:
+        ultima_str, estado_str = ultima_vps1.strftime("%H:%M"), estado_vps1
+elif ultima_vps2 and pd.notna(ultima_vps2):
+    ultima_str, estado_str = ultima_vps2.strftime("%H:%M"), "VPS2 OK"
+elif ultima_vps1:
+    ultima_str, estado_str = ultima_vps1.strftime("%H:%M"), estado_vps1
+else:
+    ultima_str, estado_str = "—", "Sin datos"
+
+ejec_total = ejec_vps1 + ejec_vps2
+
+def _delta_consultas(llamadas: int, fallidas: int) -> tuple:
+    """Delta de la tarjeta: en rojo si hubo consultas fallidas hoy."""
+    if fallidas > 0:
+        return f"-{fallidas:,} fallidas", "normal"
+    return f"{llamadas/config.LIMITE_API_DIARIO*100:.1f}% de 2,500", "off"
+
+
+with col1:
+    _d, _dc = _delta_consultas(llamadas_vps1, fallidas_vps1)
+    st.metric("VPS 1 · Nodos OK", f"{exitosas_vps1:,}", _d, delta_color=_dc)
+with col2:
+    _d, _dc = _delta_consultas(llamadas_vps2, fallidas_vps2)
+    st.metric("VPS 2 · Nodos OK", f"{exitosas_vps2:,}", _d, delta_color=_dc)
+with col3:
+    st.metric("Ejecuciones hoy", ejec_total, "de 28 programadas", delta_color="off")
+with col4:
+    st.metric("Ultima ejecucion", ultima_str, estado_str, delta_color="off")
+
+if logs.empty and df_sheets_hoy.empty:
+    st.info("Aun no hay ejecuciones registradas.")
+
+# ============================================================
+# CUOTA DIARIA API TOMTOM
+# ============================================================
+LIMITE = config.LIMITE_API_DIARIO  # 2500
+
+def _semaforo_cuota(usado: int, limite: int) -> tuple:
+    """Devuelve (color_hex, emoji, texto_estado) segun el porcentaje de cuota usada."""
+    pct = usado / limite if limite > 0 else 0
+    if pct >= 0.95:
+        return COLOR_CONGESTIONADO, "🔴", "CRITICO"
+    elif pct >= 0.80:
+        return COLOR_LENTO, "🟠", "ALTO"
+    elif pct >= 0.60:
+        return COLOR_MODERADO, "🟡", "MODERADO"
+    else:
+        return COLOR_FLUIDO, "🟢", "OK"
+
+st.markdown(
+    f"<h4 style='color:{UTB_WHITE};margin:24px 0 10px;letter-spacing:.8px;font-weight:800;font-size:18px;border-left:5px solid {R_MENTA};padding-left:12px;'>"
+    f"CUOTA DIARIA API TOMTOM</h4>",
+    unsafe_allow_html=True,
+)
+
+qa, qb = st.columns(2)
+
+for col_q, vps_label, usado in [(qa, "VPS 1", llamadas_vps1), (qb, "VPS 2", llamadas_vps2)]:
+    pct       = min(usado / LIMITE, 1.0)
+    color, emoji, estado = _semaforo_cuota(usado, LIMITE)
+    restantes = max(LIMITE - usado, 0)
+    with col_q:
+        st.markdown(
+            f"<div style='background:{UTB_NAVY_LIGHT};border-radius:28px;padding:20px 24px;box-shadow:{R_SOMBRA}, inset 4px 0 0 {color};border:0;'>"
+            f"<div style='display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;'>"
+            f"  <span style='color:{UTB_WHITE};font-weight:700;font-size:15px;'>{emoji} {vps_label}</span>"
+            f"  <span style='color:{color};font-weight:700;font-size:13px;'>{estado}</span>"
+            f"</div>"
+            f"<div style='background:#e6eefb;border-radius:6px;height:12px;overflow:hidden;margin-bottom:8px;'>"
+            f"  <div style='background:{color};width:{pct*100:.1f}%;height:100%;border-radius:6px;transition:width 0.4s;'></div>"
+            f"</div>"
+            f"<div style='display:flex;justify-content:space-between;'>"
+            f"  <span style='color:{UTB_GRAY};font-size:12px;'>{usado:,} / {LIMITE:,} llamadas</span>"
+            f"  <span style='color:{UTB_GRAY};font-size:12px;'>{restantes:,} restantes · {pct*100:.1f}%</span>"
+            f"</div>"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+
+# Advertencia si alguno supera el 80%
+for vps_label, usado in [("VPS 1", llamadas_vps1), ("VPS 2", llamadas_vps2)]:
+    pct = usado / LIMITE if LIMITE > 0 else 0
+    if pct >= 0.95:
+        st.error(f"⛔ {vps_label} ha alcanzado el {pct*100:.1f}% de la cuota — riesgo de error 403 InsufficientFunds.")
+    elif pct >= 0.80:
+        st.warning(f"⚠️ {vps_label} lleva el {pct*100:.1f}% de la cuota diaria. Evita ejecutar pruebas manuales hoy.")
+
+st.markdown("<div style='margin-bottom:8px;'></div>", unsafe_allow_html=True)
+
+# ============================================================
+# AVISO DE CAPTURA DETENIDA
+# ============================================================
+# Un mapa vacio no explica nada. Si la ultima corrida no trajo un solo nodo
+# valido, se dice por que y desde cuando, con el error crudo de la API.
+if snapshot_degradado:
+    _sd = snapshot_degradado
+    _motivo_txt = (_sd["motivo"] or "sin detalle en error_msg")
+    _motivo_txt = _motivo_txt.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    if len(_motivo_txt) > 300:
+        _motivo_txt = _motivo_txt[:300] + "..."
+    _http_txt = f"HTTP {_sd['http']} · " if _sd["http"] else ""
+
+    if _sd["label_valido"]:
+        _seg = (datetime.now() - _sd["hora_valida"]).total_seconds()
+        _dias, _resto = divmod(max(_seg, 0), 86400)
+        _horas = _resto / 3600
+        _antig = f"{int(_dias)} d {_horas:.0f} h" if _dias else f"{_horas:.1f} h"
+        _respaldo = (
+            f"El analisis de nodos muestra el ultimo dato bueno: "
+            f"<b style='color:{UTB_WHITE};'>{_sd['label_valido']}</b> "
+            f"(hace {_antig}). No es la situacion actual del trafico."
+        )
+    else:
+        _respaldo = "No hay ninguna corrida reciente con datos validos para mostrar."
+
+    st.markdown(f"""
+    <div style="background:rgba(239,68,68,0.12);border-left:4px solid {COLOR_CONGESTIONADO};
+         padding:14px 18px;border-radius:8px;margin-bottom:16px;">
+        <div style="color:{COLOR_CONGESTIONADO};font-size:13px;font-weight:800;
+             letter-spacing:1px;margin-bottom:6px;">
+            &#9888; CAPTURA DE DATOS DETENIDA</div>
+        <div style="color:{UTB_GRAY};font-size:13px;line-height:1.6;">
+            La corrida <b style="color:{UTB_WHITE};">{_sd['label_fallido']}</b> devolvio
+            <b style="color:{COLOR_CONGESTIONADO};">0 de {_sd['nodos']} nodos validos</b>.<br/>
+            {_http_txt}Respuesta de la API:
+            <code style="background:{UTB_NAVY_LIGHT};color:{COLOR_LENTO};padding:2px 6px;
+             border-radius:4px;font-size:12px;">{_motivo_txt}</code><br/>
+            {_respaldo}
+        </div>
+    </div>""", unsafe_allow_html=True)
+
+# ============================================================
+# TABS
+# ============================================================
+tab_mapa, tab_red, tab_datos, tab_proceso, tab_historia = st.tabs(
+    ["Mapa de Trafico", "Red de Nodos", "Analisis de Nodos", "Monitor del Proceso", "Historico"]
+)
+
+# ----------------------------------------------------------------
+# TAB MAPA
+# ----------------------------------------------------------------
+with tab_mapa:
+    catalogo = cargar_catalogo()
+    if catalogo.empty:
+        st.info("No se pudo leer el catalogo de nodos (nodos.xlsx).")
+    else:
+        col_filtros, col_mapa = st.columns([1, 3])
+        with col_filtros, mapa_nodos.tarjeta_filtros("mapa", "Filtros del Mapa"):
+            filtros = mapa_nodos.panel_filtros(
+                "mapa", dict(zip(catalogo["id_nodo"], catalogo["nombre_nodo"])),
+                fechas_disponibles(),
+            )
+        consulta = filtros["consulta"]
+        en_vivo = filtros["en_vivo"]
+
+        # Sin filtros de datos: la ultima ejecucion, como en produccion.
+        # Al tocar fechas, horas, mes o tipo de dia: promedios del periodo.
+        if en_vivo:
+            promedios = lecturas_ultima_ejecucion(df_snapshot)
+        else:
+            with st.spinner("Calculando promedios..."):
+                promedios, _ = promedios_mapa(**consulta)
+
+        nodos_mapa = catalogo
+        if consulta["ids"]:
+            nodos_mapa = catalogo[catalogo["id_nodo"].isin(consulta["ids"])]
+        nodos_mapa = nodos_mapa.merge(promedios, on="id_nodo", how="left")
+        n_con_datos = int(nodos_mapa["n"].notna().sum())
+
+        with col_mapa:
+            if n_con_datos == 0:
+                st.info("La ultima ejecucion no trajo lecturas validas." if en_vivo else
+                        "No hay mediciones con estos filtros. Los nodos se muestran en gris.")
+
+            mapa = mapa_nodos.construir_mapa(
+                nodos_mapa, filtros["metrica"], filtros["metrica_label"], clasificar_ratio,
+                en_vivo,
+            )
+            st_folium(mapa, height=560, use_container_width=True,
+                      returned_objects=[], key="mapa_nodos")
+            st.caption("Haz clic en un nodo para ver su detalle.")
+            if filtros["metrica"] == "ratio":
+                leyenda_ratio("ratio")
+
+        st.markdown("### Distribucion del trafico")
+        ca, cb, cc, cd = st.columns(4)
+        r_ok = nodos_mapa["ratio"].dropna()
+        n_fluido   = (r_ok > UMBRAL_FLUIDO).sum()
+        n_moderado = ((r_ok > UMBRAL_MODERADO) & (r_ok <= UMBRAL_FLUIDO)).sum()
+        n_lento    = ((r_ok > UMBRAL_LENTO) & (r_ok <= UMBRAL_MODERADO)).sum()
+        n_cong     = (r_ok <= UMBRAL_LENTO).sum()
+        # Los rangos de cada categoria ya estan en la leyenda del indice, arriba
+        for col_ui, n, color, label in [
+            (ca, n_fluido,   COLOR_FLUIDO,        "FLUIDO"),
+            (cb, n_moderado, COLOR_MODERADO,      "MODERADO"),
+            (cc, n_lento,    COLOR_LENTO,         "LENTO"),
+            (cd, n_cong,     COLOR_CONGESTIONADO, "CONGESTIONADO"),
+        ]:
+            with col_ui:
+                st.markdown(f"""
+                <div style="background:{UTB_NAVY_LIGHT};padding:22px 24px 20px;border-radius:28px;border:0;box-shadow:{R_SOMBRA}, inset 0 4px 0 {color};">
+                    <div style="color:{UTB_GRAY};font-size:12px;font-weight:600;letter-spacing:.8px;"><span style="color:{color};">●</span> {label}</div>
+                    <div style="color:{UTB_WHITE};font-size:36px;font-weight:800;margin:8px 0 0;">{n}</div>
+                </div>""", unsafe_allow_html=True)
+
+# ----------------------------------------------------------------
+# TAB RED DE NODOS
+# ----------------------------------------------------------------
+with tab_red:
+    catalogo = cargar_catalogo()
+    if catalogo.empty:
+        st.info("No se pudo leer el catalogo de nodos (nodos.xlsx).")
+    else:
+        red = cargar_red()
+        nombres = dict(zip(catalogo["id_nodo"], catalogo["nombre_nodo"]))
+        col_filtros, col_mapa = st.columns([1, 3])
+        with col_filtros, mapa_nodos.tarjeta_filtros("red", "Filtros del Mapa de Red"):
+            filtros_red = mapa_nodos.panel_filtros("red", nombres, fechas_disponibles())
+            mostrar_conexiones = st.checkbox("Mostrar conexiones", value=True, key="red_conexiones")
+            # La clave cambia con la disponibilidad del trazado: si el JSON
+            # aparece a mitad de sesion, la casilla vuelve a nacer marcada.
+            seguir_vias = st.checkbox(
+                "Seguir las carreteras", value=red["por_via"],
+                key=f"red_vias_{red['por_via']}", disabled=not red["por_via"],
+                help="Dibuja cada conexion por las vias reales (OpenStreetMap). "
+                     "Si esta deshabilitado, falta ejecutar capturar_red.py.",
+            )
+
+            st.markdown("#### Ruta")
+            tipo_ruta = st.radio(
+                "Tipo de ruta", ["Origen–Destino", "Corredor"],
+                horizontal=True, key="red_tipo_ruta", label_visibility="collapsed",
+            )
+            origen = destino = None
+            if tipo_ruta == "Origen–Destino":
+                origen = st.selectbox("Origen", list(nombres), index=None, key="red_origen",
+                                      format_func=nombres.get, placeholder="Elegir nodo")
+                destino = st.selectbox("Destino", list(nombres), index=None, key="red_destino",
+                                       format_func=nombres.get, placeholder="Elegir nodo")
+            else:
+                corredores = cargar_corredores()
+                if corredores.empty:
+                    st.info(
+                        "Todavia no hay corredores. Agregalos en la hoja CORREDORES de "
+                        "nodos.xlsx: nombre del corredor, nodo_inicio y nodo_fin (id_nodo)."
+                    )
+                else:
+                    corredor = st.selectbox("Corredor", corredores["corredor"].tolist(),
+                                            index=None, key="red_corredor",
+                                            placeholder="Elegir corredor")
+                    if corredor:
+                        fila = corredores[corredores["corredor"] == corredor].iloc[0]
+                        faltan = [n for n in (fila["nodo_inicio"], fila["nodo_fin"]) if n not in nombres]
+                        if faltan:
+                            st.warning(f"El corredor usa nodos que no estan en el catalogo: {', '.join(faltan)}")
+                        else:
+                            origen, destino = fila["nodo_inicio"], fila["nodo_fin"]
+
+        # La ruta se calcula sobre toda la red: el filtro de punto de
+        # monitoreo solo decide que nodos se dibujan.
+        consulta_red = {**filtros_red["consulta"], "ids": ()}
+        en_vivo_red = filtros_red["en_vivo"]
+        # Igual que el mapa de nodos: ultima ejecucion hasta que se toque un filtro
+        if en_vivo_red:
+            promedios_red = lecturas_ultima_ejecucion(df_snapshot)
+        else:
+            with st.spinner("Calculando promedios..."):
+                promedios_red, _ = promedios_mapa(**consulta_red)
+        prom = promedios_red.set_index("id_nodo").to_dict("index")
+        ruta = (red_nodos.ruta_mas_rapida(origen, destino, red, prom)
+                if origen and destino else None)
+
+        nodos_red = catalogo.merge(promedios_red, on="id_nodo", how="left")
+        ids_vista = set(filtros_red["consulta"]["ids"])
+        if ids_vista:
+            ids_vista |= set(ruta["nodos"]) if ruta else set()
+            nodos_red = nodos_red[nodos_red["id_nodo"].isin(ids_vista)]
+
+        with col_mapa:
+            if origen and destino and origen == destino:
+                st.info("El origen y el destino son el mismo nodo.")
+            elif origen and destino and ruta is None:
+                st.warning("No hay un camino entre esos nodos con datos para estos filtros.")
+
+            mapa_red = red_nodos.construir_mapa_red(
+                nodos_red, red, prom, filtros_red["metrica"], filtros_red["metrica_label"],
+                clasificar_ratio, mostrar_conexiones, seguir_vias, ruta, en_vivo_red,
+            )
+            st_folium(mapa_red, height=560, use_container_width=True,
+                      returned_objects=[], key="mapa_red")
+            if filtros_red["metrica"] == "ratio":
+                leyenda_ratio("ratio")
+
+        if ruta:
+            st.markdown("### Ruta seleccionada")
+            km = ruta["dist_m"] / 1000
+            minutos = ruta["tiempo_s"] / 60
+            extra = minutos - ruta["tiempo_libre_s"] / 60
+            rc1, rc2, rc3, rc4 = st.columns(4)
+            with rc1: st.metric("Distancia total", f"{km:.1f} km")
+            with rc2: st.metric("Tiempo promedio de viaje", f"{minutos:.1f} min",
+                                f"+{extra:.1f} min vs. flujo libre", delta_color="inverse")
+            with rc3: st.metric("Velocidad promedio", f"{km / (minutos / 60):.1f} km/h")
+            with rc4: st.metric("Nodos en la ruta", len(ruta["nodos"]))
+
+            tabla_ruta = pd.DataFrame([{
+                "#": i + 1,
+                "Nodo": nombres[n],
+                "Velocidad (km/h)": prom.get(n, {}).get("vel_actual"),
+                "Indice de fluidez": prom.get(n, {}).get("ratio"),
+                "Estado": clasificar_ratio(prom.get(n, {}).get("ratio"))[1],
+            } for i, n in enumerate(ruta["nodos"])])
+            # En rutas cortas la tabla ya muestra todos los nodos
+            if len(tabla_ruta) > 3:
+                criticos = tabla_ruta.nsmallest(3, "Indice de fluidez")
+                st.markdown(
+                    "**Mayor congestion en la ruta:** " + " · ".join(
+                        f"{r['Nodo']} ({r['Indice de fluidez']:.2f}, {r['Estado'].lower()})"
+                        for _, r in criticos.iterrows()
+                    )
+                )
+            st.dataframe(
+                tabla_ruta.style.format({"Velocidad (km/h)": "{:.1f}", "Indice de fluidez": "{:.2f}"}),
+                use_container_width=True, hide_index=True,
+            )
+            st.caption(
+                "Tiempo estimado con las velocidades promedio de los nodos en el periodo "
+                "filtrado (media armonica por tramo) y la ruta mas rapida entre ellos. "
+                "Distancias y sentidos viales de OpenStreetMap, que puede no reflejar "
+                "cambios recientes del DATT."
+            )
+
+# ----------------------------------------------------------------
+# TAB ANALISIS DE NODOS
+# ----------------------------------------------------------------
+with tab_datos:
+    if df_snapshot.empty:
+        st.info("No hay datos.")
+    else:
+        st.caption(f"Fuente: {snapshot_label}")
+        if "velocidad_ratio" in df_snapshot.columns:
+            st.markdown("### Top 10 nodos mas congestionados")
+            # Ranking: el mas congestionado (menor ratio) arriba.
+            # En barras horizontales la primera fila va abajo, por eso
+            # ordenamos ascendente=False para que el menor ratio quede al tope.
+            top10 = (
+                df_snapshot[df_snapshot["ok"].astype(str).str.lower().isin(["true", "1"])]
+                .nsmallest(10, "velocidad_ratio")
+                .sort_values("velocidad_ratio", ascending=False)
+            )
+            top10["color"] = top10["velocidad_ratio"].apply(lambda r: clasificar_ratio(r)[0])
+            fig_top = px.bar(
+                top10,
+                x="velocidad_ratio",
+                y="nombre_nodo",
+                orientation="h",
+                color="color",
+                color_discrete_map="identity",
+                labels={"velocidad_ratio": "Ratio velocidad (0=congestionado · 1=fluido)", "nombre_nodo": ""},
+                text=top10["velocidad_ratio"].apply(lambda x: f"{x:.2f}" if pd.notna(x) else ""),
+            )
+            fig_top.update_traces(textposition="outside")
+            fig_top = plotly_base(fig_top, height=380)
+            fig_top.update_layout(
+                xaxis=dict(range=[0, 1.15]),
+                showlegend=False,
+            )
+            st.plotly_chart(fig_top, use_container_width=True)
+            leyenda_ratio("ratio")
+
+        st.markdown("### Tabla completa")
+        cf1, cf2 = st.columns(2)
+        with cf1:
+            cats = ["Todas"] + sorted(df_snapshot["categoria"].dropna().unique().tolist())
+            cat_sel = st.selectbox("Categoria", cats)
+        with cf2:
+            zonas = ["Todas"] + sorted(df_snapshot["zona"].dropna().unique().tolist()) if "zona" in df_snapshot.columns else ["Todas"]
+            zona_sel = st.selectbox("Zona", zonas)
+
+        df_filt = df_snapshot.copy()
+        if cat_sel != "Todas":
+            df_filt = df_filt[df_filt["categoria"] == cat_sel]
+        if zona_sel != "Todas" and "zona" in df_filt.columns:
+            df_filt = df_filt[df_filt["zona"] == zona_sel]
+
+        st.dataframe(df_filt, use_container_width=True, hide_index=True)
+        st.download_button(
+            "Descargar CSV filtrado",
+            df_filt.to_csv(index=False).encode("utf-8"),
+            file_name=f"trafico_filtrado_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+            mime="text/csv",
+        )
+
+# ----------------------------------------------------------------
+# TAB MONITOR DEL PROCESO
+# ----------------------------------------------------------------
+with tab_proceso:
+    # Reconstruir ejecuciones de VPS 2 desde Sheets (su log esta en otro servidor)
+    logs_vps2 = pd.DataFrame()
+    if not _df_sheets_1d.empty and "consultation_time" in _df_sheets_1d.columns:
+        df_v2 = _df_sheets_1d[_df_sheets_1d["vps_id"].astype(str) == "2"].copy()
+        if not df_v2.empty:
+            df_v2["ok_bool"] = df_v2["ok"].astype(str).str.upper() == "TRUE"
+            grp = df_v2.groupby("consultation_time").agg(
+                total_nodos=("ok_bool", "count"),
+                consultas_ok=("ok_bool", "sum"),
+            ).reset_index()
+            grp["consultas_error"] = grp["total_nodos"] - grp["consultas_ok"]
+            grp["vps_id"] = "2"
+            grp["estado"] = grp["consultas_error"].apply(lambda x: "ERROR" if x > 0 else "OK")
+            grp["error"] = None
+            grp = grp.rename(columns={"consultation_time": "timestamp"})
+            logs_vps2 = grp[["timestamp", "vps_id", "total_nodos", "consultas_ok", "consultas_error", "estado", "error"]]
+
+    # Combinar VPS 1 (log local) + VPS 2 (reconstruido desde Sheets)
+    if not logs_vps2.empty:
+        logs_combined = pd.concat([logs, logs_vps2], ignore_index=True).sort_values("timestamp")
+    else:
+        logs_combined = logs.copy()
+
+    if logs_combined.empty:
+        st.info("No hay registros de ejecuciones aun.")
+    else:
+        st.markdown("### Ultimas 20 ejecuciones (VPS 1 + VPS 2)")
+        st.caption("VPS 1 desde log local · VPS 2 reconstruido desde Google Sheets")
+        st.dataframe(
+            logs_combined.tail(20).sort_values("timestamp", ascending=False),
+            use_container_width=True, hide_index=True,
+        )
+
+        st.markdown("### Ejecuciones por hora (hoy)")
+        hoy_p = datetime.now().date()
+        logs_hoy2 = logs_combined[logs_combined["timestamp"].dt.date == hoy_p].copy()
+        if not logs_hoy2.empty:
+            logs_hoy2["hora"] = logs_hoy2["timestamp"].dt.strftime("%H:%M")
+            por_hora = logs_hoy2.groupby("hora").agg(
+                consultas_ok=("consultas_ok", "sum"),
+                consultas_error=("consultas_error", "sum"),
+                vps=("vps_id", lambda x: "+".join(sorted(x.unique()))),
+            ).reset_index()
+
+            fig_proc = go.Figure()
+            fig_proc.add_trace(go.Bar(
+                x=por_hora["hora"], y=por_hora["consultas_ok"],
+                name="OK", marker_color=COLOR_FLUIDO,
+                text=por_hora["vps"].apply(lambda v: f"VPS{v}"),
+                textposition="inside",
+            ))
+            fig_proc.add_trace(go.Bar(
+                x=por_hora["hora"], y=por_hora["consultas_error"],
+                name="Error", marker_color=COLOR_CONGESTIONADO,
+            ))
+            fig_proc.update_layout(barmode="stack", xaxis_title="Hora", yaxis_title="Consultas")
+            fig_proc = plotly_base(fig_proc, height=300)
+            st.plotly_chart(fig_proc, use_container_width=True)
+            leyenda_ratio("proceso")
+        else:
+            st.info("Aun no hay ejecuciones hoy.")
+
+        st.markdown("### Errores en los ultimos 7 dias")
+        hace_7d = datetime.now() - timedelta(days=7)
+        errores = logs_combined[
+            (logs_combined["timestamp"] >= hace_7d) &
+            (logs_combined["estado"] == "ERROR")
+        ]
+        if errores.empty:
+            st.markdown(
+                f"<div style='background:rgba(16,185,129,0.1);border-left:4px solid {COLOR_FLUIDO};"
+                f"padding:16px;border-radius:8px;color:{COLOR_FLUIDO};font-weight:600;'>"
+                f"✓ Sin errores en los ultimos 7 dias</div>",
+                unsafe_allow_html=True,
+            )
+        else:
+            st.dataframe(errores, use_container_width=True, hide_index=True)
+
+# ----------------------------------------------------------------
+# TAB HISTORICO
+# ----------------------------------------------------------------
+with tab_historia:
+    st.markdown("### Datos historicos")
+    st.caption("Incluye datos de VPS 1 (Turnos 1-2) y VPS 2 (Turnos 3-4)")
+
+    # Rango de fechas disponible (consulta ligera; los datos del periodo se
+    # cargan despues, solo para el rango que el usuario elija).
+    with st.spinner("Consultando datos disponibles..."):
+        min_fecha, max_fecha, fuente_rango = rango_fechas_historico()
+
+    if min_fecha is None:
+        st.warning("No hay datos historicos o no hay conexion con la fuente.")
+    else:
+        # Valor por defecto: ultimos 7 dias, recortado al rango disponible
+        ini_default = max(min_fecha, max_fecha - timedelta(days=7))
+
+        hf1, hf2, hf3, hf4 = st.columns([2, 2, 2, 1])
+        with hf1:
+            fecha_ini = st.date_input(
+                "Desde", value=ini_default,
+                min_value=min_fecha, max_value=max_fecha,
+            )
+        with hf2:
+            fecha_fin = st.date_input(
+                "Hasta", value=max_fecha,
+                min_value=min_fecha, max_value=max_fecha,
+            )
+        with hf3:
+            tipo_dia = st.selectbox(
+                "Tipo de dia",
+                ["Todos", "Solo laborables (L-V)", "Solo fin de semana",
+                 "Lunes", "Martes", "Miercoles", "Jueves", "Viernes", "Sabado", "Domingo"],
+            )
+        with hf4:
+            st.markdown("<div style='height:28px;'></div>", unsafe_allow_html=True)
+            if st.button("Recargar datos", use_container_width=True):
+                st.cache_data.clear()
+                st.rerun()
+
+        st.caption(
+            f"Datos disponibles: {min_fecha.strftime('%d/%m/%Y')} → "
+            f"{max_fecha.strftime('%d/%m/%Y')} · Fuente: {fuente_rango}"
+        )
+
+        if fecha_fin < fecha_ini:
+            st.error("La fecha 'Hasta' debe ser mayor o igual a 'Desde'.")
+            df_periodo = pd.DataFrame()
+        else:
+            with st.spinner("Cargando periodo seleccionado..."):
+                df_periodo, fuente_datos = cargar_historico(fecha_ini, fecha_fin)
+
+            if fuente_datos is None:
+                st.warning("No se pudo cargar el periodo desde ninguna fuente.")
+            elif fuente_datos != fuente_rango:
+                st.caption(f"Fuente del periodo: {fuente_datos}")
+
+            # Filtro por tipo de dia (cambio 7)
+            if not df_periodo.empty and tipo_dia != "Todos":
+                wd = df_periodo["consultation_time"].dt.weekday  # 0=Lunes
+                dias_idx = {"Lunes": 0, "Martes": 1, "Miercoles": 2, "Jueves": 3,
+                            "Viernes": 4, "Sabado": 5, "Domingo": 6}
+                if tipo_dia == "Solo laborables (L-V)":
+                    df_periodo = df_periodo[wd < 5]
+                elif tipo_dia == "Solo fin de semana":
+                    df_periodo = df_periodo[wd >= 5]
+                else:
+                    df_periodo = df_periodo[wd == dias_idx[tipo_dia]]
+
+            if df_periodo.empty:
+                st.info(
+                    f"Sin datos entre {fecha_ini.strftime('%d/%m/%Y')} y "
+                    f"{fecha_fin.strftime('%d/%m/%Y')}"
+                    + (f" para '{tipo_dia}'." if tipo_dia != "Todos" else ".")
+                )
+            else:
+                # Metricas del periodo
+                n_ejec    = df_periodo["consultation_time"].nunique()
+                vel_prom  = df_periodo["currentSpeed"].mean()
+                ratio_prom = df_periodo["velocidad_ratio"].mean()
+                n_reg     = len(df_periodo)
+
+                mc1, mc2, mc3, mc4 = st.columns(4)
+                with mc1: st.metric("Ejecuciones", n_ejec)
+                with mc2: st.metric("Vel. promedio", f"{vel_prom:.1f} km/h" if pd.notna(vel_prom) else "—")
+                with mc3: st.metric("Ratio promedio", f"{ratio_prom:.2f}" if pd.notna(ratio_prom) else "—")
+                with mc4: st.metric("Registros totales", f"{n_reg:,}")
+
+                # --- Grafica 1: Evolucion velocidad promedio ---
+                st.markdown("### Evolucion de velocidad promedio")
+                evo = (
+                    df_periodo.groupby("consultation_time")
+                    .agg(vel_actual=("currentSpeed", "mean"), vel_libre=("freeFlowSpeed", "mean"))
+                    .reset_index()
+                    .sort_values("consultation_time")
+                )
+                # Insertar cortes (NaN) cuando hay un hueco > 90 min entre ejecuciones
+                # consecutivas, para que la noche/dias sin datos se vean como
+                # interrupciones reales y no como lineas diagonales engañosas (cambio 6).
+                evo = evo.set_index("consultation_time")
+                gaps = evo.index.to_series().diff() > pd.Timedelta(minutes=90)
+                if gaps.any():
+                    filas_gap = []
+                    for ts in evo.index[gaps]:
+                        filas_gap.append(pd.Series({"vel_actual": None, "vel_libre": None},
+                                                   name=ts - pd.Timedelta(minutes=1)))
+                    evo = pd.concat([evo, pd.DataFrame(filas_gap)]).sort_index()
+                evo = evo.reset_index().rename(columns={"index": "consultation_time"})
+
+                fig_line = go.Figure()
+                fig_line.add_trace(go.Scatter(
+                    x=evo["consultation_time"], y=evo["vel_libre"],
+                    name="Velocidad libre", line=dict(color=SERIE_LIBRE, dash="dash", width=1.5),
+                    connectgaps=False,
+                ))
+                fig_line.add_trace(go.Scatter(
+                    x=evo["consultation_time"], y=evo["vel_actual"],
+                    name="Velocidad actual", line=dict(color=SERIE_ACTUAL, width=2),
+                    fill="tonexty", fillcolor="rgba(59,130,246,0.15)",
+                    connectgaps=False,
+                ))
+                fig_line.update_layout(xaxis_title="Fecha/Hora", yaxis_title="km/h")
+                fig_line = plotly_base(fig_line, height=320)
+                st.plotly_chart(fig_line, use_container_width=True)
+                leyenda_ratio("velocidad")
+
+                # --- Grafica 2: Top nodos mas congestionados en el periodo ---
+                st.markdown("### Nodos mas congestionados en el periodo")
+                por_nodo = (
+                    df_periodo[df_periodo["ok"].astype(str).str.lower() == "true"]
+                    .groupby("nombre_nodo")
+                    .agg(ratio_prom=("velocidad_ratio", "mean"), vel_prom=("currentSpeed", "mean"))
+                    .reset_index()
+                    .nsmallest(15, "ratio_prom")            # 15 mas congestionados
+                    .sort_values("ratio_prom", ascending=False)  # mas congestionado arriba
+                )
+                por_nodo["color"] = por_nodo["ratio_prom"].apply(lambda r: clasificar_ratio(r)[0])
+                fig_nodos = px.bar(
+                    por_nodo,
+                    x="ratio_prom",
+                    y="nombre_nodo",
+                    orientation="h",
+                    color="color",
+                    color_discrete_map="identity",
+                    labels={"ratio_prom": "Ratio promedio", "nombre_nodo": ""},
+                    text=por_nodo["ratio_prom"].apply(lambda x: f"{x:.2f}" if pd.notna(x) else ""),
+                )
+                fig_nodos.update_traces(textposition="outside")
+                fig_nodos = plotly_base(fig_nodos, height=430)
+                fig_nodos.update_layout(xaxis=dict(range=[0, 1.15]), showlegend=False)
+                st.plotly_chart(fig_nodos, use_container_width=True)
+                leyenda_ratio("ratio")
+
+                # --- Grafica 3: Heatmap hora x dia de semana ---
+                st.markdown("### Heatmap de congestion por hora y dia")
+                dias_disponibles = df_periodo["consultation_time"].dt.date.nunique()
+                if dias_disponibles < 2:
+                    st.info("Se necesitan al menos 2 dias de datos para mostrar el heatmap.")
+                else:
+                    df_heat = df_periodo.copy()
+                    df_heat["hora"]    = df_heat["consultation_time"].dt.hour
+                    df_heat["dia_num"] = df_heat["consultation_time"].dt.weekday  # 0=Lunes
+
+                    pivot = (
+                        df_heat.groupby(["dia_num", "hora"])["velocidad_ratio"]
+                        .mean()
+                        .unstack(fill_value=None)
+                    )
+                    dias_es = ["Lunes", "Martes", "Miercoles", "Jueves", "Viernes", "Sabado", "Domingo"]
+                    y_labels = [dias_es[i] for i in pivot.index if i < 7]
+                    x_labels = [f"{h:02d}:00" for h in pivot.columns]
+
+                    fig_heat = go.Figure(go.Heatmap(
+                        z=pivot.values,
+                        x=x_labels,
+                        y=y_labels,
+                        colorscale=[[0, COLOR_CONGESTIONADO], [0.5, COLOR_LENTO], [1, COLOR_FLUIDO]],
+                        zmin=0, zmax=1,
+                        colorbar=dict(title="Ratio", tickfont=dict(color=UTB_WHITE)),
+                        hovertemplate="Hora: %{x}<br>Dia: %{y}<br>Ratio: %{z:.2f}<extra></extra>",
+                    ))
+                    fig_heat.update_layout(
+                        paper_bgcolor="rgba(0,0,0,0)",
+                        plot_bgcolor="rgba(0,0,0,0)",
+                        font_color="#1e3a6e",
+                        font_family="Inter, Segoe UI, Helvetica, Arial, sans-serif",
+                        height=320,
+                        margin=dict(l=0, r=0, t=10, b=0),
+                        xaxis=dict(title="Hora del dia", gridcolor=REJILLA),
+                        yaxis=dict(title="", gridcolor=REJILLA),
+                    )
+                    st.plotly_chart(fig_heat, use_container_width=True)
+
+                # ------------------------------------------------
+                # Grafica 4: Hora pico vs hora valle
+                # ------------------------------------------------
+                st.markdown("### Hora pico vs hora valle")
+                st.caption("Velocidad promedio por franja horaria — identifica cuando fluye mejor la ciudad")
+
+                FRANJAS = {
+                    "Madrugada (00–05)": (0, 5),
+                    "Mañana temprano (06–07)": (6, 7),
+                    "Hora pico AM (08–09)": (8, 9),
+                    "Media mañana (10–11)": (10, 11),
+                    "Hora pico medio (12–13)": (12, 13),
+                    "Tarde (14–15)": (14, 15),
+                    "Pre-pico PM (16)": (16, 16),
+                    "Hora pico PM (17–18)": (17, 18),
+                    "Noche (19–23)": (19, 23),
+                }
+
+                df_franjas = df_periodo.copy()
+                df_franjas["hora_num"] = df_franjas["consultation_time"].dt.hour
+
+                filas_f = []
+                for label, (h_ini, h_fin) in FRANJAS.items():
+                    sub = df_franjas[
+                        (df_franjas["hora_num"] >= h_ini) & (df_franjas["hora_num"] <= h_fin)
+                    ]
+                    if sub.empty:
+                        continue
+                    filas_f.append({
+                        "franja": label,
+                        "vel_actual": sub["currentSpeed"].mean(),
+                        "vel_libre":  sub["freeFlowSpeed"].mean(),
+                        "ratio":      sub["velocidad_ratio"].mean(),
+                        "n_muestras": len(sub),
+                    })
+
+                if filas_f:
+                    df_f = pd.DataFrame(filas_f)
+                    fig_franjas = go.Figure()
+                    fig_franjas.add_trace(go.Bar(
+                        name="Velocidad libre",
+                        x=df_f["franja"],
+                        y=df_f["vel_libre"],
+                        marker_color=SERIE_LIBRE,
+                        opacity=0.55,
+                    ))
+                    fig_franjas.add_trace(go.Bar(
+                        name="Velocidad actual",
+                        x=df_f["franja"],
+                        y=df_f["vel_actual"],
+                        marker_color=[
+                            COLOR_FLUIDO if r > 0.75 else (COLOR_LENTO if r > 0.5 else COLOR_CONGESTIONADO)
+                            for r in df_f["ratio"].fillna(0)
+                        ],
+                    ))
+                    # Linea de ratio superpuesta (eje Y secundario)
+                    fig_franjas.add_trace(go.Scatter(
+                        name="Ratio (eje →)",
+                        x=df_f["franja"],
+                        y=df_f["ratio"],
+                        mode="lines+markers",
+                        yaxis="y2",
+                        line=dict(color=R_MENTA_OSC, width=2),
+                        marker=dict(size=8, color=R_MENTA_OSC),
+                    ))
+                    fig_franjas.update_layout(
+                        barmode="group",
+                        xaxis_title="",
+                        yaxis=dict(title="km/h", gridcolor=REJILLA),
+                        yaxis2=dict(
+                            title=dict(text="Ratio (0–1)", font=dict(color=R_MENTA_OSC)),
+                            overlaying="y",
+                            side="right",
+                            range=[0, 1.2],
+                            showgrid=False,
+                            tickfont=dict(color=R_MENTA_OSC),
+                        ),
+                    )
+                    fig_franjas = plotly_base(fig_franjas, height=370)
+                    st.plotly_chart(fig_franjas, use_container_width=True)
+                    leyenda_ratio("velocidad")
+
+                    # Mini tabla resumen
+                    df_f_disp = df_f.copy()
+                    df_f_disp["vel_actual"]  = df_f_disp["vel_actual"].apply(lambda x: f"{x:.1f} km/h" if pd.notna(x) else "—")
+                    df_f_disp["vel_libre"]   = df_f_disp["vel_libre"].apply(lambda x: f"{x:.1f} km/h" if pd.notna(x) else "—")
+                    df_f_disp["ratio"]       = df_f_disp["ratio"].apply(lambda x: f"{x:.2f}" if pd.notna(x) else "—")
+                    df_f_disp = df_f_disp.rename(columns={
+                        "franja": "Franja", "vel_actual": "Vel. actual",
+                        "vel_libre": "Vel. libre", "ratio": "Ratio", "n_muestras": "Muestras",
+                    })
+                    st.dataframe(df_f_disp, use_container_width=True, hide_index=True)
+                    st.markdown(
+                        f"<div style='background:{SUPERFICIE_SUAVE};border:1px solid {UTB_BORDER};border-left:3px solid {R_MENTA};"
+                        f"border-radius:6px;padding:10px 14px;margin-top:6px;font-size:12px;"
+                        f"color:{UTB_GRAY};'>"
+                        f"<b style='color:{UTB_CYAN};'>¿Por qué varían las muestras?</b> "
+                        f"Cada franja agrupa distinta cantidad de horas y de ejecuciones: las franjas "
+                        f"con más horas o más días dentro del rango seleccionado acumulan más mediciones "
+                        f"(113 nodos por ejecución). Franjas con pocas muestras son menos representativas "
+                        f"y deben interpretarse con cautela.</div>",
+                        unsafe_allow_html=True,
+                    )
+                else:
+                    st.info("No hay suficientes datos para calcular franjas horarias en este periodo.")
+
+                st.divider()
+
+                # ------------------------------------------------
+                # Grafica 5: Vista de un solo nodo
+                # ------------------------------------------------
+                st.markdown("### Vista de un solo nodo")
+                st.caption("Selecciona un punto de monitoreo para ver su evolucion historica completa")
+
+                nodos_disponibles = sorted(
+                    df_periodo["nombre_nodo"].dropna().unique().tolist()
+                ) if "nombre_nodo" in df_periodo.columns else []
+
+                if not nodos_disponibles:
+                    st.info("No hay datos de nodos en el periodo seleccionado.")
+                else:
+                    nodo_sel = st.selectbox(
+                        "Nodo",
+                        nodos_disponibles,
+                        key="nodo_historico_sel",
+                    )
+                    df_nodo = df_periodo[df_periodo["nombre_nodo"] == nodo_sel].copy()
+                    df_nodo = df_nodo.sort_values("consultation_time")
+
+                    if df_nodo.empty:
+                        st.info(f"Sin datos para {nodo_sel} en el periodo.")
+                    else:
+                        # Metricas del nodo
+                        vel_n     = df_nodo["currentSpeed"].mean()
+                        ratio_n   = df_nodo["velocidad_ratio"].mean()
+                        delay_n   = df_nodo["delay_abs_seg"].mean()
+                        n_obs     = len(df_nodo)
+
+                        nc1, nc2, nc3, nc4 = st.columns(4)
+                        with nc1: st.metric("Vel. promedio", f"{vel_n:.1f} km/h" if pd.notna(vel_n) else "—")
+                        with nc2: st.metric("Ratio promedio", f"{ratio_n:.2f}" if pd.notna(ratio_n) else "—")
+                        with nc3: st.metric("Demora prom.", f"{delay_n:.0f} s" if pd.notna(delay_n) else "—")
+                        with nc4: st.metric("Observaciones", n_obs)
+
+                        # Grafica de velocidad en el tiempo
+                        fig_nodo = go.Figure()
+                        fig_nodo.add_trace(go.Scatter(
+                            x=df_nodo["consultation_time"],
+                            y=df_nodo["freeFlowSpeed"],
+                            name="Velocidad libre",
+                            line=dict(color=SERIE_LIBRE, dash="dash", width=1.5),
+                        ))
+                        fig_nodo.add_trace(go.Scatter(
+                            x=df_nodo["consultation_time"],
+                            y=df_nodo["currentSpeed"],
+                            name="Velocidad actual",
+                            line=dict(color=SERIE_ACTUAL, width=2),
+                            fill="tonexty",
+                            fillcolor="rgba(59,130,246,0.15)",
+                        ))
+                        fig_nodo.update_layout(
+                            xaxis_title="Fecha/Hora",
+                            yaxis_title="km/h",
+                            title=dict(text=nodo_sel, font=dict(color=UTB_WHITE, size=13)),
+                        )
+                        fig_nodo = plotly_base(fig_nodo, height=300)
+                        st.plotly_chart(fig_nodo, use_container_width=True)
+                        leyenda_ratio("velocidad")
+
+                        # Ratio promedio por hora del dia (barras)
+                        df_nodo["hora_num"] = df_nodo["consultation_time"].dt.hour
+                        por_hora_n = (
+                            df_nodo.groupby("hora_num")
+                            .agg(ratio_h=("velocidad_ratio", "mean"), vel_h=("currentSpeed", "mean"))
+                            .reset_index()
+                        )
+
+                        fig_hora_n = go.Figure()
+                        fig_hora_n.add_trace(go.Bar(
+                            x=[f"{h:02d}:00" for h in por_hora_n["hora_num"]],
+                            y=por_hora_n["ratio_h"],
+                            marker_color=[
+                                COLOR_FLUIDO if r > 0.75 else (COLOR_LENTO if r > 0.5 else COLOR_CONGESTIONADO)
+                                for r in por_hora_n["ratio_h"].fillna(0)
+                            ],
+                            name="Ratio por hora",
+                            text=por_hora_n["ratio_h"].apply(lambda x: f"{x:.2f}" if pd.notna(x) else ""),
+                            textposition="outside",
+                        ))
+                        fig_hora_n.update_layout(
+                            xaxis_title="Hora del dia",
+                            yaxis_title="Ratio (0=congestion · 1=fluido)",
+                            yaxis=dict(range=[0, 1.2]),
+                        )
+                        fig_hora_n = plotly_base(fig_hora_n, height=280)
+                        st.plotly_chart(fig_hora_n, use_container_width=True)
+                        leyenda_ratio("ratio")
+
+                        # Peor hora / Mejor hora
+                        if not por_hora_n.empty:
+                            peor = por_hora_n.loc[por_hora_n["ratio_h"].idxmin()]
+                            mejor = por_hora_n.loc[por_hora_n["ratio_h"].idxmax()]
+                            ph1, ph2 = st.columns(2)
+                            with ph1:
+                                st.markdown(
+                                    f"<div style='background:rgba(239,68,68,0.1);border-left:3px solid {COLOR_CONGESTIONADO};"
+                                    f"padding:12px 16px;border-radius:6px;'>"
+                                    f"<div style='color:{COLOR_CONGESTIONADO};font-size:11px;font-weight:700;'>⚠ PEOR HORA</div>"
+                                    f"<div style='color:{UTB_WHITE};font-size:22px;font-weight:700;'>{int(peor['hora_num']):02d}:00</div>"
+                                    f"<div style='color:{UTB_GRAY};font-size:12px;'>Ratio {peor['ratio_h']:.2f} · "
+                                    f"Vel. {peor['vel_h']:.1f} km/h</div></div>",
+                                    unsafe_allow_html=True,
+                                )
+                            with ph2:
+                                st.markdown(
+                                    f"<div style='background:rgba(16,185,129,0.1);border-left:3px solid {COLOR_FLUIDO};"
+                                    f"padding:12px 16px;border-radius:6px;'>"
+                                    f"<div style='color:{COLOR_FLUIDO};font-size:11px;font-weight:700;'>✓ MEJOR HORA</div>"
+                                    f"<div style='color:{UTB_WHITE};font-size:22px;font-weight:700;'>{int(mejor['hora_num']):02d}:00</div>"
+                                    f"<div style='color:{UTB_GRAY};font-size:12px;'>Ratio {mejor['ratio_h']:.2f} · "
+                                    f"Vel. {mejor['vel_h']:.1f} km/h</div></div>",
+                                    unsafe_allow_html=True,
+                                )
+
+                st.divider()
+
+                # ------------------------------------------------
+                # Exportar reporte HTML
+                # ------------------------------------------------
+                st.markdown("### Exportar reporte")
+                st.caption("Descarga un reporte HTML con todos los graficos — abre en tu navegador y usa Ctrl+P para exportar a PDF")
+
+                if st.button("📥 Generar reporte HTML", use_container_width=False):
+                    with st.spinner("Generando reporte..."):
+                        # Construir HTML con plotly embebido
+                        periodo_label = f"{fecha_ini.strftime('%d/%m/%Y')} — {fecha_fin.strftime('%d/%m/%Y')}"
+                        ts_gen = datetime.now().strftime("%d/%m/%Y %H:%M")
+
+                        # Volver a generar las figuras (sin cache de streamlit)
+                        evo2 = (
+                            df_periodo.groupby("consultation_time")
+                            .agg(vel_actual=("currentSpeed", "mean"), vel_libre=("freeFlowSpeed", "mean"))
+                            .reset_index().sort_values("consultation_time")
+                        )
+                        fig_r1 = go.Figure()
+                        fig_r1.add_trace(go.Scatter(x=evo2["consultation_time"], y=evo2["vel_libre"],
+                            name="Velocidad libre", line=dict(color="#8A9AB8", dash="dash", width=1.5)))
+                        fig_r1.add_trace(go.Scatter(x=evo2["consultation_time"], y=evo2["vel_actual"],
+                            name="Velocidad actual", line=dict(color="#00D4D4", width=2),
+                            fill="tonexty", fillcolor="rgba(94,234,212,0.12)"))
+                        fig_r1.update_layout(title="Evolucion de velocidad promedio",
+                            xaxis_title="Fecha/Hora", yaxis_title="km/h",
+                            paper_bgcolor="#0A1F44", plot_bgcolor="#15294D",
+                            font_color="#FFFFFF", height=350)
+
+                        por_nodo2 = (
+                            df_periodo[df_periodo["ok"].astype(str).str.lower() == "true"]
+                            .groupby("nombre_nodo")
+                            .agg(ratio_prom=("velocidad_ratio", "mean"), vel_prom=("currentSpeed", "mean"))
+                            .reset_index().sort_values("ratio_prom").head(15)
+                        )
+                        fig_r2 = px.bar(por_nodo2, x="ratio_prom", y="nombre_nodo", orientation="h",
+                            color="ratio_prom",
+                            color_continuous_scale=[[0,"#EF4444"],[0.5,"#F59E0B"],[1,"#10B981"]],
+                            labels={"ratio_prom": "Ratio promedio", "nombre_nodo": ""},
+                            title="Nodos mas congestionados")
+                        fig_r2.update_coloraxes(showscale=False)
+                        fig_r2.update_layout(paper_bgcolor="#0A1F44", plot_bgcolor="#15294D",
+                            font_color="#FFFFFF", height=420, xaxis=dict(range=[0,1.15]))
+
+                        html_parts = [f"""<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>Reporte Trafico Cartagena · {periodo_label}</title>
+<style>
+  body {{ background:#0A1F44; color:#FFFFFF; font-family:sans-serif; margin:0; padding:24px; }}
+  h1 {{ color:#00D4D4; border-bottom:2px solid #00D4D4; padding-bottom:8px; }}
+  h2 {{ color:#00D4D4; font-size:16px; text-transform:uppercase; letter-spacing:1px; margin-top:32px; }}
+  .meta {{ color:#8A9AB8; font-size:13px; margin-bottom:24px; }}
+  .metric-box {{ display:inline-block; background:#15294D; border-left:3px solid #00D4D4;
+    padding:12px 20px; border-radius:6px; margin:8px 8px 8px 0; }}
+  .metric-label {{ color:#8A9AB8; font-size:11px; font-weight:700; text-transform:uppercase; }}
+  .metric-value {{ color:#FFFFFF; font-size:24px; font-weight:700; }}
+  .chart-wrap {{ margin:16px 0; }}
+  @media print {{ body {{ background:#fff; color:#000; }} h1,h2 {{ color:#003366; }} }}
+</style>
+</head>
+<body>
+<h1>Monitor de Trafico · Cartagena</h1>
+<p class="meta">Periodo: <b>{periodo_label}</b> &nbsp;|&nbsp; Generado: {ts_gen} &nbsp;|&nbsp;
+Fuente: TomTom Traffic Flow · VPS 1 + VPS 2</p>
+
+<div>
+  <div class="metric-box"><div class="metric-label">Ejecuciones</div>
+    <div class="metric-value">{n_ejec}</div></div>
+  <div class="metric-box"><div class="metric-label">Vel. promedio</div>
+    <div class="metric-value">{f"{vel_prom:.1f} km/h" if pd.notna(vel_prom) else "—"}</div></div>
+  <div class="metric-box"><div class="metric-label">Ratio promedio</div>
+    <div class="metric-value">{f"{ratio_prom:.2f}" if pd.notna(ratio_prom) else "—"}</div></div>
+  <div class="metric-box"><div class="metric-label">Registros</div>
+    <div class="metric-value">{n_reg:,}</div></div>
+</div>
+
+<h2>Evolucion de velocidad promedio</h2>
+<div class="chart-wrap">
+{fig_r1.to_html(full_html=False, include_plotlyjs="cdn")}
+</div>
+
+<h2>Nodos mas congestionados</h2>
+<div class="chart-wrap">
+{fig_r2.to_html(full_html=False, include_plotlyjs=False)}
+</div>
+"""]
+                        # Agregar tabla de franjas si existe
+                        if filas_f:
+                            tabla_rows = "".join(
+                                f"<tr><td>{r['franja']}</td><td>{r['vel_actual']:.1f} km/h</td>"
+                                f"<td>{r['vel_libre']:.1f} km/h</td><td>{r['ratio']:.2f}</td>"
+                                f"<td>{r['n_muestras']}</td></tr>"
+                                for r in filas_f if pd.notna(r.get("vel_actual"))
+                            )
+                            html_parts.append(f"""
+<h2>Franjas horarias</h2>
+<table style="width:100%;border-collapse:collapse;color:#FFF;">
+  <thead><tr style="border-bottom:1px solid #00D4D4;color:#8A9AB8;font-size:12px;">
+    <th style="text-align:left;padding:8px;">Franja</th>
+    <th>Vel. actual</th><th>Vel. libre</th><th>Ratio</th><th>Muestras</th>
+  </tr></thead>
+  <tbody>{tabla_rows}</tbody>
+</table>""")
+
+                        html_parts.append(f"""
+<p style="color:#8A9AB8;font-size:11px;margin-top:40px;border-top:1px solid #15294D;padding-top:12px;">
+  Universidad Tecnológica de Bolívar · Monitor de Trafico Cartagena ·
+  Generado el {ts_gen}
+</p>
+</body></html>""")
+
+                        html_final = "\n".join(html_parts)
+
+                    st.download_button(
+                        label="⬇ Descargar reporte HTML",
+                        data=html_final.encode("utf-8"),
+                        file_name=f"reporte_trafico_{fecha_ini.strftime('%Y%m%d')}_{fecha_fin.strftime('%Y%m%d')}.html",
+                        mime="text/html",
+                        use_container_width=False,
+                    )
+                    st.success("Reporte generado. Haz clic en el boton de descarga.")
+
+
+# ============================================================
+# FOOTER — cierre editorial de la variante de diseño
+# ============================================================
+st.markdown(f"""
+<div class="dashboard-footer">
+    <div class="footer-brand">Smart City <span>Cartagena</span></div>
+    <p class="footer-lead">
+        Datos de movilidad convertidos en información para
+        <strong>analizar el comportamiento vial de la ciudad.</strong>
+    </p>
+    <div class="footer-grid">
+        <div>
+            <div class="footer-kicker">Qué muestra</div>
+            <p class="footer-copy">Velocidad actual, nivel de fluidez, demoras, rutas y comportamiento histórico de los nodos.</p>
+        </div>
+        <div>
+            <div class="footer-kicker">Cómo se interpreta</div>
+            <p class="footer-copy">El índice de fluidez compara la velocidad actual con la velocidad de flujo libre. Verde indica circulación fluida; rojo, mayor congestión.</p>
+        </div>
+        <div>
+            <div class="footer-kicker">Fuente y actualización</div>
+            <p class="footer-copy">TomTom Traffic Flow<br>28 consultas programadas al día<br>Consolidación de VPS 1 y VPS 2</p>
+        </div>
+    </div>
+    <div class="footer-bottom">
+        <span>Movilidad urbana basada en datos</span>
+        <a class="footer-admin-link" href="/admin" target="_self">
+            Ingresar al panel administrativo
+            <span class="footer-admin-arrow">→</span>
+        </a>
+    </div>
+</div>
+""", unsafe_allow_html=True)

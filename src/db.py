@@ -184,6 +184,37 @@ def leer_rango(fecha_ini: date, fecha_fin: date) -> pd.DataFrame:
     return _postprocesar_lectura(df)
 
 
+def leer_resumen_ejecuciones(n_dias: int = 7) -> pd.DataFrame:
+    """Resume las corridas en PostgreSQL sin transferir cada medicion.
+
+    Devuelve una fila por ``consultation_time`` y VPS. Una corrida es parcial
+    cuando respondio al menos un nodo pero tambien hubo fallos, y fallida
+    cuando no respondio ninguno. Los valores nulos de ``ok`` cuentan como
+    fallo. A diferencia de ``leer_datos``, los errores se propagan para que el
+    panel pueda elegir de forma explicita un respaldo local.
+    """
+    query = text(
+        f'SELECT "consultation_time" AS timestamp, '
+        f'COALESCE(NULLIF("vps_id", \'\'), \'?\') AS vps_id, '
+        f'COUNT(*) AS total_nodos, '
+        f'COUNT(*) FILTER (WHERE COALESCE(ok, FALSE)) AS consultas_ok, '
+        f'COUNT(*) - COUNT(*) FILTER (WHERE COALESCE(ok, FALSE)) AS consultas_error, '
+        f'CASE '
+        f'  WHEN COUNT(*) FILTER (WHERE COALESCE(ok, FALSE)) = 0 THEN \'ERROR\' '
+        f'  WHEN COUNT(*) - COUNT(*) FILTER (WHERE COALESCE(ok, FALSE)) > 0 THEN \'PARCIAL\' '
+        f'  ELSE \'OK\' END AS estado, '
+        f'MIN(NULLIF("error_msg", \'\')) AS error '
+        f'FROM {TABLA} '
+        f'WHERE "consultation_time" >= NOW() - (:dias || \' days\')::interval '
+        f'GROUP BY "consultation_time", "vps_id" '
+        f'ORDER BY "consultation_time";'
+    )
+    df = pd.read_sql(query, get_engine(), params={"dias": int(n_dias)})
+    if not df.empty:
+        df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
+    return df
+
+
 def promedios_por_nodo(
     fecha_ini: date = None, fecha_fin: date = None,
     hora_ini: int = 0, hora_fin: int = 23, mes: int = None,

@@ -2,6 +2,7 @@
 Dashboard Streamlit - Smart City Cartagena.
 Diseño claro con tarjetas, tipografía Inter y componentes de movilidad urbana.
 """
+import html
 import json
 import sys
 import time
@@ -20,8 +21,10 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BASE_DIR / "src"))
 import config        # noqa: E402
 import google_upload  # noqa: E402
+import analisis_temporal  # noqa: E402
 import mapa_nodos     # noqa: E402
 import red_nodos      # noqa: E402
+from security_utils import sanitizar_error  # noqa: E402
 
 # ============================================================
 # CONFIGURACION DE PAGINA
@@ -794,6 +797,46 @@ def cargar_csv(path_str: str) -> pd.DataFrame:
 
 
 @st.cache_data(ttl=300, show_spinner=False)
+def cargar_historico_local(fecha_ini=None, fecha_fin=None) -> pd.DataFrame:
+    """Une los CSV locales del rango como ultimo respaldo de solo lectura."""
+    partes = []
+    for path in listar_archivos():
+        # El nombre normalizado contiene YYYYmmdd_HHMMSS. Este descarte evita
+        # abrir archivos fuera del rango; el filtro final usa el timestamp real.
+        try:
+            fecha_archivo = datetime.strptime(
+                "_".join(path.stem.rsplit("_", 2)[-2:]), "%Y%m%d_%H%M%S"
+            ).date()
+        except ValueError:
+            fecha_archivo = None
+        if fecha_archivo is not None:
+            if fecha_ini is not None and fecha_archivo < fecha_ini:
+                continue
+            if fecha_fin is not None and fecha_archivo > fecha_fin:
+                continue
+        try:
+            partes.append(cargar_csv(str(path)))
+        except (OSError, ValueError, pd.errors.ParserError) as e:
+            print(f"  [Dashboard] CSV local inválido ({path.name}): {e}")
+
+    if not partes:
+        return pd.DataFrame()
+    df = pd.concat(partes, ignore_index=True)
+    if "consultation_time" not in df.columns:
+        return pd.DataFrame()
+    df["consultation_time"] = pd.to_datetime(df["consultation_time"], errors="coerce")
+    mascara = df["consultation_time"].notna()
+    if fecha_ini is not None:
+        mascara &= df["consultation_time"].dt.date >= fecha_ini
+    if fecha_fin is not None:
+        mascara &= df["consultation_time"].dt.date <= fecha_fin
+    for col in NUMERIC_COLS:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+    return df.loc[mascara].copy()
+
+
+@st.cache_data(ttl=300, show_spinner=False)
 def cargar_desde_sheets(n_dias: int = 30) -> pd.DataFrame:
     """
     Carga el historico. Fuente segun config.FUENTE_DASHBOARD:
@@ -845,12 +888,16 @@ def rango_fechas_historico() -> tuple:
             print(f"  [Dashboard] PostgreSQL no disponible para rango: {e}")
 
     df = cargar_desde_sheets(n_dias=3650)
+    fuente = "Google Sheets"
+    if df.empty or "consultation_time" not in df.columns:
+        df = cargar_historico_local()
+        fuente = "CSV local"
     if df.empty or "consultation_time" not in df.columns:
         return None, None, None
     fechas = df["consultation_time"].dropna()
     if fechas.empty:
         return None, None, None
-    return fechas.dt.date.min(), fechas.dt.date.max(), "Google Sheets"
+    return fechas.dt.date.min(), fechas.dt.date.max(), fuente
 
 
 def fechas_disponibles():
@@ -876,13 +923,17 @@ def cargar_historico(fecha_ini, fecha_fin) -> tuple:
             print(f"  [Dashboard] PostgreSQL no disponible, usando Sheets: {e}")
 
     df = cargar_desde_sheets(n_dias=3650)
+    fuente = "Google Sheets"
+    if df.empty or "consultation_time" not in df.columns:
+        df = cargar_historico_local(fecha_ini, fecha_fin)
+        fuente = "CSV local"
     if df.empty or "consultation_time" not in df.columns:
         return pd.DataFrame(), None
     mask = (
         (df["consultation_time"].dt.date >= fecha_ini) &
         (df["consultation_time"].dt.date <= fecha_fin)
     )
-    return df[mask].copy(), "Google Sheets"
+    return df[mask].copy(), fuente
 
 
 def leyenda_ratio(modo: str = "ratio"):
@@ -1058,6 +1109,345 @@ def calcular_proxima_ejecucion():
             if t > ahora:
                 horarios_hoy.append(t)
     return min(horarios_hoy) if horarios_hoy else None
+
+
+def render_analisis_temporal():
+    """Vista temporal con una sola muestra estadistica para los cuatro graficos."""
+    st.markdown("### Análisis temporal")
+    st.caption(
+        "Compara el comportamiento por hora, día y mes. Todos los gráficos "
+        "comparten exactamente los filtros de la izquierda."
+    )
+
+    with st.spinner("Consultando datos disponibles..."):
+        min_fecha, max_fecha, fuente_rango = rango_fechas_historico()
+    if min_fecha is None:
+        st.warning("No hay datos históricos o no hay conexión con la fuente.")
+        return
+
+    catalogo = cargar_catalogo()
+    nombres = (
+        dict(zip(catalogo["id_nodo"].astype(str), catalogo["nombre_nodo"]))
+        if not catalogo.empty else {}
+    )
+    prefijo = "temporal"
+    iniciales = {
+        f"{prefijo}_metrica": next(iter(analisis_temporal.METRICAS)),
+        f"{prefijo}_fechas": (min_fecha, max_fecha),
+        f"{prefijo}_franja": mapa_nodos.TODO_EL_DIA,
+        f"{prefijo}_horas": (0, 23),
+        f"{prefijo}_nodos": [],
+        f"{prefijo}_mes": mapa_nodos.MESES[0],
+        f"{prefijo}_tipo_dia": analisis_temporal.TIPOS_DIA[0],
+    }
+    for clave, valor in iniciales.items():
+        st.session_state.setdefault(clave, valor)
+
+    def _al_cambiar_franja():
+        horas = mapa_nodos.FRANJAS[st.session_state[f"{prefijo}_franja"]]
+        if horas is not None:
+            st.session_state[f"{prefijo}_horas"] = horas
+
+    def _al_mover_horas():
+        horas = tuple(st.session_state[f"{prefijo}_horas"])
+        st.session_state[f"{prefijo}_franja"] = next(
+            (nombre for nombre, rango in mapa_nodos.FRANJAS.items() if rango == horas),
+            mapa_nodos.PERSONALIZADO,
+        )
+
+    def _restablecer():
+        for clave, valor in iniciales.items():
+            st.session_state[clave] = valor
+
+    col_filtros, col_graficos = st.columns([1, 3])
+    with col_filtros, mapa_nodos.tarjeta_filtros(
+        prefijo, "Filtros del análisis temporal"
+    ):
+        metrica_label = st.selectbox(
+            "Métrica a mostrar:",
+            list(analisis_temporal.METRICAS),
+            key=f"{prefijo}_metrica",
+        )
+        rango = st.date_input(
+            "Rango de fechas:",
+            key=f"{prefijo}_fechas",
+            min_value=min_fecha,
+            max_value=max_fecha,
+            format="DD/MM/YYYY",
+        )
+        fecha_ini = rango[0] if rango else min_fecha
+        fecha_fin = rango[-1] if rango else fecha_ini
+        st.selectbox(
+            "Franja horaria:",
+            list(mapa_nodos.FRANJAS),
+            key=f"{prefijo}_franja",
+            on_change=_al_cambiar_franja,
+        )
+        hora_ini, hora_fin = st.slider(
+            "Rango de horas:",
+            0,
+            23,
+            key=f"{prefijo}_horas",
+            on_change=_al_mover_horas,
+            format="%d:00",
+        )
+        st.markdown(mapa_nodos._escala_horas(), unsafe_allow_html=True)
+        ids = st.multiselect(
+            "Punto de monitoreo:",
+            list(nombres),
+            key=f"{prefijo}_nodos",
+            format_func=lambda i: nombres.get(i, i),
+            placeholder="Todos los puntos",
+        )
+        mes_label = st.selectbox(
+            "Mes:", mapa_nodos.MESES, key=f"{prefijo}_mes"
+        )
+        tipo_dia = st.selectbox(
+            "Tipo de día:",
+            analisis_temporal.TIPOS_DIA,
+            key=f"{prefijo}_tipo_dia",
+        )
+        st.button(
+            "↺ Restablecer filtros",
+            on_click=_restablecer,
+            width="stretch",
+            key=f"{prefijo}_restablecer",
+        )
+
+    meta = analisis_temporal.METRICAS[metrica_label]
+    columna = meta["columna"]
+    unidad = meta["unidad"]
+    decimales = meta["decimales"]
+    mes = mapa_nodos.MESES.index(mes_label) or None
+
+    with st.spinner("Calculando análisis temporal..."):
+        df_base, fuente = cargar_historico(fecha_ini, fecha_fin)
+        filtrado = analisis_temporal.filtrar_mediciones(
+            df_base,
+            columna,
+            fecha_ini=fecha_ini,
+            fecha_fin=fecha_fin,
+            hora_ini=hora_ini,
+            hora_fin=hora_fin,
+            mes=mes,
+            tipo_dia=tipo_dia,
+            ids=tuple(ids),
+        )
+        serie = analisis_temporal.serie_por_ejecucion(filtrado, columna)
+
+    with col_graficos:
+        st.caption(
+            f"Fuente: {fuente or fuente_rango} · Periodo: "
+            f"{fecha_ini.strftime('%d/%m/%Y')}–{fecha_fin.strftime('%d/%m/%Y')} · "
+            f"Solo mediciones válidas"
+        )
+        if serie.empty:
+            st.info("No hay mediciones válidas con la combinación de filtros seleccionada.")
+            return
+
+        promedio = serie["valor"].mean()
+        mediana = serie["valor"].median()
+        nodos_promedio = serie["n_nodos"].mean()
+        valor_fmt = f"{{:.{decimales}f}}"
+        s1, s2, s3, s4 = st.columns(4)
+        with s1:
+            st.metric("Promedio", f"{valor_fmt.format(promedio)} {unidad}")
+        with s2:
+            st.metric("Mediana", f"{valor_fmt.format(mediana)} {unidad}")
+        with s3:
+            st.metric("Ejecuciones", f"{len(serie):,}")
+        with s4:
+            st.metric("Nodos por ejecución", f"{nodos_promedio:.1f}")
+
+        st.markdown(
+            f"<div style='background:{SUPERFICIE_SUAVE};border:1px solid {UTB_BORDER};"
+            f"border-left:3px solid {R_MENTA};border-radius:10px;padding:10px 14px;"
+            f"margin:8px 0 16px;font-size:12px;color:{UTB_GRAY};'>"
+            "<b style='color:#12307a;'>Cómo se calcula:</b> cada ejecución pesa una vez. "
+            "Dentro de ella, cada nodo seleccionado pesa una vez; las filas duplicadas del "
+            "mismo nodo se consolidan antes del promedio. La tendencia mensual promedia "
+            "primero por día para que los días con más ejecuciones no dominen el resultado."
+            "</div>",
+            unsafe_allow_html=True,
+        )
+
+        vista_hora, vista_calor, vista_tendencia, vista_box = st.tabs(
+            ["▥ Por hora", "▦ Hora × día", "↗ Tendencia mensual", "▭ Distribución"]
+        )
+
+        with vista_hora:
+            hora = analisis_temporal.resumen_por_hora(serie)
+            etiquetas_hora = hora["hora"].map(lambda h: f"{h:02d}:00")
+            custom = hora[["mediana", "p25", "p75", "ejecuciones", "nodos_promedio"]].to_numpy()
+            fig_hora = go.Figure()
+            fig_hora.add_trace(go.Bar(
+                x=etiquetas_hora,
+                y=hora["promedio"],
+                name="Promedio",
+                marker_color=SERIE_ACTUAL,
+                opacity=0.70,
+                customdata=custom,
+                hovertemplate=(
+                    "Hora: %{x}<br>Promedio: %{y:." + str(decimales) + "f} " + unidad
+                    + "<br>Mediana: %{customdata[0]:." + str(decimales) + "f} " + unidad
+                    + "<br>Rango central (P25–P75): %{customdata[1]:." + str(decimales)
+                    + "f}–%{customdata[2]:." + str(decimales) + "f} " + unidad
+                    + "<br>Ejecuciones: %{customdata[3]:.0f}"
+                    + "<br>Nodos prom.: %{customdata[4]:.1f}<extra></extra>"
+                ),
+            ))
+            fig_hora.add_trace(go.Scatter(
+                x=etiquetas_hora,
+                y=hora["mediana"],
+                name="Mediana",
+                mode="lines+markers",
+                line=dict(color=R_AZUL_OSC, width=3),
+                marker=dict(size=7, color=R_MENTA_OSC),
+                hovertemplate=(
+                    "Hora: %{x}<br>Mediana: %{y:." + str(decimales) + "f} "
+                    + unidad + "<extra></extra>"
+                ),
+            ))
+            fig_hora.update_layout(
+                xaxis_title="Hora del día",
+                yaxis_title=f"{metrica_label}",
+                legend=dict(orientation="h", y=1.12),
+                bargap=0.22,
+            )
+            if columna == "velocidad_ratio":
+                fig_hora.update_yaxes(range=[0, max(1.05, float(hora["promedio"].max()) * 1.08)])
+            fig_hora = plotly_base(fig_hora, height=430)
+            st.plotly_chart(fig_hora, theme=None, config=PLOTLY_CONFIG)
+            st.caption(
+                "Las barras muestran el promedio entre ejecuciones; la línea muestra la "
+                "mediana, menos sensible a valores extremos."
+            )
+
+        with vista_calor:
+            calor, conteos = analisis_temporal.mapa_calor(serie)
+            horas_vista = list(range(hora_ini, hora_fin + 1))
+            calor = calor[horas_vista]
+            conteos = conteos[horas_vista]
+            filas_con_datos = calor.notna().any(axis=1)
+            calor = calor.loc[filas_con_datos]
+            conteos = conteos.loc[filas_con_datos]
+            if calor.empty:
+                st.info("No hay suficientes datos para construir el mapa de calor.")
+            else:
+                if columna == "velocidad_ratio":
+                    escala = [
+                        [0.0, COLOR_CONGESTIONADO],
+                        [0.60, COLOR_LENTO],
+                        [0.75, COLOR_MODERADO],
+                        [0.90, COLOR_FLUIDO],
+                        [1.0, "#047857"],
+                    ]
+                    zmin, zmax = 0, 1
+                elif meta["sentido"] == "bajo_mejor":
+                    escala, zmin, zmax = "YlOrRd", None, None
+                else:
+                    escala, zmin, zmax = "Blues", None, None
+                fig_calor = go.Figure(go.Heatmap(
+                    z=calor.to_numpy(),
+                    x=[f"{h:02d}:00" for h in calor.columns],
+                    y=[analisis_temporal.DIAS[i] for i in calor.index],
+                    customdata=conteos.fillna(0).to_numpy(),
+                    colorscale=escala,
+                    zmin=zmin,
+                    zmax=zmax,
+                    colorbar=dict(title=unidad),
+                    hoverongaps=False,
+                    hovertemplate=(
+                        "Día: %{y}<br>Hora: %{x}<br>Promedio: %{z:."
+                        + str(decimales) + "f} " + unidad
+                        + "<br>Ejecuciones: %{customdata:.0f}<extra></extra>"
+                    ),
+                ))
+                fig_calor.update_layout(xaxis_title="Hora del día", yaxis_title="")
+                fig_calor = plotly_base(fig_calor, height=430)
+                st.plotly_chart(fig_calor, theme=None, config=PLOTLY_CONFIG)
+                st.caption(
+                    "Cada celda es el promedio de las ejecuciones observadas en esa "
+                    "combinación de día de la semana y hora. Las celdas vacías no se estiman."
+                )
+
+        with vista_tendencia:
+            tendencia = analisis_temporal.tendencia_mensual(serie)
+            meses = tendencia["mes"].dt.strftime("%Y-%m")
+            custom = tendencia[["mediana", "dias", "ejecuciones"]].to_numpy()
+            fig_tendencia = go.Figure()
+            fig_tendencia.add_trace(go.Scatter(
+                x=meses,
+                y=tendencia["promedio"],
+                name="Promedio de días",
+                mode="lines+markers",
+                line=dict(color=SERIE_ACTUAL, width=3),
+                marker=dict(size=8),
+                customdata=custom,
+                hovertemplate=(
+                    "Mes: %{x}<br>Promedio diario: %{y:." + str(decimales) + "f} "
+                    + unidad + "<br>Mediana diaria: %{customdata[0]:."
+                    + str(decimales) + "f} " + unidad
+                    + "<br>Días observados: %{customdata[1]:.0f}"
+                    + "<br>Ejecuciones: %{customdata[2]:.0f}<extra></extra>"
+                ),
+            ))
+            fig_tendencia.add_trace(go.Scatter(
+                x=meses,
+                y=tendencia["mediana"],
+                name="Mediana de días",
+                mode="lines+markers",
+                line=dict(color=R_MENTA_OSC, width=2, dash="dash"),
+                marker=dict(size=6),
+                hovertemplate=(
+                    "Mes: %{x}<br>Mediana diaria: %{y:." + str(decimales)
+                    + "f} " + unidad + "<extra></extra>"
+                ),
+            ))
+            fig_tendencia.update_layout(
+                xaxis_title="Mes",
+                yaxis_title=metrica_label,
+                legend=dict(orientation="h", y=1.12),
+            )
+            # Los valores YYYY-MM son categorias. Forzarlo evita que Plotly
+            # expanda un unico mes a milisegundos alrededor del primer dia.
+            fig_tendencia.update_xaxes(type="category")
+            fig_tendencia = plotly_base(fig_tendencia, height=430)
+            st.plotly_chart(fig_tendencia, theme=None, config=PLOTLY_CONFIG)
+            st.caption(
+                "Primero se promedian las ejecuciones de cada día; después se resumen los "
+                "días del mes. Así cada día observado tiene el mismo peso."
+            )
+
+        with vista_box:
+            distribucion = analisis_temporal.distribucion_por_hora(serie)
+            orden_horas = [
+                f"{h:02d}:00" for h in sorted(distribucion["hora"].unique())
+            ]
+            fig_box = px.box(
+                distribucion,
+                x="hora_label",
+                y="valor",
+                points="outliers",
+                category_orders={"hora_label": orden_horas},
+                labels={"hora_label": "Hora del día", "valor": metrica_label},
+                color_discrete_sequence=[SERIE_ACTUAL],
+            )
+            fig_box.update_traces(
+                boxmean=True,
+                marker=dict(size=5, opacity=0.55),
+                line=dict(width=1.5),
+                hovertemplate=(
+                    "Hora: %{x}<br>Valor de ejecución: %{y:." + str(decimales)
+                    + "f} " + unidad + "<extra></extra>"
+                ),
+            )
+            fig_box = plotly_base(fig_box, height=430)
+            st.plotly_chart(fig_box, theme=None, config=PLOTLY_CONFIG)
+            st.caption(
+                "La caja contiene el 50% central de las ejecuciones; la línea sólida es la "
+                "mediana, la línea discontinua marca el promedio y los puntos son valores atípicos."
+            )
 
 
 # ============================================================
@@ -1332,20 +1722,27 @@ if _snapshot_ok.empty:
 # valido, se dice por que y desde cuando, con el error crudo de la API.
 if snapshot_degradado:
     _sd = snapshot_degradado
-    _motivo_txt = (_sd["motivo"] or "sin detalle en error_msg")
-    _motivo_txt = _motivo_txt.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-    if len(_motivo_txt) > 300:
-        _motivo_txt = _motivo_txt[:300] + "..."
-    _http_txt = f"HTTP {_sd['http']} · " if _sd["http"] else ""
+    _secretos = config.API_KEYS + config.API_KEYS_RESERVA + config.API_KEYS_RED
+    _motivo_txt = html.escape(
+        sanitizar_error(
+            _sd["motivo"] or "sin detalle en error_msg",
+            *_secretos,
+            limite=300,
+        ),
+        quote=True,
+    )
+    _http_txt = f"HTTP {html.escape(str(_sd['http']), quote=True)} · " if _sd["http"] else ""
+    _label_fallido = html.escape(str(_sd["label_fallido"]), quote=True)
 
     if _sd["label_valido"]:
         _seg = (datetime.now() - _sd["hora_valida"]).total_seconds()
         _dias, _resto = divmod(max(_seg, 0), 86400)
         _horas = _resto / 3600
         _antig = f"{int(_dias)} d {_horas:.0f} h" if _dias else f"{_horas:.1f} h"
+        _label_valido = html.escape(str(_sd["label_valido"]), quote=True)
         _respaldo = (
             f"El analisis de nodos muestra el ultimo dato bueno: "
-            f"<b style='color:{UTB_WHITE};'>{_sd['label_valido']}</b> "
+            f"<b style='color:{UTB_WHITE};'>{_label_valido}</b> "
             f"(hace {_antig}). No es la situacion actual del trafico."
         )
     else:
@@ -1358,7 +1755,7 @@ if snapshot_degradado:
              letter-spacing:1px;margin-bottom:6px;">
             &#9888; CAPTURA DE DATOS DETENIDA</div>
         <div style="color:{UTB_GRAY};font-size:13px;line-height:1.6;">
-            La corrida <b style="color:{UTB_WHITE};">{_sd['label_fallido']}</b> devolvio
+            La corrida <b style="color:{UTB_WHITE};">{_label_fallido}</b> devolvio
             <b style="color:{TEXTO_CONGESTIONADO};">0 de {_sd['nodos']} nodos validos</b>.<br/>
             {_http_txt}Respuesta de la API:
             <code style="background:{UTB_NAVY_LIGHT};color:{TEXTO_LENTO};padding:2px 6px;
@@ -1370,8 +1767,14 @@ if snapshot_degradado:
 # ============================================================
 # TABS
 # ============================================================
-tab_mapa, tab_red, tab_datos, tab_historia = st.tabs(
-    ["Mapa de Trafico", "Red de Nodos", "Analisis de Nodos", "Historico"]
+tab_mapa, tab_red, tab_datos, tab_temporal, tab_historia = st.tabs(
+    [
+        "Mapa de Tráfico",
+        "Red de Nodos",
+        "Análisis de Nodos",
+        "Análisis Temporal",
+        "Histórico",
+    ]
 )
 
 # ----------------------------------------------------------------
@@ -1622,6 +2025,12 @@ with tab_datos:
             file_name=f"trafico_filtrado_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
             mime="text/csv",
         )
+
+# ----------------------------------------------------------------
+# TAB ANALISIS TEMPORAL
+# ----------------------------------------------------------------
+with tab_temporal:
+    render_analisis_temporal()
 
 # ----------------------------------------------------------------
 # TAB HISTORICO

@@ -20,6 +20,7 @@ El sistema implementa un proceso **ETL** (Extract–Transform–Load) que se eje
 - ⏱️ **Automatización** con cron en dos servidores VPS (Turnos 1–4)
 - 💾 **Almacenamiento dual:** Google Sheets/Drive + PostgreSQL
 - 📊 **Dashboard interactivo** con mapa, análisis, monitoreo e histórico
+- 🕒 **Análisis temporal** por hora, día y mes con filtros compartidos, mapa de calor y boxplot
 - 🗺️ **Mapa de nodos con filtros** (métrica, fechas, franja horaria, mes, tipo de día) y ventana emergente con foto de Google Street View
 - 🕸️ **Red de nodos** con las conexiones por vía (OpenStreetMap), ruta más rápida origen–destino y corredores con nombre
 - 🔥 **Snapshot a Firestore** que alimenta el motor de ETAs de la app TransCaribe
@@ -79,6 +80,7 @@ proyect_r/
 │   └── autorizar_google.py   # Generación del token OAuth (una vez)
 ├── dashboard/
 │   ├── monitor.py            # Dashboard Streamlit
+│   ├── analisis_temporal.py  # Agregaciones estadísticas de la vista temporal
 │   ├── mapa_nodos.py         # Filtros, ventana emergente y mapa Folium
 │   └── red_nodos.py          # Red de nodos: conexiones, rutas y mapa
 ├── deploy/
@@ -198,4 +200,3 @@ continúa y las demás conservan el dato.
 | 🟡 Moderado | 0.75 – 0.90 | Reducción leve |
 | 🟠 Lento | 0.60 – 0.75 | Congestión apreciable |
 | 🔴 Congestionado | < 0.60 | Velocidad muy reducida |
-

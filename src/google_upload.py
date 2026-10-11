@@ -3,7 +3,7 @@ Modulo para subir archivos a Google Drive y agregar filas a Google Sheets
 usando OAuth (no Service Account).
 
 Requiere haber corrido primero `python src/autorizar_google.py` para generar
-el token.json en la carpeta credenciales/.
+el token.json en CREDENCIALES_DIR.
 """
 from __future__ import annotations
 
@@ -22,6 +22,25 @@ from googleapiclient.http import MediaFileUpload
 import config
 
 
+def guardar_token_seguro(contenido: str) -> None:
+    """Escribe el token OAuth con permisos exclusivos para su propietario."""
+    config.OAUTH_TOKEN_FILE.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    os.chmod(config.OAUTH_TOKEN_FILE.parent, 0o700)
+    fd = os.open(
+        config.OAUTH_TOKEN_FILE,
+        os.O_WRONLY | os.O_CREAT | os.O_TRUNC,
+        0o600,
+    )
+    try:
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as archivo:
+            fd = -1
+            archivo.write(contenido)
+    finally:
+        if fd >= 0:
+            os.close(fd)
+
+
 def cargar_credenciales() -> Credentials | None:
     """Carga el token guardado y lo refresca si esta vencido."""
     if not config.OAUTH_TOKEN_FILE.exists():
@@ -35,8 +54,7 @@ def cargar_credenciales() -> Credentials | None:
         try:
             creds.refresh(Request())
             # Guardar token actualizado
-            with open(config.OAUTH_TOKEN_FILE, "w") as f:
-                f.write(creds.to_json())
+            guardar_token_seguro(creds.to_json())
         except Exception as e:
             print(f"  [Google] No se pudo refrescar token: {e}")
             return None

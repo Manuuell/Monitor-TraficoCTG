@@ -12,7 +12,7 @@ VPS 1 (158.101.105.13)           VPS 2 (IP nueva)
        |                                 |
        └─────────> data/resultados/*.csv <─────────┘
                           |
-                  Dashboard Streamlit (puerto 8501)
+              Nginx HTTPS (:443) -> Streamlit (127.0.0.1:8501)
 ```
 
 ## Estructura del proyecto
@@ -44,6 +44,7 @@ proyect_r/
 ### Pre-requisitos
 
 - 2 instancias Oracle Cloud Ubuntu en ejecucion
+- Python 3.10 o superior
 - 2 API Keys de TomTom (una por VPS)
 - Llave SSH para conectarse a ambas
 
@@ -83,6 +84,16 @@ Editar:
 ```
 TOMTOM_API_KEY=tu_clave_api_1
 VPS_ID=1
+CREDENCIALES_DIR=/home/ubuntu/.config/proyect_r/credenciales
+```
+
+Protege el archivo y guarda las credenciales fuera del repositorio:
+
+```bash
+chmod 600 .env
+mkdir -p /home/ubuntu/.config/proyect_r/credenciales
+chmod 700 /home/ubuntu/.config/proyect_r/credenciales
+chmod 600 /home/ubuntu/.config/proyect_r/credenciales/* 2>/dev/null || true
 ```
 
 Guardar con `Ctrl+O`, Enter, `Ctrl+X`.
@@ -127,12 +138,12 @@ crontab -l   # Verificar
 crontab deploy/crontab_vps2.txt
 ```
 
-### Paso 7 — Dashboard (en cualquier VPS o ambos)
+### Paso 7 — Dashboard detrás de HTTPS
 
 Opcion rapida (manual):
 ```bash
 source venv/bin/activate
-streamlit run dashboard/monitor.py
+streamlit run dashboard/monitor.py --server.address 127.0.0.1
 ```
 
 Opcion automatica (servicio systemd, se reinicia solo):
@@ -143,16 +154,36 @@ sudo systemctl start dashboard
 sudo systemctl status dashboard
 ```
 
-Abrir el puerto 8501 en Oracle Cloud:
-1. Networking → VCN → Security Lists → Default Security List
-2. Add Ingress Rule:
-   - Source CIDR: `0.0.0.0/0`
-   - Protocol: TCP
-   - Destination Port Range: `8501`
+Instalar la configuracion segura de Nginx incluida en el proyecto:
+
+```bash
+sudo cp deploy/nginx-tomtom.conf /etc/nginx/sites-available/tomtom-utb
+sudo ln -s /etc/nginx/sites-available/tomtom-utb /etc/nginx/sites-enabled/tomtom-utb
+sudo nginx -t
+sudo systemctl reload nginx
+```
+
+En Oracle Cloud y en `ufw`, publicar solamente los puertos necesarios: `22`
+(restringido a las IP administrativas cuando sea posible), `80` y `443`. El
+puerto `8501` debe permanecer cerrado porque Nginx accede a el por loopback.
+Cerrar tambien `3000` y `5000` si esos servicios no tienen un proxy HTTPS y una
+necesidad publica documentada.
+
+```bash
+sudo ufw allow 80/tcp
+sudo ufw allow 443/tcp
+sudo ufw delete allow 8501/tcp 2>/dev/null || true
+sudo ufw deny 8501/tcp
+sudo ufw status verbose
+```
+
+Para `3000` y `5000`, primero confirma qué procesos los usan. Si son necesarios,
+ponlos detrás de HTTPS y autenticación; si no lo son, elimina sus reglas de
+ingreso tanto en `ufw` como en la Security List de Oracle Cloud.
 
 Acceder al dashboard:
 ```
-http://158.101.105.13:8501
+https://tomtom-utb.duckdns.org/
 ```
 
 ## Verificacion y troubleshooting
@@ -179,8 +210,9 @@ crontab -l
 ```
 
 **Si el dashboard no carga:**
-- Verificar que el puerto 8501 esta abierto (Security List + ufw)
-- Verificar firewall: `sudo ufw allow 8501/tcp`
+- Verificar `sudo systemctl status dashboard nginx`.
+- Verificar `sudo ss -ltnp`: `8501` debe escuchar solo en `127.0.0.1`.
+- Verificar `sudo nginx -t` y el certificado de Let's Encrypt.
 
 ## Mantenimiento
 

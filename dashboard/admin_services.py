@@ -18,6 +18,25 @@ import google_upload  # noqa: E402
 import rotacion_llaves  # noqa: E402
 
 
+COLUMNAS_EJECUCION = [
+    "timestamp", "vps_id", "total_nodos", "consultas_ok",
+    "consultas_error", "estado", "error",
+]
+
+
+def ejecuciones_vacias() -> pd.DataFrame:
+    """Crea el esquema vacio conservando tipos aptos para calculos."""
+    return pd.DataFrame({
+        "timestamp": pd.Series(dtype="datetime64[ns]"),
+        "vps_id": pd.Series(dtype="string"),
+        "total_nodos": pd.Series(dtype="int64"),
+        "consultas_ok": pd.Series(dtype="int64"),
+        "consultas_error": pd.Series(dtype="int64"),
+        "estado": pd.Series(dtype="string"),
+        "error": pd.Series(dtype="object"),
+    })
+
+
 @st.cache_data(ttl=60, show_spinner=False)
 def cargar_logs() -> pd.DataFrame:
     """Carga el registro local del VPS 1 y descarta líneas incompletas."""
@@ -97,99 +116,247 @@ def mascara_ok(df: pd.DataFrame) -> pd.Series:
     return df["ok"].astype(str).str.strip().str.lower().isin(["true", "1"])
 
 
-def logs_vps2_desde_mediciones(df: pd.DataFrame) -> pd.DataFrame:
-    """Reconstruye ejecuciones del VPS 2 a partir de sus mediciones."""
-    columnas = [
-        "timestamp", "vps_id", "total_nodos", "consultas_ok",
-        "consultas_error", "estado", "error",
-    ]
+def ejecuciones_desde_mediciones(df: pd.DataFrame) -> pd.DataFrame:
+    """Reconstruye ejecuciones de todos los VPS a partir de mediciones."""
     if df.empty or not {"consultation_time", "vps_id"}.issubset(df.columns):
-        return pd.DataFrame(columns=columnas)
-    vps2 = df[df["vps_id"].astype(str) == "2"].copy()
-    if vps2.empty:
-        return pd.DataFrame(columns=columnas)
-    vps2["ok_bool"] = mascara_ok(vps2)
-    ejecuciones = vps2.groupby("consultation_time").agg(
+        return ejecuciones_vacias()
+    datos = df.copy()
+    datos["consultation_time"] = pd.to_datetime(
+        datos["consultation_time"], errors="coerce"
+    )
+    datos = datos.dropna(subset=["consultation_time"])
+    if datos.empty:
+        return ejecuciones_vacias()
+    datos["vps_id"] = datos["vps_id"].astype(str)
+    datos["ok_bool"] = mascara_ok(datos)
+    ejecuciones = datos.groupby(["consultation_time", "vps_id"]).agg(
         total_nodos=("ok_bool", "count"),
         consultas_ok=("ok_bool", "sum"),
     ).reset_index()
     ejecuciones["consultas_error"] = (
         ejecuciones["total_nodos"] - ejecuciones["consultas_ok"]
     )
-    ejecuciones["vps_id"] = "2"
-    ejecuciones["estado"] = ejecuciones["consultas_error"].map(
-        lambda cantidad: "ERROR" if cantidad else "OK"
-    )
-    ejecuciones["error"] = None
+    ejecuciones["estado"] = "OK"
+    parcial = (ejecuciones["consultas_ok"] > 0) & (ejecuciones["consultas_error"] > 0)
+    fallida = ejecuciones["consultas_ok"] <= 0
+    ejecuciones.loc[parcial, "estado"] = "PARCIAL"
+    ejecuciones.loc[fallida, "estado"] = "ERROR"
+    if "error_msg" in datos.columns:
+        errores = (
+            datos.assign(error_msg=datos["error_msg"].fillna("").astype(str).str.strip())
+            .query("error_msg != ''")
+            .groupby(["consultation_time", "vps_id"])["error_msg"]
+            .first()
+        )
+        ejecuciones["error"] = [
+            errores.get((fila.consultation_time, fila.vps_id))
+            for fila in ejecuciones.itertuples()
+        ]
+    else:
+        ejecuciones["error"] = None
     ejecuciones = ejecuciones.rename(columns={"consultation_time": "timestamp"})
-    return ejecuciones[columnas]
+    return ejecuciones[COLUMNAS_EJECUCION]
+
+
+def logs_vps2_desde_mediciones(df: pd.DataFrame) -> pd.DataFrame:
+    """Compatibilidad: devuelve solo las ejecuciones reconstruidas del VPS 2."""
+    ejecuciones = ejecuciones_desde_mediciones(df)
+    return ejecuciones[ejecuciones["vps_id"].astype(str) == "2"].copy()
+
+
+def normalizar_ejecuciones(df: pd.DataFrame) -> pd.DataFrame:
+    """Normaliza tipos y deriva OK/PARCIAL/ERROR de los conteos reales."""
+    if df.empty:
+        return ejecuciones_vacias()
+    datos = df.copy()
+    for columna in COLUMNAS_EJECUCION:
+        if columna not in datos.columns:
+            datos[columna] = None
+    datos["timestamp"] = pd.to_datetime(datos["timestamp"], errors="coerce")
+    datos["vps_id"] = datos["vps_id"].fillna("?").astype(str)
+    estado_original = datos["estado"].fillna("").astype(str).str.upper()
+    for columna in ["total_nodos", "consultas_ok", "consultas_error"]:
+        datos[columna] = pd.to_numeric(datos[columna], errors="coerce").fillna(0).astype(int)
+    # Algunos logs antiguos no guardaban consultas_error.
+    sin_conteo = (datos["consultas_error"] == 0) & (
+        datos["total_nodos"] > datos["consultas_ok"]
+    )
+    datos.loc[sin_conteo, "consultas_error"] = (
+        datos.loc[sin_conteo, "total_nodos"] - datos.loc[sin_conteo, "consultas_ok"]
+    )
+    datos["estado"] = "OK"
+    error_explicito = estado_original.eq("ERROR")
+    parcial = (
+        (datos["consultas_ok"] > 0)
+        & (datos["consultas_error"] > 0)
+        & ~error_explicito
+    )
+    fallida = error_explicito | (
+        (datos["consultas_ok"] <= 0) & (datos["total_nodos"] > 0)
+    )
+    datos.loc[parcial, "estado"] = "PARCIAL"
+    datos.loc[fallida, "estado"] = "ERROR"
+    return (
+        datos.dropna(subset=["timestamp"])[COLUMNAS_EJECUCION]
+        .sort_values("timestamp", kind="stable")
+        .reset_index(drop=True)
+    )
 
 
 def combinar_ejecuciones(logs: pd.DataFrame, mediciones: pd.DataFrame) -> pd.DataFrame:
-    vps2 = logs_vps2_desde_mediciones(mediciones)
-    partes = [parte for parte in (logs, vps2) if not parte.empty]
+    reconstruidas = ejecuciones_desde_mediciones(mediciones)
+    partes = [parte for parte in (reconstruidas, logs) if not parte.empty]
     if not partes:
-        return pd.DataFrame()
+        return ejecuciones_vacias()
     combinado = pd.concat(partes, ignore_index=True, sort=False)
-    combinado["timestamp"] = pd.to_datetime(combinado["timestamp"], errors="coerce")
-    return combinado.dropna(subset=["timestamp"]).sort_values("timestamp")
+    combinado = normalizar_ejecuciones(combinado)
+    # El log local se concatena al final y conserva su detalle cuando coincide
+    # con el resumen reconstruido desde PostgreSQL/CSV.
+    return combinado.drop_duplicates(["timestamp", "vps_id"], keep="last")
+
+
+def _ejecuciones_desde_csv_local(n_dias: int) -> pd.DataFrame:
+    """Reconstruye las corridas guardadas localmente sin consultar Internet."""
+    desde = pd.Timestamp.now().normalize() - pd.Timedelta(days=max(n_dias - 1, 0))
+    partes = []
+    for path in sorted(config.RESULTADOS_DIR.glob("*.csv")):
+        try:
+            fecha_archivo = datetime.strptime(
+                "_".join(path.stem.rsplit("_", 2)[-2:]), "%Y%m%d_%H%M%S"
+            )
+            if fecha_archivo < desde.to_pydatetime():
+                continue
+        except ValueError:
+            pass
+        try:
+            partes.append(pd.read_csv(path))
+        except (OSError, ValueError, pd.errors.ParserError):
+            continue
+    if not partes:
+        return ejecuciones_vacias()
+    mediciones = pd.concat(partes, ignore_index=True)
+    return ejecuciones_desde_mediciones(mediciones)
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def cargar_ejecuciones_recientes(n_dias: int = 7) -> tuple[pd.DataFrame, str]:
+    """Carga un resumen ligero de corridas sin bloquearse con Google.
+
+    PostgreSQL agrupa en el servidor y devuelve unas pocas filas. Si no esta
+    configurado o no responde, se usan el log y los CSV locales. Las consultas
+    a Drive/Sheets quedan para el diagnostico solicitado por el usuario.
+    """
+    logs = cargar_logs()
+    desde = pd.Timestamp.now() - pd.Timedelta(days=n_dias)
+    if not logs.empty:
+        logs = normalizar_ejecuciones(logs)
+        logs = logs[logs["timestamp"] >= desde]
+
+    resumen_db = ejecuciones_vacias()
+    fuente = "log local"
+    intentar_db = bool(
+        getattr(config, "DB_PASSWORD", "")
+        or getattr(config, "GUARDAR_EN_DB", False)
+        or getattr(config, "FUENTE_DASHBOARD", "") == "db"
+    )
+    if intentar_db:
+        try:
+            import db
+
+            resumen_db = db.leer_resumen_ejecuciones(n_dias=n_dias)
+            fuente = "PostgreSQL + log local"
+        except Exception as error:
+            print(f"  [Admin] PostgreSQL no disponible: {error}")
+
+    partes = [parte for parte in (resumen_db, logs) if not parte.empty]
+    if not resumen_db.empty:
+        combinado = normalizar_ejecuciones(pd.concat(partes, ignore_index=True, sort=False))
+        return combinado.drop_duplicates(["timestamp", "vps_id"], keep="last"), fuente
+
+    locales = _ejecuciones_desde_csv_local(n_dias)
+    partes = [parte for parte in (locales, logs) if not parte.empty]
+    if not partes:
+        return ejecuciones_vacias(), "sin fuente disponible"
+    combinado = normalizar_ejecuciones(pd.concat(partes, ignore_index=True, sort=False))
+    return (
+        combinado.drop_duplicates(["timestamp", "vps_id"], keep="last"),
+        "CSV + log local" if not locales.empty else "log local",
+    )
+
+
+def resumen_operativo_ejecuciones(ejecuciones: pd.DataFrame) -> dict:
+    """Indicadores diarios y ultima corrida calculados desde el resumen."""
+    datos = normalizar_ejecuciones(ejecuciones)
+    hoy = datetime.now().date()
+    salida = {}
+    for vps_id in ("1", "2"):
+        vps = datos[datos["vps_id"] == vps_id]
+        vps_hoy = vps[vps["timestamp"].dt.date == hoy]
+        salida[f"vps{vps_id}"] = {
+            "llamadas": int(vps_hoy["total_nodos"].sum()),
+            "ok": int(vps_hoy["consultas_ok"].sum()),
+            "fallidas": int(vps_hoy["consultas_error"].sum()),
+            "ejecuciones": len(vps_hoy),
+            "ultima": vps["timestamp"].max() if not vps.empty else pd.NaT,
+        }
+    candidatos = [
+        salida["vps1"]["ultima"], salida["vps2"]["ultima"],
+    ]
+    candidatos = [fecha for fecha in candidatos if pd.notna(fecha)]
+    salida["ejecuciones"] = (
+        salida["vps1"]["ejecuciones"] + salida["vps2"]["ejecuciones"]
+    )
+    salida["ultima"] = max(candidatos) if candidatos else pd.NaT
+    return salida
 
 
 def resumen_operativo(logs: pd.DataFrame, mediciones: pd.DataFrame) -> dict:
-    """Calcula consumo, resultados y última ejecución de cada VPS."""
-    def sumar(df: pd.DataFrame, columna: str) -> int:
-        if df.empty or columna not in df.columns:
-            return 0
-        return int(pd.to_numeric(df[columna], errors="coerce").fillna(0).sum())
+    """Compatibilidad con el calculo anterior basado en logs + mediciones."""
+    return resumen_operativo_ejecuciones(combinar_ejecuciones(logs, mediciones))
 
-    hoy = datetime.now().date()
-    logs_hoy = (
-        logs[logs["timestamp"].dt.date == hoy].copy()
-        if not logs.empty else pd.DataFrame()
-    )
-    llamadas_1 = sumar(logs_hoy, "total_nodos")
-    ok_1 = sumar(logs_hoy, "consultas_ok")
-    ultima_1 = logs["timestamp"].max() if not logs.empty else pd.NaT
 
-    mediciones_hoy = pd.DataFrame()
-    if not mediciones.empty and {"consultation_time", "vps_id"}.issubset(mediciones.columns):
-        mediciones_hoy = mediciones[
-            (mediciones["consultation_time"].dt.date == hoy)
-            & (mediciones["vps_id"].astype(str) == "2")
-        ].copy()
-    llamadas_2 = len(mediciones_hoy)
-    ok_2 = int(mascara_ok(mediciones_hoy).sum())
-    ultima_2 = (
-        mediciones_hoy["consultation_time"].max()
-        if not mediciones_hoy.empty else pd.NaT
+def ultimas_ejecuciones(ejecuciones: pd.DataFrame, vps_id: str, limite: int = 20) -> pd.DataFrame:
+    datos = normalizar_ejecuciones(ejecuciones)
+    return (
+        datos[datos["vps_id"] == str(vps_id)]
+        .sort_values("timestamp", ascending=False)
+        .head(limite)
+        .reset_index(drop=True)
     )
 
-    ejec_1 = len(logs_hoy)
-    ejec_2 = (
-        mediciones_hoy["consultation_time"].nunique()
-        if not mediciones_hoy.empty else 0
-    )
-    candidatos = [fecha for fecha in (ultima_1, ultima_2) if pd.notna(fecha)]
-    ultima = max(candidatos) if candidatos else pd.NaT
 
-    return {
-        "vps1": {
-            "llamadas": llamadas_1,
-            "ok": ok_1,
-            "fallidas": max(llamadas_1 - ok_1, 0),
-            "ejecuciones": ejec_1,
-            "ultima": ultima_1,
-        },
-        "vps2": {
-            "llamadas": llamadas_2,
-            "ok": ok_2,
-            "fallidas": max(llamadas_2 - ok_2, 0),
-            "ejecuciones": ejec_2,
-            "ultima": ultima_2,
-        },
-        "ejecuciones": ejec_1 + ejec_2,
-        "ultima": ultima,
-    }
+def ejecuciones_por_hora(ejecuciones: pd.DataFrame, n_dias: int = 7) -> pd.DataFrame:
+    """Cuenta corridas completas, parciales y fallidas por hora del dia."""
+    datos = normalizar_ejecuciones(ejecuciones)
+    desde = pd.Timestamp.now() - pd.Timedelta(days=n_dias)
+    datos = datos[datos["timestamp"] >= desde].copy()
+    columnas = ["hora", "completas", "parciales", "fallidas", "total"]
+    if datos.empty:
+        return pd.DataFrame(columns=columnas)
+    datos["hora"] = datos["timestamp"].dt.strftime("%H:00")
+    tabla = (
+        datos.groupby(["hora", "estado"]).size().unstack(fill_value=0)
+        .rename(columns={"OK": "completas", "PARCIAL": "parciales", "ERROR": "fallidas"})
+    )
+    for columna in ["completas", "parciales", "fallidas"]:
+        if columna not in tabla.columns:
+            tabla[columna] = 0
+    tabla = tabla.reset_index()
+    tabla["total"] = tabla[["completas", "parciales", "fallidas"]].sum(axis=1)
+    return tabla[columnas].sort_values("hora").reset_index(drop=True)
+
+
+def errores_recientes(ejecuciones: pd.DataFrame, n_dias: int = 7) -> pd.DataFrame:
+    """Incluye fallos totales y parciales con al menos un nodo fallido."""
+    datos = normalizar_ejecuciones(ejecuciones)
+    desde = pd.Timestamp.now() - pd.Timedelta(days=n_dias)
+    tiene_detalle = datos["error"].fillna("").astype(str).str.strip().ne("")
+    mascara = (datos["timestamp"] >= desde) & (
+        (datos["consultas_error"] > 0)
+        | (datos["estado"] != "OK")
+        | tiene_detalle
+    )
+    return datos[mascara].sort_values("timestamp", ascending=False).reset_index(drop=True)
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -317,6 +484,7 @@ def _tarjeta_llave(fila: dict) -> dict:
     }
 
 
+@st.cache_data(ttl=60, show_spinner=False)
 def estado_api_keys() -> dict:
     """
     Llaves TomTom de cada VPS, en uso y de reserva, con su consumo del mes y
@@ -326,12 +494,18 @@ def estado_api_keys() -> dict:
     local. Nunca devuelve el valor completo de una llave.
     """
     publicado, error = pd.DataFrame(), None
-    try:
-        import db
+    consultar_db = bool(
+        getattr(config, "DB_PASSWORD", "")
+        or getattr(config, "GUARDAR_EN_DB", False)
+        or getattr(config, "FUENTE_DASHBOARD", "") == "db"
+    )
+    if consultar_db:
+        try:
+            import db
 
-        publicado = db.leer_estado_llaves()
-    except Exception as e:
-        error = str(e)[:160]
+            publicado = db.leer_estado_llaves()
+        except Exception as e:
+            error = str(e)[:160]
 
     por_vps: dict[str, dict] = {}
     for fila in publicado.to_dict("records"):

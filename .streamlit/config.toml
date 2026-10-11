@@ -8,9 +8,15 @@ font = "sans serif"
 base = "light"
 
 [server]
+address = "127.0.0.1"
 headless = true
-enableXsrfProtection = true
 enableCORS = true
+enableXsrfProtection = true
+corsAllowedOrigins = ["https://tomtom-utb.duckdns.org"]
 
 [browser]
 gatherUsageStats = false
+
+[client]
+showErrorDetails = "type"
+toolbarMode = "minimal"

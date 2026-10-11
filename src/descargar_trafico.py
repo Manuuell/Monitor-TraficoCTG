@@ -17,6 +17,7 @@ import requests
 import config
 import google_upload
 import rotacion_llaves
+from security_utils import sanitizar_error
 
 
 def determinar_turno(dt: datetime) -> str:
@@ -117,10 +118,16 @@ def consultar_flow(lat: float, lon: float, api_key: str) -> dict:
     try:
         r = requests.get(url, params=params, timeout=config.TIMEOUT_SEG)
     except requests.RequestException as e:
-        return {"ok": False, "status": None, "data": None, "error": f"Conexion: {e}"}
+        error = sanitizar_error(e, api_key)
+        return {"ok": False, "status": None, "data": None, "error": f"Conexion: {error}"}
 
     if r.status_code >= 300:
-        return {"ok": False, "status": r.status_code, "data": None, "error": r.text[:500]}
+        return {
+            "ok": False,
+            "status": r.status_code,
+            "data": None,
+            "error": sanitizar_error(r.text, api_key),
+        }
 
     try:
         return {"ok": True, "status": r.status_code, "data": r.json(), "error": None}

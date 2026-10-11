@@ -10,6 +10,7 @@
 #  Automatizado: ver la entrada de cron en este mismo archivo (abajo).
 # =====================================================================
 set -e
+umask 077
 
 PROJECT_DIR="/home/ubuntu/proyect_r"
 BACKUP_DIR="$PROJECT_DIR/backups"

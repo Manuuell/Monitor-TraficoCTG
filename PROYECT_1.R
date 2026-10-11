@@ -24,7 +24,10 @@ suppressPackageStartupMessages({
 dir_base <- "C:/Users/EDGAR/Downloads/NODOS/Proyecto"
 file_excel <- file.path(dir_base, "nodos.xlsx")
 
-TT_KEY <- "bcbnmCtwNGBmYA1IaatQjOh9gEfCthe1"
+TT_KEY <- Sys.getenv("TOMTOM_API_KEY")
+if (!nzchar(TT_KEY)) {
+  stop("Falta configurar TOMTOM_API_KEY en el entorno")
+}
 
 URL_FLOWBASE <- "https://api.tomtom.com/traffic/services/4/flowSegmentData"
 tz_local <- "America/Bogota"
@@ -34,6 +37,12 @@ consulta_ts <- as.POSIXct(Sys.time(), tz = tz_local)
 # 2) FUNCIONES AUXILIARES
 ############################################################
 `%||%` <- function(a, b) if (is.null(a)) b else a
+
+sanitizar_error <- function(msg) {
+  texto <- as.character(msg %||% "")
+  texto <- gsub(TT_KEY, "[REDACTED]", texto, fixed = TRUE)
+  substr(gsub("([?&](key|api_key|apikey)=)[^&[:space:]]+", "\\1[REDACTED]", texto, ignore.case = TRUE), 1, 500)
+}
 
 safe_num <- function(x) {
   suppressWarnings(as.numeric(x))
@@ -149,7 +158,7 @@ flow_one <- function(lat, lon, zoom = 10, style = "relative", unit = "KMPH") {
       ok = FALSE,
       status = NA_integer_,
       j = NULL,
-      msg = paste("Error de conexión:", resp_f$message)
+      msg = paste("Error de conexión:", sanitizar_error(resp_f$message))
     ))
   }
   
@@ -160,7 +169,7 @@ flow_one <- function(lat, lon, zoom = 10, style = "relative", unit = "KMPH") {
       ok = FALSE,
       status = status_code,
       j = NULL,
-      msg = resp_body_string(resp_f)
+      msg = sanitizar_error(resp_body_string(resp_f))
     ))
   }
   

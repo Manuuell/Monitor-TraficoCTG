@@ -20,7 +20,9 @@ mas antes de detectarlo.
 """
 from __future__ import annotations
 
+import hashlib
 import json
+import os
 import threading
 from datetime import datetime, timedelta
 
@@ -36,8 +38,13 @@ def _mes_actual() -> str:
 
 
 def mask(llave: str) -> str:
-    """Identificador corto y estable de una llave para logs y el dashboard."""
-    return llave[:8] if llave else "?"
+    """Huella corta y estable que no revela ningun prefijo de la llave."""
+    return f"sha256:{_id_llave(llave)[:12]}" if llave else "?"
+
+
+def _id_llave(llave: str) -> str:
+    """Identificador persistente no reversible para una llave de alta entropia."""
+    return hashlib.sha256(llave.encode("utf-8")).hexdigest()
 
 
 def _offset_inicial() -> int:
@@ -62,8 +69,14 @@ def _todas() -> list:
 
 
 def _registro(llaves: dict, llave: str) -> dict:
+    identificador = _id_llave(llave)
+    # Migracion transparente desde el formato antiguo, que usaba la llave
+    # completa como clave del JSON. Al guardar de nuevo ya no queda el secreto.
+    legado = llaves.pop(llave, None)
+    if legado is not None and identificador not in llaves:
+        llaves[identificador] = legado
     return llaves.setdefault(
-        llave,
+        identificador,
         {"consumo": 0, "agotada": False, "ultimo_error": None, "ultima_vez": None},
     )
 
@@ -118,9 +131,16 @@ def _disponible(reg: dict) -> bool:
 
 def guardar_estado(estado: dict) -> None:
     try:
-        ESTADO_FILE.parent.mkdir(parents=True, exist_ok=True)
-        with open(ESTADO_FILE, "w", encoding="utf-8") as f:
-            json.dump(estado, f, indent=2, ensure_ascii=False)
+        ESTADO_FILE.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        fd = os.open(ESTADO_FILE, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        try:
+            os.fchmod(fd, 0o600)
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                fd = -1
+                json.dump(estado, f, indent=2, ensure_ascii=False)
+        finally:
+            if fd >= 0:
+                os.close(fd)
     except OSError as e:
         print(f"  [Llaves] No se pudo guardar {ESTADO_FILE.name}: {e}")
 

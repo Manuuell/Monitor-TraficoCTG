@@ -2090,8 +2090,10 @@ with tab_historia:
                             fill="tonexty", fillcolor="rgba(94,234,212,0.12)"))
                         fig_r1.update_layout(title="Evolucion de velocidad promedio",
                             xaxis_title="Fecha/Hora", yaxis_title="km/h",
-                            paper_bgcolor="#0A1F44", plot_bgcolor="#15294D",
-                            font_color="#FFFFFF", height=350)
+                            paper_bgcolor="#FFFFFF", plot_bgcolor="#FFFFFF",
+                            font_color="#12307A", height=350,
+                            xaxis=dict(gridcolor="#E3EAF7"),
+                            yaxis=dict(gridcolor="#E3EAF7"))
 
                         por_nodo2 = (
                             df_periodo[df_periodo["ok"].astype(str).str.lower() == "true"]
@@ -2105,8 +2107,10 @@ with tab_historia:
                             labels={"ratio_prom": "Ratio promedio", "nombre_nodo": ""},
                             title="Nodos mas congestionados")
                         fig_r2.update_coloraxes(showscale=False)
-                        fig_r2.update_layout(paper_bgcolor="#0A1F44", plot_bgcolor="#15294D",
-                            font_color="#FFFFFF", height=420, xaxis=dict(range=[0,1.15]))
+                        fig_r2.update_layout(paper_bgcolor="#FFFFFF", plot_bgcolor="#FFFFFF",
+                            font_color="#12307A", height=420,
+                            xaxis=dict(range=[0,1.15], gridcolor="#E3EAF7"),
+                            yaxis=dict(gridcolor="#E3EAF7"))
 
                         html_parts = [f"""<!DOCTYPE html>
 <html lang="es">
@@ -2114,14 +2118,15 @@ with tab_historia:
 <meta charset="UTF-8">
 <title>Reporte Trafico Cartagena · {periodo_label}</title>
 <style>
-  body {{ background:#0A1F44; color:#FFFFFF; font-family:sans-serif; margin:0; padding:24px; }}
-  h1 {{ color:#00D4D4; border-bottom:2px solid #00D4D4; padding-bottom:8px; }}
-  h2 {{ color:#00D4D4; font-size:16px; text-transform:uppercase; letter-spacing:1px; margin-top:32px; }}
-  .meta {{ color:#8A9AB8; font-size:13px; margin-bottom:24px; }}
-  .metric-box {{ display:inline-block; background:#15294D; border-left:3px solid #00D4D4;
-    padding:12px 20px; border-radius:6px; margin:8px 8px 8px 0; }}
-  .metric-label {{ color:#8A9AB8; font-size:11px; font-weight:700; text-transform:uppercase; }}
-  .metric-value {{ color:#FFFFFF; font-size:24px; font-weight:700; }}
+  body {{ background:#FCFCFD; color:#111113; font-family:Inter,system-ui,sans-serif; margin:0; padding:24px; }}
+  h1 {{ color:#12307A; border-bottom:3px solid #2DD4BF; padding-bottom:12px; }}
+  h2 {{ color:#12307A; font-size:16px; letter-spacing:-.01em; margin-top:32px; }}
+  .meta {{ color:#58585D; font-size:13px; margin-bottom:24px; }}
+  .metric-box {{ display:inline-block; background:#FFFFFF; border-left:3px solid #2DD4BF;
+    padding:14px 20px; border-radius:16px; margin:8px 8px 8px 0;
+    box-shadow:0 1px 2px rgba(17,17,19,.06),0 12px 28px -12px rgba(17,17,19,.14); }}
+  .metric-label {{ color:#58585D; font-size:11px; font-weight:700; }}
+  .metric-value {{ color:#111113; font-size:24px; font-weight:700; }}
   .chart-wrap {{ margin:16px 0; }}
   @media print {{ body {{ background:#fff; color:#000; }} h1,h2 {{ color:#003366; }} }}
 </style>
@@ -2162,8 +2167,8 @@ Fuente: TomTom Traffic Flow · VPS 1 + VPS 2</p>
                             )
                             html_parts.append(f"""
 <h2>Franjas horarias</h2>
-<table style="width:100%;border-collapse:collapse;color:#FFF;">
-  <thead><tr style="border-bottom:1px solid #00D4D4;color:#8A9AB8;font-size:12px;">
+<table style="width:100%;border-collapse:collapse;color:#111113;">
+  <thead><tr style="border-bottom:1px solid #2DD4BF;color:#58585D;font-size:12px;">
     <th style="text-align:left;padding:8px;">Franja</th>
     <th>Vel. actual</th><th>Vel. libre</th><th>Ratio</th><th>Muestras</th>
   </tr></thead>
@@ -2171,7 +2176,7 @@ Fuente: TomTom Traffic Flow · VPS 1 + VPS 2</p>
 </table>""")
 
                         html_parts.append(f"""
-<p style="color:#8A9AB8;font-size:11px;margin-top:40px;border-top:1px solid #15294D;padding-top:12px;">
+<p style="color:#58585D;font-size:11px;margin-top:40px;border-top:1px solid #ECECF0;padding-top:12px;">
   Universidad Tecnológica de Bolívar · Monitor de Trafico Cartagena ·
   Generado el {ts_gen}
 </p>

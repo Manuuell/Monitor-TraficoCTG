@@ -54,6 +54,13 @@ st.markdown(
     .block-container {{ max-width:1360px; padding-top:1.2rem; padding-bottom:3rem; }}
     [data-testid="stToolbar"], [data-testid="stDecoration"],
     [data-testid="stSidebarNav"] {{ display:none !important; }}
+    /* La barra superior de Streamlit mide 60 px, es opaca (color del fondo) y
+       va por encima del contenido: tapaba la parte de arriba del encabezado.
+       Se vuelve transparente y deja pasar los clics, salvo los de sus botones
+       (no se le quita el alto: ahi vive el boton de la barra lateral). */
+    [data-testid="stHeader"] {{ background:transparent !important; }}
+    [data-testid="stHeader"], [data-testid="stHeader"] * {{ pointer-events:none !important; }}
+    [data-testid="stHeader"] button, [data-testid="stHeader"] a {{ pointer-events:auto !important; }}
     .admin-hero {{
         position:relative; overflow:hidden; display:flex; justify-content:space-between;
         align-items:center; gap:28px; padding:30px 36px; margin-bottom:24px;

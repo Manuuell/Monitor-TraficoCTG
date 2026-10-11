@@ -54,6 +54,8 @@ st.markdown(
     .block-container {{ max-width:1360px; padding-top:1.2rem; padding-bottom:3rem; }}
     [data-testid="stToolbar"], [data-testid="stDecoration"],
     [data-testid="stSidebarNav"] {{ display:none !important; }}
+    /* El panel no usa barra lateral: vacia solo dejaba una franja gris */
+    [data-testid="stSidebar"] {{ display:none !important; }}
     /* La barra superior de Streamlit mide 60 px, es opaca (color del fondo) y
        va por encima del contenido: tapaba la parte de arriba del encabezado.
        Se vuelve transparente y deja pasar los clics, salvo los de sus botones
@@ -77,34 +79,50 @@ st.markdown(
     .admin-back {{ position:relative; z-index:2; display:inline-flex; align-items:center; gap:8px;
         padding:12px 18px; border-radius:999px; background:white; color:{AZUL_OSC} !important;
         text-decoration:none !important; font-size:13px; font-weight:800; white-space:nowrap; }}
-    .admin-login-hero {{
-        position:relative; overflow:hidden; max-width:760px; margin:42px auto 22px;
-        padding:30px 34px; border-radius:28px; color:white;
-        background:linear-gradient(125deg,#172f86 0%,#285bd0 62%,#3b78ec 100%);
-        box-shadow:0 24px 55px -32px rgba(18,48,122,.72);
+    /* ── Inicio de sesion: panel de marca a la izquierda y tarjeta de acceso ── */
+    /* Centra la composicion en la pantalla (unos 600 px de alto) */
+    .login-espacio {{ height:max(12px, calc((100vh - 640px) / 2)); }}
+    .login-panel {{
+        position:relative; overflow:hidden; min-height:540px; padding:38px 40px 30px;
+        display:flex; flex-direction:column; border-radius:32px; color:white;
+        background:linear-gradient(140deg,#172f86 0%,#1f48b8 55%,#2f66e0 100%);
+        box-shadow:0 30px 60px -34px rgba(18,48,122,.75);
     }}
-    .admin-login-hero:after {{ content:""; position:absolute; width:250px; height:250px;
-        right:-85px; top:-145px; border:1px solid rgba(255,255,255,.2); border-radius:50%; }}
-    .admin-login-badge {{ color:#a7f3e8; font-size:10px; font-weight:800;
-        letter-spacing:1.6px; text-transform:uppercase; margin-bottom:10px; }}
-    .admin-login-title {{ position:relative; z-index:1; margin:0 0 7px;
-        color:#fff; font-size:31px; line-height:1.1; font-weight:800; }}
-    .admin-login-copy {{ position:relative; z-index:1; max-width:570px; margin:0;
-        color:rgba(255,255,255,.74); font-size:13px; line-height:1.55; }}
+    .login-panel:before {{ content:""; position:absolute; width:440px; height:440px; right:-190px; bottom:-230px;
+        border:1px solid rgba(255,255,255,.16); border-radius:50%; box-shadow:0 0 0 70px rgba(255,255,255,.03); }}
+    .login-logo svg {{ display:block; width:170px; height:auto; }}
+    .login-ruta {{ position:absolute; top:34px; right:34px; width:190px; }}
+    .login-kicker {{ position:relative; margin:38px 0 10px; color:#a7f3e8; font-size:11px; font-weight:800;
+        letter-spacing:1.7px; text-transform:uppercase; }}
+    .login-title {{ position:relative; margin:0 0 12px; color:#fff; font-size:36px; line-height:1.08;
+        font-weight:800; letter-spacing:-.5px; }}
+    .login-copy {{ position:relative; max-width:440px; margin:0; color:rgba(255,255,255,.8);
+        font-size:14px; line-height:1.6; }}
+    .login-lista {{ position:relative; list-style:none; margin:28px 0 0; padding:0; display:grid; gap:12px; }}
+    .login-lista li {{ display:flex; align-items:center; gap:12px; margin:0; color:#eaf1ff;
+        font-size:13px; font-weight:600; }}
+    .login-lista span {{ width:30px; height:30px; flex-shrink:0; display:grid; place-items:center;
+        border-radius:10px; background:rgba(255,255,255,.12); border:1px solid rgba(255,255,255,.2);
+        color:{MENTA}; font-size:14px; font-weight:800; }}
+    .login-pie {{ position:relative; margin-top:auto; padding-top:28px; color:rgba(255,255,255,.62);
+        font-size:11px; letter-spacing:.3px; }}
     .st-key-admin_login_card {{
-        padding:22px 24px 24px;
-        background:#fff;
-        border:1px solid {LINEA};
-        border-radius:24px;
-        box-shadow:0 20px 46px -34px rgba(17,17,19,.6);
+        padding:34px 34px 28px; background:#fff; border:1px solid {LINEA}; border-radius:28px;
+        box-shadow:0 30px 60px -40px rgba(17,17,19,.55);
     }}
-    .login-card-title {{ color:{TINTA}; font-size:18px; font-weight:800; margin-bottom:4px; }}
-    .login-card-copy {{ color:{TENUE}; font-size:12px; line-height:1.5; margin-bottom:12px; }}
-    .st-key-admin_login_card [data-testid="stTextInput"] {{ margin-top:4px; }}
+    .login-candado {{ width:48px; height:48px; display:grid; place-items:center; margin-bottom:16px;
+        border-radius:15px; background:#eef3ff; }}
+    .login-card-title {{ color:{TINTA}; font-size:24px; font-weight:800; letter-spacing:-.3px; margin-bottom:6px; }}
+    .login-card-copy {{ color:{TENUE}; font-size:13px; line-height:1.55; margin-bottom:18px; }}
     .st-key-admin_login_card [data-testid="stTextInput"] input {{
-        min-height:48px; background:#f7f9fc !important; border-radius:12px !important;
+        min-height:50px; background:#f7f9fc !important; border-radius:12px !important;
     }}
-    .st-key-admin_login_card .stButton button {{ width:100%; min-height:46px; }}
+    .st-key-admin_login_card .stButton button {{ width:100%; min-height:50px; margin-top:4px; }}
+    .login-nota {{ margin-top:16px; padding:12px 14px; border-radius:14px; background:#f6f8fc;
+        color:{TENUE}; font-size:12px; line-height:1.5; }}
+    .login-volver {{ display:inline-block; margin-top:18px; color:{AZUL} !important; font-size:13px;
+        font-weight:700; text-decoration:none !important; }}
+    .login-volver:hover {{ text-decoration:underline !important; }}
     .section-title {{ margin:26px 0 12px; padding-left:12px; border-left:5px solid {MENTA};
         color:{TINTA}; font-size:18px; font-weight:800; letter-spacing:.2px; }}
     .status-card {{ background:white; border:1px solid {LINEA}; border-radius:24px;
@@ -156,9 +174,14 @@ st.markdown(
         .block-container {{ padding-left:1rem; padding-right:1rem; }}
         .admin-hero {{ align-items:flex-start; flex-direction:column; padding:25px 24px; border-radius:26px; }}
         .admin-title {{ font-size:31px; }}
-        .admin-login-hero {{ margin-top:16px; padding:25px 24px; border-radius:24px; }}
-        .admin-login-title {{ font-size:27px; }}
-        .st-key-admin_login_card {{ padding:18px; border-radius:20px; }}
+        /* En el celular el formulario debe verse sin hacer scroll: panel compacto */
+        .login-espacio {{ height:12px; }}
+        .login-panel {{ min-height:auto; padding:26px 24px; border-radius:24px; }}
+        .login-kicker {{ margin-top:22px; }}
+        .login-title {{ font-size:28px; }}
+        .login-copy {{ font-size:13px; }}
+        .login-ruta, .login-lista, .login-pie {{ display:none; }}
+        .st-key-admin_login_card {{ padding:24px 22px; border-radius:22px; }}
         .quota-grid, .quick-grid, .api-key-grid {{ grid-template-columns:1fr; }}
     }}
     </style>
@@ -166,6 +189,11 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+
+# Logo UTB (blanco) para el panel de marca del inicio de sesion. El tamaño va
+# por CSS: reemplazar width="183" tambien encoge su clipPath y corta el texto.
+_RUTA_LOGO = DASHBOARD_DIR / "assets" / "utb-logo.svg"
+LOGO_UTB = _RUTA_LOGO.read_text(encoding="utf-8") if _RUTA_LOGO.exists() else ""
 
 def proteger_panel() -> None:
     """Pide la contraseña de ADMIN_PASSWORD; sin ella el panel queda cerrado."""
@@ -181,23 +209,47 @@ def proteger_panel() -> None:
     huella = hashlib.sha256(esperada.encode("utf-8")).hexdigest()
     if st.session_state.get("admin_auth") == huella:
         return
-    st.markdown(
-        """
-        <div class="admin-login-hero">
-            <div class="admin-login-badge">Smart City Cartagena · Acceso protegido</div>
-            <div class="admin-login-title">Centro de control administrativo</div>
-            <p class="admin-login-copy">Consulta conexiones, cuotas, servidores y estado operativo desde un espacio reservado para administradores.</p>
-        </div>
-        """,
-        unsafe_allow_html=True,
+    st.markdown('<div class="login-espacio"></div>', unsafe_allow_html=True)
+    _, izquierda, derecha, _ = st.columns(
+        [0.05, 1.12, 0.9, 0.05], gap="large", vertical_alignment="center",
     )
-    _, columna_acceso, _ = st.columns([1, 1.25, 1])
-    with columna_acceso:
+    with izquierda:
+        st.markdown(
+            f"""
+            <div class="login-panel">
+                <div class="login-logo">{LOGO_UTB}</div>
+                <svg class="login-ruta" viewBox="0 0 215 84" aria-hidden="true">
+                    <path d="M8 62 C45 15, 74 74, 112 34 S169 12, 207 42" fill="none" stroke="rgba(255,255,255,.38)" stroke-width="2" stroke-linecap="round" stroke-dasharray="5 7"/>
+                    <circle cx="10" cy="60" r="6" fill="#5eead4" stroke="rgba(255,255,255,.9)" stroke-width="2"/>
+                    <circle cx="112" cy="34" r="5" fill="#ffffff" stroke="rgba(94,234,212,.8)" stroke-width="3"/>
+                    <circle cx="205" cy="41" r="7" fill="#5eead4" stroke="rgba(255,255,255,.9)" stroke-width="2"/>
+                </svg>
+                <div class="login-kicker">Smart City Cartagena · Acceso protegido</div>
+                <div class="login-title">Centro de control administrativo</div>
+                <p class="login-copy">Consulta conexiones, cuotas, servidores y estado operativo
+                    desde un espacio reservado para administradores.</p>
+                <ul class="login-lista">
+                    <li><span>✓</span>Conexión con Google y capacidad de los libros de Sheets</li>
+                    <li><span>✓</span>Cuota diaria y llaves TomTom de cada VPS</li>
+                    <li><span>✓</span>Ejecuciones, errores y diagnóstico del sistema</li>
+                </ul>
+                <div class="login-pie">Universidad Tecnológica de Bolívar · Monitoreo de tráfico urbano</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+    with derecha:
         with st.container(key="admin_login_card"):
             st.markdown(
-                """
+                f"""
+                <div class="login-candado">
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="{AZUL}"
+                         stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>
+                    </svg>
+                </div>
                 <div class="login-card-title">Acceso administrativo</div>
-                <div class="login-card-copy">Ingresa la contraseña temporal. La verificación con Google se habilitará como segundo factor.</div>
+                <div class="login-card-copy">Ingresa la contraseña de administrador para continuar.</div>
                 """,
                 unsafe_allow_html=True,
             )
@@ -212,6 +264,12 @@ def proteger_panel() -> None:
                     st.session_state["admin_auth"] = huella
                     st.rerun()
                 st.error("Contraseña incorrecta.")
+            st.markdown(
+                '<div class="login-nota">Por seguridad, la sesión termina al recargar '
+                'o cerrar la pestaña.</div>'
+                '<a class="login-volver" href="/" target="_self">← Volver al dashboard</a>',
+                unsafe_allow_html=True,
+            )
     st.stop()
 
 

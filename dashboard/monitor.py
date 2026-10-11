@@ -609,7 +609,7 @@ st.markdown(f"""
     /* ── Footer editorial inspirado en la composicion de Innvita ── */
     /* Azul de la pagina (misma familia que la barra lateral y el encabezado),
        un poco mas oscuro a la derecha para que el texto pequeno se lea. */
-    .st-key-dashboard_footer {{
+    [data-testid="stLayoutWrapper"]:has(> .st-key-dashboard_footer) {{
         order: 2147483647;
     }}
     .dashboard-footer {{

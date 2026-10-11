@@ -1558,12 +1558,6 @@ with tab_red:
                 tabla_ruta.style.format({"Velocidad (km/h)": "{:.1f}", "Indice de fluidez": "{:.2f}"}),
                 width="stretch", hide_index=True,
             )
-            st.caption(
-                "Tiempo estimado con las velocidades promedio de los nodos en el periodo "
-                "filtrado (media armonica por tramo) y la ruta mas rapida entre ellos. "
-                "Distancias y sentidos viales de OpenStreetMap, que puede no reflejar "
-                "cambios recientes del DATT."
-            )
 
 # ----------------------------------------------------------------
 # TAB ANALISIS DE NODOS

@@ -1210,7 +1210,11 @@ with st.sidebar:
     archivos = listar_archivos()
     if archivos:
         opciones = ["Ultimo disponible"] + [f.name for f in reversed(archivos[-50:])]
-        seleccion = st.selectbox("", opciones, label_visibility="collapsed")
+        seleccion = st.selectbox(
+            "Archivo de datos",
+            opciones,
+            label_visibility="collapsed",
+        )
         archivo_actual = archivos[-1] if seleccion == "Ultimo disponible" else next(
             (f for f in archivos if f.name == seleccion), archivos[-1]
         )

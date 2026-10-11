@@ -296,87 +296,70 @@ def capacidad_sheet(estado: dict | None = None) -> dict:
     return next((parte for parte in partes if parte.get("activa")), partes[-1])
 
 
-def estado_api_keys(mediciones: pd.DataFrame | None = None) -> dict:
-    """Inventario seguro de claves: nunca devuelve el valor completo."""
-    resumen_rotacion = rotacion_llaves.resumen()
-    estado_por_id = {fila["llave_id"]: fila for fila in resumen_rotacion}
-    telemetria_mensual = rotacion_llaves.ESTADO_FILE.exists()
-    uso_hoy: dict[str, int] = {}
-    if mediciones is not None and not mediciones.empty and "llave_id" in mediciones.columns:
-        uso_hoy = {
-            str(llave).strip(): int(cantidad)
-            for llave, cantidad in mediciones["llave_id"].dropna().value_counts().items()
-            if str(llave).strip()
-        }
-    inventario: dict[str, dict] = {}
+def _tarjeta_llave(fila: dict) -> dict:
+    """Datos de una llave para su tarjeta: consumo del mes frente a su limite."""
+    consumo = int(fila.get("consumo") or 0)
+    cuota = int(fila.get("cuota") or 0)
+    agotada = bool(fila.get("agotada"))
+    if agotada:
+        estado = "AGOTADA"
+    else:
+        estado = "EN USO" if fila.get("tipo") == "principal" else "RESERVA"
+    return {
+        "identificador": fila["llave_id"],
+        "tipo": fila.get("tipo") or "principal",
+        "consumo": consumo,
+        "cuota": cuota,
+        "pct": consumo / cuota * 100 if cuota else None,
+        "estado": estado,
+        "motivo": fila.get("motivo") if agotada else None,
+        "ultima_vez": fila.get("ultima_vez") or "Sin uso registrado",
+    }
 
-    def registrar(llave: str, servicio: str, proposito: str) -> None:
-        if not llave:
-            return
-        identificador = rotacion_llaves.mask(llave)
-        fila = inventario.setdefault(identificador, {
-            "identificador": identificador,
-            "servicio": servicio,
-            "propositos": [],
+
+def estado_api_keys() -> dict:
+    """
+    Llaves TomTom de cada VPS, en uso y de reserva, con su consumo del mes y
+    su limite. Cada VPS solo conoce las de su .env, asi que cada ETL publica
+    su estado en PostgreSQL al final de la corrida (db.guardar_estado_llaves)
+    y aqui se leen las de todos. Si este VPS aun no publico, se usa su estado
+    local. Nunca devuelve el valor completo de una llave.
+    """
+    publicado, error = pd.DataFrame(), None
+    try:
+        import db
+
+        publicado = db.leer_estado_llaves()
+    except Exception as e:
+        error = str(e)[:160]
+
+    por_vps: dict[str, dict] = {}
+    for fila in publicado.to_dict("records"):
+        vps = por_vps.setdefault(str(fila["vps_id"]), {
+            "vps_id": str(fila["vps_id"]), "actualizado": fila.get("actualizado"),
+            "principal": [], "reserva": [],
         })
-        if proposito not in fila["propositos"]:
-            fila["propositos"].append(proposito)
+        tarjeta = _tarjeta_llave(fila)
+        vps["reserva" if tarjeta["tipo"] == "reserva" else "principal"].append(tarjeta)
 
-    for llave in config.API_KEYS:
-        registrar(llave, "TomTom Traffic Flow", "Rotación principal")
-    for llave in config.API_KEYS_RESERVA:
-        registrar(llave, "TomTom Traffic Flow", "Reserva")
-    if config.API_KEY and config.API_KEY not in config.API_KEYS:
-        registrar(config.API_KEY, "TomTom Traffic Flow", "Compatibilidad local")
-    for llave in config.API_KEYS_RED:
-        registrar(llave, "TomTom Routing", "Captura de red")
-    if config.GOOGLE_STREETVIEW_KEY:
-        registrar(config.GOOGLE_STREETVIEW_KEY, "Google Street View", "Fotos de nodos")
+    local = str(config.VPS_ID)
+    if local not in por_vps and (config.API_KEYS or config.API_KEYS_RESERVA):
+        vps = por_vps[local] = {"vps_id": local, "actualizado": None, "principal": [], "reserva": []}
+        for fila in rotacion_llaves.resumen():
+            tarjeta = _tarjeta_llave(fila)
+            vps["reserva" if tarjeta["tipo"] == "reserva" else "principal"].append(tarjeta)
 
-    filas = []
-    for numero, (identificador, base) in enumerate(inventario.items(), start=1):
-        rotacion = estado_por_id.get(identificador)
-        consumo_hoy = uso_hoy.get(identificador)
-        if rotacion and telemetria_mensual:
-            consumo = int(rotacion.get("consumo", 0))
-            cuota = int(rotacion.get("cuota", 0))
-            pct = consumo / cuota * 100 if cuota else 0
-            estado = "AGOTADA" if rotacion.get("agotada") else "ACTIVA"
-            detalle = rotacion.get("motivo") or "Disponible para rotación"
-            ultima = rotacion.get("ultima_vez") or "Sin uso registrado"
-        else:
-            consumo = None
-            cuota = None
-            pct = None
-            estado = "ACTIVA HOY" if consumo_hoy else "CONFIGURADA"
-            detalle = (
-                "Uso diario reconstruido desde Google Sheets"
-                if consumo_hoy else "Uso no registrado por el ETL"
-            )
-            ultima = "Sin telemetría local"
-        filas.append({
-            "numero": numero,
-            **base,
-            "proposito": " · ".join(base["propositos"]),
-            "consumo": consumo,
-            "cuota": cuota,
-            "pct": pct,
-            "estado": estado,
-            "detalle": detalle,
-            "ultima_vez": ultima,
-            "consumo_hoy": consumo_hoy,
-        })
-    identificadas = sum(
-        cantidad for llave_id, cantidad in uso_hoy.items()
-        if llave_id in inventario
-    )
-    total_hoy = len(mediciones) if mediciones is not None else 0
+    for vps_id, vps in por_vps.items():
+        vps["turnos"] = list(config.VPS_TURNOS.get(vps_id, []))
+        actualizado = vps.get("actualizado")
+        vps["actualizado"] = (
+            pd.Timestamp(actualizado).strftime("%d/%m %H:%M")
+            if actualizado is not None and pd.notna(actualizado) else "estado local"
+        )
     return {
         "mes": datetime.now().strftime("%Y-%m"),
-        "telemetria_mensual": telemetria_mensual,
-        "total_hoy": total_hoy,
-        "sin_identificar": max(total_hoy - identificadas, 0),
-        "claves": filas,
+        "vps": [por_vps[k] for k in sorted(por_vps)],
+        "error": error,
     }
 
 

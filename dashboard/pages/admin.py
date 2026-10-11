@@ -124,6 +124,12 @@ st.markdown(
     .api-key-card {{ background:white; border:1px solid {LINEA}; border-radius:22px; padding:18px 20px;
         box-shadow:inset 4px 0 0 var(--key-color),0 12px 26px -20px rgba(17,17,19,.35); }}
     .api-key-id {{ color:{AZUL_OSC}; font-size:20px; font-weight:800; letter-spacing:.4px; }}
+    .vps-keys-head {{ display:flex; align-items:baseline; gap:12px; margin:22px 0 4px;
+        padding-bottom:8px; border-bottom:1px solid {LINEA}; }}
+    .vps-keys-name {{ color:{AZUL_OSC}; font-size:18px; font-weight:800; }}
+    .vps-keys-meta {{ color:{TENUE}; font-size:12px; }}
+    .key-group-title {{ color:{TENUE}; font-size:11px; font-weight:800; letter-spacing:1px;
+        text-transform:uppercase; margin:14px 0 8px; }}
     .api-key-service {{ color:{TENUE}; font-size:11px; margin-top:3px; }}
     .quick-grid {{ display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; }}
     .quick-link {{ display:flex; align-items:center; gap:13px; border:1px solid {LINEA};
@@ -242,44 +248,29 @@ def tarjeta_cuota(nombre: str, datos: dict) -> str:
 
 
 def tarjeta_api_key(datos: dict) -> str:
+    """Tarjeta de una llave TomTom: estado y consumo del mes frente a su limite."""
     pct = datos.get("pct")
-    consumo_hoy = datos.get("consumo_hoy")
-    estado = datos.get("estado", "CONFIGURADA")
+    estado = datos["estado"]
     if estado == "AGOTADA":
         color = ROJO
     elif pct is not None and pct >= 80:
         color = NARANJA
-    elif datos.get("servicio", "").startswith("Google"):
+    elif estado == "RESERVA":
         color = AZUL
     else:
         color = VERDE
-    if pct is None:
-        uso = (
-            f"{consumo_hoy:,} llamadas hoy"
-            if consumo_hoy is not None else "Telemetría no disponible"
-        )
-        progreso = 0
-        cuota = (
-            "Requiere Cloud Monitoring"
-            if datos.get("servicio", "").startswith("Google")
-            else "Mensual no sincronizado"
-        )
-    else:
-        progreso = min(float(pct), 100)
-        uso = f"{datos['consumo']:,} / {datos['cuota']:,} llamadas"
-        cuota = f"{pct:.1f}% de la cuota mensual"
-    uso_hoy = (
-        f" · Hoy: {consumo_hoy:,}"
-        if consumo_hoy is not None and pct is not None else ""
-    )
+    rol = "En uso" if datos["tipo"] == "principal" else "Reserva"
+    progreso = min(float(pct), 100) if pct is not None else 0
+    limite = f"{pct:.1f}% del límite mensual" if pct is not None else "Sin límite configurado"
+    nota = f" · {datos['motivo']}" if datos.get("motivo") else ""
     return (
         f'<div class="api-key-card" style="--key-color:{color}">'
         f'<div class="status-row"><div><div class="api-key-id">ID · {datos["identificador"]}</div>'
-        f'<div class="api-key-service">{datos["servicio"]} · {datos["proposito"]}</div></div>'
+        f'<div class="api-key-service">TomTom Traffic Flow · {rol}</div></div>'
         f'<span class="status-pill" style="background:{color}18;color:{color}">{estado}</span></div>'
         f'<div class="progress-track"><div class="progress-fill" style="width:{progreso:.1f}%;background:{color}"></div></div>'
-        f'<div class="quota-meta"><span>{uso}</span><span>{cuota}</span></div>'
-        f'<div class="status-copy">Último uso: {datos["ultima_vez"]}{uso_hoy} · {datos["detalle"]}</div></div>'
+        f'<div class="quota-meta"><span>{datos["consumo"]:,} / {datos["cuota"]:,} llamadas</span><span>{limite}</span></div>'
+        f'<div class="status-copy">Último uso: {datos["ultima_vez"]}{nota}</div></div>'
     )
 
 
@@ -307,7 +298,7 @@ with st.spinner("Actualizando estado operativo..."):
     google = servicios.verificar_google()
     sheets = servicios.capacidad_sheets()
     sheet = servicios.capacidad_sheet(sheets)
-    api_keys = servicios.estado_api_keys(mediciones)
+    api_keys = servicios.estado_api_keys()
 
 proxima = servicios.proxima_ejecucion()
 ultima = resumen["ultima"]
@@ -441,16 +432,28 @@ with tab_resumen:
         unsafe_allow_html=True,
     )
 
-    st.markdown('<div class="section-title">API keys configuradas y consumo mensual</div>', unsafe_allow_html=True)
-    if api_keys.get("claves"):
+    st.markdown('<div class="section-title">API keys TomTom por servidor</div>', unsafe_allow_html=True)
+    if not api_keys["vps"]:
+        st.warning(
+            "No hay estado de llaves publicado ni llaves en este servidor"
+            + (f" ({api_keys['error']})." if api_keys.get("error") else ".")
+        )
+    for vps in api_keys["vps"]:
+        turnos = " y ".join(vps["turnos"]) if vps["turnos"] else "sin turnos asignados"
         st.markdown(
-            '<div class="api-key-grid">'
-            + "".join(tarjeta_api_key(datos) for datos in api_keys["claves"])
-            + "</div>",
+            f'<div class="vps-keys-head"><span class="vps-keys-name">VPS {vps["vps_id"]}</span>'
+            f'<span class="vps-keys-meta">{turnos} · actualizado {vps["actualizado"]}</span></div>',
             unsafe_allow_html=True,
         )
-    else:
-        st.warning("No hay API keys cargadas en este entorno.")
+        for grupo, titulo in (("principal", "En uso"), ("reserva", "Reserva")):
+            if vps[grupo]:
+                st.markdown(
+                    f'<div class="key-group-title">{titulo} · {len(vps[grupo])}</div>'
+                    '<div class="api-key-grid">'
+                    + "".join(tarjeta_api_key(datos) for datos in vps[grupo])
+                    + "</div>",
+                    unsafe_allow_html=True,
+                )
 
     st.markdown('<div class="section-title">Horarios y responsables</div>', unsafe_allow_html=True)
     horarios = []

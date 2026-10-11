@@ -135,3 +135,12 @@ GUARDAR_EN_DB = os.environ.get("GUARDAR_EN_DB", "false").lower() == "true"
 
 # Fuente de lectura del dashboard: "sheets" (actual) o "db" (PostgreSQL)
 FUENTE_DASHBOARD = os.environ.get("FUENTE_DASHBOARD", "sheets").lower()
+
+# ============================================================
+# GOOGLE STREET VIEW (foto del nodo en la ventana emergente del mapa)
+# ============================================================
+# Llave de la Street View Static API. Viaja en el HTML del dashboard, asi que
+# en Google Cloud debe quedar restringida a esa API y al dominio del
+# dashboard (HTTP referrer), con un tope diario de cuota. Sin llave, el popup
+# del mapa sale sin foto.
+GOOGLE_STREETVIEW_KEY = os.environ.get("GOOGLE_STREETVIEW_KEY", "")

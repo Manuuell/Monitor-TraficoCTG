@@ -359,6 +359,16 @@ def main() -> int:
             _flag += " (reserva)"
         print(f"  [Llaves] {r['llave_id']}: {r['consumo']:,} / {r['cuota']:,}{_flag}")
 
+    # Publicar el estado de las llaves de este VPS para el panel admin, que
+    # asi ve las de todos los VPS (cada uno solo conoce las de su .env).
+    # Solo IDs enmascarados. Un fallo aqui no afecta la corrida.
+    if config.GUARDAR_EN_DB:
+        try:
+            import db  # import diferido: solo si GUARDAR_EN_DB=true
+            db.guardar_estado_llaves(config.VPS_ID, rotacion_llaves.resumen())
+        except Exception as e:
+            print(f"  [Llaves] Aviso: no se pudo publicar el estado en PostgreSQL: {e}")
+
     registrar_log(
         inicio, total, ok_count,
         None if ok_count > 0 else "Todas las consultas fallaron",

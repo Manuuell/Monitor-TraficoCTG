@@ -586,7 +586,10 @@ st.markdown(f"""
        herramientas, que ocupa todo el ancho */
     [data-testid="stHeader"], [data-testid="stHeader"] * {{ pointer-events: none !important; }}
     [data-testid="stHeader"] button, [data-testid="stHeader"] a {{ pointer-events: auto !important; }}
-    [data-testid="stToolbar"], [data-testid="stDecoration"],
+    /* De la barra de herramientas solo se ocultan Deploy y el menu: ahi
+       mismo vive el boton que reabre la barra lateral, y al ocultar toda la
+       barra (stToolbar) no habia forma de volver a abrirla sin recargar. */
+    [data-testid="stAppDeployButton"], [data-testid="stMainMenu"], [data-testid="stDecoration"],
     [data-testid="stSidebarNav"] {{ display: none !important; }}
     h2, h3 {{ scroll-margin-top: 1rem; }}
     [data-testid="stExpandSidebarButton"] {{

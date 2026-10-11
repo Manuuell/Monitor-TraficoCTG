@@ -251,8 +251,17 @@ def rotar_sheet(creds: Credentials, columnas: list) -> str | None:
 
 def asegurar_encabezados(
     creds: Credentials, columnas: list, sheet_id: str | None = None,
-) -> bool:
-    """Verifica que la primera fila tenga los encabezados correctos; los crea o actualiza si hay columnas nuevas."""
+) -> list | None:
+    """
+    Garantiza que el encabezado del libro tenga todas las columnas y devuelve
+    el encabezado final, que es el orden en que deben escribirse las filas.
+
+    Las columnas nuevas se agregan AL FINAL y las filas se alinean por nombre
+    (ver agregar_filas_a_sheet). Antes se reemplazaba el encabezado por el
+    orden del DataFrame: al aparecer llave_id en medio, las filas ya escritas
+    de Parte2 (08/09 al 19/09/2026) quedaron leyendose corridas una columna.
+    Devuelve None si no se pudo leer o escribir el encabezado.
+    """
     sheet_id = sheet_id or sheet_activo()
     try:
         service = build("sheets", "v4", credentials=creds, cache_discovery=False)
@@ -267,26 +276,25 @@ def asegurar_encabezados(
 
         if not encabezado_actual:
             # Sheet vacio: crear encabezados
-            service.spreadsheets().values().update(
-                spreadsheetId=sheet_id,
-                range=f"{config.SHEET_TAB}!A1",
-                valueInputOption="RAW",
-                body={"values": [columnas]},
-            ).execute()
-            print(f"  [Sheets] Encabezados creados ({len(columnas)} columnas)")
-        elif len(encabezado_actual) < len(columnas):
-            # Hay columnas nuevas: actualizar el encabezado completo
-            service.spreadsheets().values().update(
-                spreadsheetId=sheet_id,
-                range=f"{config.SHEET_TAB}!A1",
-                valueInputOption="RAW",
-                body={"values": [columnas]},
-            ).execute()
-            print(f"  [Sheets] Encabezados actualizados: {len(encabezado_actual)} → {len(columnas)} columnas")
-        return True
+            final = list(columnas)
+            print(f"  [Sheets] Encabezados creados ({len(final)} columnas)")
+        else:
+            nuevas = [c for c in columnas if c not in encabezado_actual]
+            if not nuevas:
+                return encabezado_actual
+            final = encabezado_actual + nuevas
+            print(f"  [Sheets] Columnas nuevas al final del encabezado: {', '.join(nuevas)}")
+
+        service.spreadsheets().values().update(
+            spreadsheetId=sheet_id,
+            range=f"{config.SHEET_TAB}!A1",
+            valueInputOption="RAW",
+            body={"values": [final]},
+        ).execute()
+        return final
     except HttpError as e:
         print(f"  [Sheets] Error en encabezados: {e}")
-        return False
+        return None
 
 
 def agregar_filas_a_sheet(creds: Credentials, df: pd.DataFrame) -> int:
@@ -297,18 +305,23 @@ def agregar_filas_a_sheet(creds: Credentials, df: pd.DataFrame) -> int:
     """
     columnas = df.columns.tolist()
 
-    # Convertir a lista de listas, reemplazando NaN por string vacio
-    # y normalizando booleanos a TRUE/FALSE para consistencia en Sheets
+    # Convertir a texto, reemplazando NaN por string vacio y normalizando
+    # booleanos a TRUE/FALSE para consistencia en Sheets
     df_clean = df.fillna("").astype(str)
     df_clean = df_clean.replace({"True": "TRUE", "False": "FALSE"})
-    valores = df_clean.values.tolist()
 
     sheet_id = sheet_activo()
 
     for intento in (1, 2):
         try:
             service = build("sheets", "v4", credentials=creds, cache_discovery=False)
-            asegurar_encabezados(creds, columnas, sheet_id)
+            encabezado = asegurar_encabezados(creds, columnas, sheet_id)
+            if encabezado is None:
+                # Sin encabezado no se sabe en que columna va cada valor
+                print("  [Sheets] Sin encabezado confiable; no se agregan filas.")
+                return 0
+            # Cada valor bajo su columna, sin importar el orden del DataFrame
+            valores = df_clean.reindex(columns=encabezado, fill_value="").values.tolist()
 
             service.spreadsheets().values().append(
                 spreadsheetId=sheet_id,

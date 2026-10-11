@@ -2564,10 +2564,8 @@ with tab_historia:
                         name="Velocidad actual",
                         x=x_franjas,
                         y=df_f["vel_actual"],
-                        marker_color=[
-                            COLOR_FLUIDO if r > 0.75 else (COLOR_LENTO if r > 0.5 else COLOR_CONGESTIONADO)
-                            for r in df_f["ratio"].fillna(0)
-                        ],
+                        # Mismo nivel que el mapa y la leyenda (0.90 / 0.75 / 0.60)
+                        marker_color=[clasificar_ratio(r)[0] for r in df_f["ratio"]],
                     ))
                     # Linea de ratio superpuesta (eje Y secundario)
                     fig_franjas.add_trace(go.Scatter(

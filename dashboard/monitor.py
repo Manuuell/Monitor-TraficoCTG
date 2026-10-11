@@ -1114,10 +1114,6 @@ def calcular_proxima_ejecucion():
 def render_analisis_temporal():
     """Vista temporal con una sola muestra estadistica para los cuatro graficos."""
     st.markdown("### Análisis temporal")
-    st.caption(
-        "Compara el comportamiento por hora, día y mes. Todos los gráficos "
-        "comparten exactamente los filtros de la izquierda."
-    )
 
     with st.spinner("Consultando datos disponibles..."):
         min_fecha, max_fecha, fuente_rango = rango_fechas_historico()
@@ -1258,18 +1254,6 @@ def render_analisis_temporal():
             st.metric("Ejecuciones", f"{len(serie):,}")
         with s4:
             st.metric("Nodos por ejecución", f"{nodos_promedio:.1f}")
-
-        st.markdown(
-            f"<div style='background:{SUPERFICIE_SUAVE};border:1px solid {UTB_BORDER};"
-            f"border-left:3px solid {R_MENTA};border-radius:10px;padding:10px 14px;"
-            f"margin:8px 0 16px;font-size:12px;color:{UTB_GRAY};'>"
-            "<b style='color:#12307a;'>Cómo se calcula:</b> cada ejecución pesa una vez. "
-            "Dentro de ella, cada nodo seleccionado pesa una vez; las filas duplicadas del "
-            "mismo nodo se consolidan antes del promedio. La tendencia mensual promedia "
-            "primero por día para que los días con más ejecuciones no dominen el resultado."
-            "</div>",
-            unsafe_allow_html=True,
-        )
 
         vista_hora, vista_calor, vista_tendencia, vista_box = st.tabs(
             ["▥ Por hora", "▦ Hora × día", "↗ Tendencia mensual", "▭ Distribución"]

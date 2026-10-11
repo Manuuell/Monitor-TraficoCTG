@@ -42,6 +42,13 @@ API_KEYS_RESERVA = [
     if k.strip() and k.strip() not in API_KEYS
 ]
 
+# Llaves para capturar_red.py (rutas entre nodos vecinos, una sola vez). Mejor
+# de una cuenta aparte para no gastar el saldo del ETL; si se deja vacio, el
+# script usa las de TOMTOM_API_KEYS.
+API_KEYS_RED = [
+    k.strip() for k in os.environ.get("TOMTOM_API_KEYS_RED", "").split(",") if k.strip()
+]
+
 # Horas tras las que una llave marcada como agotada se vuelve a probar, por si
 # su cuenta recibio creditos. Permite volver a las principales sin esperar al
 # cambio de mes.

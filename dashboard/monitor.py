@@ -1581,7 +1581,7 @@ with tab_datos:
                 orientation="h",
                 color="color",
                 color_discrete_map="identity",
-                labels={"velocidad_ratio": "Ratio velocidad (0=congestionado · 1=fluido)", "nombre_nodo": ""},
+                labels={"velocidad_ratio": "Índice de fluidez (0–1)", "nombre_nodo": ""},
                 text=top10["velocidad_ratio"].apply(lambda x: f"{x:.2f}" if pd.notna(x) else ""),
             )
             fig_top.update_traces(textposition="outside")
@@ -2011,7 +2011,7 @@ with tab_historia:
                         ))
                         fig_hora_n.update_layout(
                             xaxis_title="Hora del dia",
-                            yaxis_title="Ratio (0=congestion · 1=fluido)",
+                            yaxis_title="Índice de fluidez",
                             yaxis=dict(range=[0, 1.2]),
                         )
                         fig_hora_n = plotly_base(fig_hora_n, height=280)

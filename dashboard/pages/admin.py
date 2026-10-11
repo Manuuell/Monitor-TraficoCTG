@@ -442,15 +442,6 @@ with tab_resumen:
     )
 
     st.markdown('<div class="section-title">API keys configuradas y consumo mensual</div>', unsafe_allow_html=True)
-    st.caption(
-        f"Periodo {api_keys['mes']} · Se muestran IDs de seguimiento, nunca las claves completas. "
-        "El uso de hoy sale de Google Sheets; el mensual se toma del estado de cada VPS cuando está sincronizado."
-    )
-    if api_keys.get("sin_identificar"):
-        st.info(
-            f"{api_keys['sin_identificar']:,} llamadas de hoy pertenecen a registros antiguos "
-            "que todavía no incluían el ID de la clave."
-        )
     if api_keys.get("claves"):
         st.markdown(
             '<div class="api-key-grid">'

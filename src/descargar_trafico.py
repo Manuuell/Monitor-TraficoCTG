@@ -236,7 +236,6 @@ def main() -> int:
             **metricas,
             "consultation_time": inicio.strftime("%Y-%m-%d %H:%M:%S"),
             "vps_id": config.VPS_ID,
-            "llave_id": rotacion_llaves.mask(llave_actual),
             "error_msg": resp["error"],
         }
 
@@ -263,6 +262,9 @@ def main() -> int:
         fila["hora"]      = inicio.strftime("%H:%M")
         fila["turno"]     = determinar_turno(inicio)
         fila["dia_semana"] = ["Lunes", "Martes", "Miercoles", "Jueves", "Viernes", "Sabado", "Domingo"][inicio.weekday()]
+        # Columnas nuevas siempre al final: insertarlas en medio corre las
+        # filas viejas de los CSV y del Sheet (paso con llave_id en Parte2)
+        fila["llave_id"] = rotacion_llaves.mask(llave_actual)
 
         resultados.append(fila)
         if resp["ok"]:

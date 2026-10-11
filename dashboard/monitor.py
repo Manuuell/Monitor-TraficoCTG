@@ -335,7 +335,12 @@ def plotly_base(fig, height: int = 340):
     return fig
 
 
-@st.cache_data(ttl=60)
+# Las cargas que corren antes de las pestañas van sin show_spinner: el aviso
+# "Running ..." ocupa un lugar en la página, desplaza las pestañas y
+# Streamlit las vuelve a crear, devolviendo al usuario a la primera cada vez
+# que vence un cache (cargar_logs vence cada minuto). El indicador de carga
+# de la esquina superior sigue visible.
+@st.cache_data(ttl=60, show_spinner=False)
 def cargar_logs() -> pd.DataFrame:
     if not config.LOG_FILE.exists():
         return pd.DataFrame()
@@ -362,7 +367,7 @@ def listar_archivos() -> list:
     return [Path(f) for f in files]
 
 
-@st.cache_data(ttl=60)
+@st.cache_data(ttl=60, show_spinner=False)
 def cargar_csv(path_str: str) -> pd.DataFrame:
     df = pd.read_csv(path_str)
     if "consultation_time" in df.columns:
@@ -370,7 +375,7 @@ def cargar_csv(path_str: str) -> pd.DataFrame:
     return df
 
 
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=300, show_spinner=False)
 def cargar_desde_sheets(n_dias: int = 30) -> pd.DataFrame:
     """
     Carga el historico. Fuente segun config.FUENTE_DASHBOARD:
@@ -875,6 +880,10 @@ def _mascara_ok(df: pd.DataFrame) -> pd.Series:
 # ============================================================
 # CARGAR DATOS BASE
 # ============================================================
+# Aviso de carga en un lugar fijo de la pagina (existe en todas las corridas,
+# asi no desplaza las pestanas como el spinner de cache; ver cargar_logs).
+aviso_carga = st.empty()
+aviso_carga.info("Cargando datos... la primera carga puede tardar un poco.")
 logs = cargar_logs()
 df_actual = cargar_csv(str(archivo_actual)) if archivo_actual else pd.DataFrame()
 
@@ -953,6 +962,8 @@ if not df_snapshot.empty and not _mascara_ok(df_snapshot).any():
             )
             snapshot_degradado["hora_valida"] = _t_ok
             snapshot_label = f"{snapshot_degradado['label_valido']} · DESACTUALIZADO"
+
+aviso_carga.empty()
 
 # ============================================================
 # METRICAS PRINCIPALES

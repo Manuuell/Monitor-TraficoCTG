@@ -36,6 +36,21 @@ API_KEYS = [
 if not API_KEYS and API_KEY:
     API_KEYS = [API_KEY]
 
+# Llaves de reserva: solo se usan cuando todas las de API_KEYS estan agotadas.
+API_KEYS_RESERVA = [
+    k.strip() for k in os.environ.get("TOMTOM_API_KEYS_RESERVA", "").split(",")
+    if k.strip() and k.strip() not in API_KEYS
+]
+
+# Horas tras las que una llave marcada como agotada se vuelve a probar, por si
+# su cuenta recibio creditos. Permite volver a las principales sin esperar al
+# cambio de mes.
+REPROBAR_AGOTADA_HORAS = float(os.environ.get("REPROBAR_AGOTADA_HORAS", "6"))
+
+# Cuota gratuita mensual por cuenta (llave). Se usa para el indicador de
+# consumo acumulado y para saltar una llave antes de agotarla.
+CUOTA_MENSUAL_LLAVE = int(os.environ.get("CUOTA_MENSUAL_LLAVE", "20000"))
+
 # Identificador del VPS (1 o 2) - para distinguir en los logs
 VPS_ID = os.environ.get("VPS_ID", "local")
 

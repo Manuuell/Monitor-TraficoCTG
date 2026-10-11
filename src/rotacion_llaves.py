@@ -167,8 +167,15 @@ def marcar_agotada(llave: str, error: str, motivo: str = SIN_CREDITOS) -> None:
         guardar_estado(estado)
 
 
-def registrar_consumo(consumo_por_llave: dict) -> None:
-    """Suma las llamadas exitosas de esta corrida a cada llave."""
+def registrar_consumo(consumo_por_llave: dict, ultimo_exito: dict = None) -> None:
+    """
+    Suma las llamadas exitosas de esta corrida a cada llave.
+
+    ultimo_exito: {llave: "YYYY-mm-dd HH:MM:SS"} de su ultima respuesta buena.
+    Una llave agotada vuelve a contar como disponible solo si respondio bien
+    DESPUES de su descarte: si en la misma corrida acerto y luego se agoto,
+    sigue agotada (antes el consumo la rehabilitaba sin mirar el orden).
+    """
     if not consumo_por_llave:
         return
     with _LOCK:
@@ -176,8 +183,10 @@ def registrar_consumo(consumo_por_llave: dict) -> None:
         for llave, n in consumo_por_llave.items():
             reg = _registro(estado["llaves"], llave)
             reg["consumo"] = reg.get("consumo", 0) + int(n)
-            # Si respondio bien, tiene creditos: deja de contar como agotada.
-            reg["agotada"] = False
+            exito = (ultimo_exito or {}).get(llave)
+            descarte = reg.get("agotada_desde")
+            if reg.get("agotada") and exito and (not descarte or exito > descarte):
+                reg["agotada"] = False
             reg["ultima_vez"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         guardar_estado(estado)
 
@@ -226,6 +235,8 @@ def resumen() -> list:
             "agotada": reg.get("agotada", False),
             "motivo": reg.get("motivo") if reg.get("agotada") else None,
             "ultimo_error": reg.get("ultimo_error"),
+            "ultima_vez": reg.get("ultima_vez"),
+            "agotada_desde": reg.get("agotada_desde"),
             "cuota": config.CUOTA_MENSUAL_LLAVE,
         })
     return out

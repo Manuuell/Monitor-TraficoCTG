@@ -179,6 +179,7 @@ def main() -> int:
     resultados = []
     ok_count = 0
     consumo_por_llave = {}
+    ultimo_exito = {}   # llave -> hora de su ultima respuesta buena
 
     llave_actual = rotacion_llaves.siguiente_llave()
     print(f"Llave inicial: {rotacion_llaves.mask(llave_actual)}")
@@ -267,6 +268,7 @@ def main() -> int:
         if resp["ok"]:
             ok_count += 1
             consumo_por_llave[llave_actual] = consumo_por_llave.get(llave_actual, 0) + 1
+            ultimo_exito[llave_actual] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
         # Pequeno respiro entre llamadas para no saturar
         time.sleep(0.05)
@@ -325,7 +327,7 @@ def main() -> int:
     print(f"{'='*60}\n")
 
     # Registrar consumo de la corrida y el estado de las llaves
-    rotacion_llaves.registrar_consumo(consumo_por_llave)
+    rotacion_llaves.registrar_consumo(consumo_por_llave, ultimo_exito)
     for r in rotacion_llaves.resumen():
         _flag = f" [{(r['motivo'] or 'agotada').upper()}]" if r["agotada"] else ""
         if r["tipo"] == "reserva":

@@ -1,16 +1,16 @@
 [theme]
-# Colores UTB
-primaryColor = "#00D4D4"
-backgroundColor = "#0A1F44"
-secondaryBackgroundColor = "#15294D"
-textColor = "#FFFFFF"
+# Smart City Cartagena — tema claro coherente con el dashboard
+primaryColor = "#1F48B8"
+backgroundColor = "#FCFCFD"
+secondaryBackgroundColor = "#F6F6F8"
+textColor = "#111113"
 font = "sans serif"
-base = "dark"
+base = "light"
 
 [server]
 headless = true
 enableXsrfProtection = true
-enableCORS = false
+enableCORS = true
 
 [browser]
 gatherUsageStats = false

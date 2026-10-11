@@ -107,7 +107,7 @@ st.markdown(
     .st-key-admin_login_card .stButton button {{ width:100%; min-height:46px; }}
     .section-title {{ margin:26px 0 12px; padding-left:12px; border-left:5px solid {MENTA};
         color:{TINTA}; font-size:18px; font-weight:800; letter-spacing:.2px; }}
-    .status-card, .admin-card {{ background:white; border:1px solid {LINEA}; border-radius:24px;
+    .status-card {{ background:white; border:1px solid {LINEA}; border-radius:24px;
         padding:20px 22px; box-shadow:0 12px 26px -20px rgba(17,17,19,.35); height:100%; }}
     .status-row {{ display:flex; align-items:center; justify-content:space-between; gap:14px; }}
     .status-title {{ color:{TINTA}; font-size:15px; font-weight:800; }}
@@ -566,23 +566,3 @@ with tab_diagnostico:
             st.info("No hay archivos CSV locales.")
         else:
             st.dataframe(archivos, width="stretch", hide_index=True)
-
-    st.markdown('<div class="section-title">Funciones administrativas disponibles</div>', unsafe_allow_html=True)
-    st.markdown(
-        """
-        <div class="admin-card">
-            <b>Incluidas ahora</b><br><br>
-            • Estado de Google Drive y Sheets.<br>
-            • Capacidad y rotación del libro activo.<br>
-            • Cuota diaria TomTom por VPS.<br>
-            • Ejecuciones, errores y descarga de registros.<br>
-            • Horarios asignados por servidor.<br>
-            • Diagnóstico de PostgreSQL, archivos y configuración.<br>
-            • Actualización manual de indicadores sin ejecutar nuevas llamadas a TomTom.<br><br>
-            <b>Siguiente etapa recomendada</b><br><br>
-            Gestión de usuarios y roles, alertas automáticas, rotación asistida de llaves y
-            ejecución manual del ETL con confirmación y auditoría.
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )

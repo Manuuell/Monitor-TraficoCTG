@@ -856,6 +856,11 @@ if not token_st["ok"]:
         </div>
     </div>""", unsafe_allow_html=True)
 
+# Cuanto retroceder buscando el ultimo snapshot valido cuando la captura
+# lleva caida mas de un dia. Acota el costo de la lectura de respaldo.
+DIAS_RESPALDO_SNAPSHOT = 7
+
+
 def _mascara_ok(df: pd.DataFrame) -> pd.Series:
     """
     Filas cuya consulta a TomTom fue exitosa. La columna 'ok' llega como bool
@@ -925,7 +930,15 @@ if not df_snapshot.empty and not _mascara_ok(df_snapshot).any():
         "hora_valida": None,
     }
 
+    # La ventana normal es de 1 dia. Cuando la caida se prolonga mas que eso,
+    # el ultimo dato bueno queda fuera y el mapa se quedaba sin nada que
+    # mostrar. Solo entonces se paga una lectura mas amplia.
     _pool = _df_sheets_1d if not _df_sheets_1d.empty else df_actual
+    if _pool.empty or not _mascara_ok(_pool).any():
+        _pool_ancho = cargar_desde_sheets(n_dias=DIAS_RESPALDO_SNAPSHOT)
+        if not _pool_ancho.empty and _mascara_ok(_pool_ancho).any():
+            _pool = _pool_ancho
+
     if not _pool.empty and "consultation_time" in _pool.columns:
         _ok_pool = _pool[_mascara_ok(_pool)]
         if not _ok_pool.empty:
@@ -1079,11 +1092,14 @@ if snapshot_degradado:
     _http_txt = f"HTTP {_sd['http']} · " if _sd["http"] else ""
 
     if _sd["label_valido"]:
-        _horas = (datetime.now() - _sd["hora_valida"]).total_seconds() / 3600
+        _seg = (datetime.now() - _sd["hora_valida"]).total_seconds()
+        _dias, _resto = divmod(max(_seg, 0), 86400)
+        _horas = _resto / 3600
+        _antig = f"{int(_dias)} d {_horas:.0f} h" if _dias else f"{_horas:.1f} h"
         _respaldo = (
             f"El mapa y el analisis muestran el ultimo dato bueno: "
             f"<b style='color:{UTB_WHITE};'>{_sd['label_valido']}</b> "
-            f"({_horas:.1f} h de antiguedad). No es la situacion actual del trafico."
+            f"(hace {_antig}). No es la situacion actual del trafico."
         )
     else:
         _respaldo = "No hay ninguna corrida reciente con datos validos para mostrar."

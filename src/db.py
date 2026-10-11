@@ -119,6 +119,10 @@ def crear_esquema() -> None:
             f'CREATE INDEX IF NOT EXISTS idx_{TABLA}_nodo '
             f'ON {TABLA} ("id_nodo");'
         ))
+        conn.execute(text(
+            f'CREATE INDEX IF NOT EXISTS idx_{TABLA}_nodo_ct '
+            f'ON {TABLA} ("id_nodo", "consultation_time");'
+        ))
 
 
 def insertar_dataframe(df: pd.DataFrame) -> int:
@@ -181,6 +185,34 @@ def leer_rango(fecha_ini: date, fecha_fin: date) -> pd.DataFrame:
         print(f"  [DB] Error leyendo rango: {e}")
         return pd.DataFrame()
 
+    return _postprocesar_lectura(df)
+
+
+def leer_nodo_rango(id_nodo: str, fecha_ini: date, fecha_fin: date) -> pd.DataFrame:
+    """Lee solo las columnas analiticas de un nodo dentro del rango pedido.
+
+    Un resultado vacio es valido y no significa que PostgreSQL haya fallado;
+    por eso los errores se propagan al dashboard, que decide si usa el
+    respaldo de Sheets/CSV. La consulta aprovecha el indice compuesto por
+    nodo y fecha y evita transferir todo el historico para dibujar la vista.
+    """
+    query = text(
+        f'SELECT "id_nodo", "nombre_nodo", ok, "currentSpeed", '
+        f'"freeFlowSpeed", "delay_abs_seg", "velocidad_ratio", '
+        f'"consultation_time" FROM {TABLA} '
+        f'WHERE "id_nodo" = :id_nodo '
+        f'AND "consultation_time" >= :ini AND "consultation_time" < :fin '
+        f'ORDER BY "consultation_time";'
+    )
+    df = pd.read_sql(
+        query,
+        get_engine(),
+        params={
+            "id_nodo": str(id_nodo),
+            "ini": fecha_ini,
+            "fin": fecha_fin + timedelta(days=1),
+        },
+    )
     return _postprocesar_lectura(df)
 
 

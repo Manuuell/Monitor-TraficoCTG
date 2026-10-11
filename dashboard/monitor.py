@@ -31,23 +31,51 @@ st.set_page_config(
 )
 
 # ============================================================
-# COLORES UTB — Tema azul completo
+# PALETA DEL DASHBOARD R (app_prueba.R) — tema claro azul + menta
 # ============================================================
-UTB_NAVY       = "#003087"           # Azul UTB principal
-UTB_NAVY_DARK  = "#001f5c"           # Azul UTB oscuro (fondo)
-UTB_NAVY_LIGHT = "#0a3272"           # Superficies / tarjetas
-UTB_BLUE_LIGHT = "#1e73be"           # Azul intermedio (hover, detalles)
-UTB_CYAN       = "#5eead4"           # Acento teal
-UTB_CYAN_DARK  = "#14b8a6"           # Acento teal oscuro
-UTB_BG         = "#001a4d"           # Fondo de pagina (azul mas oscuro)
-UTB_BORDER     = "rgba(255,255,255,0.12)"   # Bordes sutiles
-UTB_WHITE      = "#ffffff"           # Texto principal
-UTB_GRAY       = "rgba(255,255,255,0.6)"    # Texto secundario
+R_AZUL_OSC    = "#12307a"   # --blue-d / --ink: tinta y titulos
+R_AZUL        = "#1f48b8"   # --blue: barra lateral, acentos de texto
+R_AZUL_MED    = "#2f66e0"   # --blue-m
+R_MENTA       = "#2dd4bf"   # --mint: bordes y detalles
+R_MENTA_OSC   = "#14b8a6"   # --mint-d
+R_MENTA_CLARA = "#5eead4"   # acento sobre los fondos azules (encabezado, barra lateral)
+R_LINEA       = "#ececf0"   # --line: divisores y bordes de controles
+R_TENUE       = "#58585d"   # --muted: texto secundario
+R_SOMBRA      = "0 1px 2px rgba(17,17,19,.06), 0 12px 28px -12px rgba(17,17,19,.14)"
 
-COLOR_FLUIDO        = "#22c55e"   # verde   — ratio > 0.90
-COLOR_MODERADO      = "#a3e635"   # lima    — 0.75 a 0.90
-COLOR_LENTO         = "#f59e0b"   # naranja — 0.60 a 0.75
-COLOR_CONGESTIONADO = "#ef4444"   # rojo    — ratio < 0.60
+# Mismos nombres que el original para no reescribir cada uso. Cambia el
+# papel de algunos: UTB_WHITE pasa a ser la tinta (texto principal),
+# UTB_NAVY_LIGHT la superficie blanca de las tarjetas y UTB_CYAN el acento
+# de texto (la menta no se lee sobre blanco; queda para bordes y barras).
+UTB_NAVY       = R_AZUL
+UTB_NAVY_DARK  = R_AZUL_OSC
+UTB_NAVY_LIGHT = "#ffffff"
+UTB_BLUE_LIGHT = R_AZUL_MED
+UTB_CYAN       = R_AZUL
+UTB_CYAN_DARK  = R_MENTA_OSC
+UTB_BG         = "#fcfcfd"
+UTB_BORDER     = R_LINEA
+UTB_WHITE      = "#111113"
+UTB_GRAY       = R_TENUE
+SUPERFICIE_SUAVE = "#f6f6f8"   # avisos y leyendas sobre el fondo claro
+SERIE_ACTUAL   = "#3b82f6"     # COL$azul: serie principal de las graficas
+SERIE_LIBRE    = "#94a3b8"     # COL$gris: velocidad de flujo libre
+
+# Colores de nivel del R por nombre (Fluido verde, Moderado ambar,
+# Congestionado rojo). "Lento" no existe en el R: toma su naranja (bg-orange).
+# Los umbrales siguen siendo los del asesor (0.90 / 0.75 / 0.60).
+COLOR_FLUIDO        = "#10b981"   # verde esmeralda — ratio > 0.90
+COLOR_MODERADO      = "#f59e0b"   # ambar           — 0.75 a 0.90
+COLOR_LENTO         = "#f97316"   # naranja         — 0.60 a 0.75
+COLOR_CONGESTIONADO = "#ef4444"   # rojo            — ratio < 0.60
+
+# Variantes de alto contraste para texto sobre superficies claras. Los tonos
+# anteriores se conservan en barras, puntos, bordes y mapas.
+TEXTO_FLUIDO        = "#047857"
+TEXTO_MODERADO      = "#92400e"
+TEXTO_LENTO         = "#c2410c"
+TEXTO_CONGESTIONADO = "#b91c1c"
+TEXTO_MENTA         = "#0f766e"
 
 # Umbrales de clasificacion de congestion (revisados tras feedback del asesor:
 # el esquema anterior 0.75/0.50 subestimaba nodos como Bazurto con ratio ~0.6)
@@ -67,6 +95,12 @@ def clasificar_ratio(r):
     if r > UMBRAL_LENTO:
         return COLOR_LENTO, "Lento"
     return COLOR_CONGESTIONADO, "Congestionado"
+
+def _rgba(hex_color: str, alfa: float) -> str:
+    """'#rrggbb' -> 'rgba(r,g,b,alfa)' para fondos translucidos."""
+    h = hex_color.lstrip("#")
+    return f"rgba({int(h[0:2], 16)},{int(h[2:4], 16)},{int(h[4:6], 16)},{alfa})"
+
 
 NUMERIC_COLS = [
     "lat", "lon", "currentSpeed", "freeFlowSpeed", "currentTravelTime",
@@ -88,14 +122,14 @@ def cargar_logo_utb() -> str:
 LOGO_UTB_SVG = cargar_logo_utb()
 
 # ============================================================
-# CSS PERSONALIZADO — Tema azul UTB completo + DM Sans
+# CSS PERSONALIZADO — Paleta del dashboard R + Inter
 # ============================================================
 st.markdown(f"""
 <style>
-    @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
 
     .stApp, .stApp p, .stApp h1, .stApp h2, .stApp h3, .stApp h4,
-    .stApp label, .stApp a, .stApp td, .stApp th,
+    .stApp label, .stApp a, .stApp td, .stApp th, .stApp button, .stApp input,
     .stApp [data-testid="stMarkdown"],
     .stApp [data-testid="stMetricLabel"],
     .stApp [data-testid="stMetricValue"],
@@ -105,214 +139,560 @@ st.markdown(f"""
     [data-testid="stSidebar"] h2,
     [data-testid="stSidebar"] h3,
     [data-testid="stSidebar"] label {{
-        font-family: 'DM Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
+        font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif !important;
     }}
 
-    /* ── Fondo general ── */
+    /* ── Fondo general (.content-wrapper del R) ── */
     .stApp {{
-        background: linear-gradient(160deg, {UTB_NAVY_DARK} 0%, {UTB_BG} 100%);
+        background: #fcfcfd;
+        color: #111113;
+        color-scheme: light;
     }}
     .block-container {{
         padding-top: 1.5rem;
-        padding-bottom: 1.5rem;
+        padding-bottom: 2rem;
+        max-width: 1480px;
     }}
 
-    /* ── Header ── */
+    /* ── Encabezado grande (.hero del R) ── */
     .utb-header {{
-        background: linear-gradient(135deg, {UTB_NAVY} 0%, {UTB_NAVY_DARK} 100%);
-        padding: 20px 28px;
-        border-radius: 10px;
-        margin-bottom: 24px;
+        background: linear-gradient(120deg, #1b3fa6 0%, #2a5bd0 55%, #3f7cf0 100%);
+        padding: 28px 34px;
+        border-radius: 36px;
+        margin-bottom: 28px;
         display: flex;
         justify-content: space-between;
         align-items: center;
-        box-shadow: 0 4px 20px rgba(0,0,0,0.3);
-        border: 1px solid {UTB_BORDER};
+        gap: 28px;
+        flex-wrap: wrap;
+        box-shadow: 0 1px 2px rgba(17,17,19,.06), 0 18px 36px -18px rgba(31,72,184,.38);
         position: relative;
         overflow: hidden;
+        isolation: isolate;
     }}
     .utb-header::before {{
         content: "";
         position: absolute;
-        top: -60px; right: -60px;
-        width: 220px; height: 220px;
-        background: radial-gradient(circle, rgba(94,234,212,0.15) 0%, transparent 70%);
+        z-index: -1;
+        width: 360px;
+        height: 360px;
+        right: -110px;
+        top: -205px;
+        border: 1px solid rgba(255,255,255,.18);
         border-radius: 50%;
+        box-shadow: 0 0 0 46px rgba(255,255,255,.035), 0 0 0 92px rgba(255,255,255,.025);
+    }}
+    .utb-header::after {{
+        content: "";
+        position: absolute;
+        z-index: -1;
+        inset: 0;
+        opacity: .13;
+        background-image: radial-gradient(rgba(255,255,255,.8) .8px, transparent .8px);
+        background-size: 18px 18px;
+        mask-image: linear-gradient(90deg, transparent 28%, #000 68%, transparent 100%);
+    }}
+    .utb-header-content {{
+        position: relative;
+        z-index: 2;
+        min-width: 410px;
+    }}
+    .utb-eyebrow {{
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 9px;
+        color: #dbe7ff;
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: .13em;
+        text-transform: uppercase;
+    }}
+    .utb-live-dot {{
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: {R_MENTA_CLARA};
+        box-shadow: 0 0 0 5px rgba(94,234,212,.16);
     }}
     .utb-brand {{
-        color: #ffffff;
-        font-size: 26px;
-        font-weight: 700;
-        margin: 0;
-        letter-spacing: -0.5px;
+        color: #ffffff !important;
+        font-size: 44px !important;
+        font-weight: 800 !important;
+        margin: 0 0 14px !important;
+        padding: 0 !important;
+        letter-spacing: -1.6px;
+        line-height: 1.1 !important;
     }}
-    .utb-brand-accent {{ color: {UTB_CYAN}; font-weight: 700; }}
-    .utb-subtitle {{
-        color: {UTB_GRAY};
-        font-size: 14px;
-        margin: 4px 0 0 0;
-        font-weight: 400;
+    .utb-brand-accent {{ color: {R_MENTA_CLARA}; font-weight: 800; }}
+    .utb-header-chips {{
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+    }}
+    .utb-header-chip {{
+        display: inline-flex;
+        align-items: center;
+        min-height: 28px;
+        padding: 5px 11px;
+        border: 1px solid rgba(255,255,255,.20);
+        border-radius: 999px;
+        background: rgba(255,255,255,.10);
+        color: #eef4ff;
+        font-size: 11px;
+        font-weight: 600;
+        letter-spacing: .02em;
+        backdrop-filter: blur(6px);
+    }}
+    .utb-route {{
+        position: absolute;
+        z-index: 1;
+        top: 50%;
+        right: 245px;
+        width: 215px;
+        height: 84px;
+        transform: translateY(-50%);
+        opacity: .78;
+        pointer-events: none;
+    }}
+    .utb-status {{
+        position: relative;
+        z-index: 2;
+        min-width: 210px;
+        text-align: right;
+    }}
+    .utb-status-label {{
+        margin-bottom: 7px;
+        color: rgba(255,255,255,.68);
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: .12em;
+        text-transform: uppercase;
     }}
     .utb-clock {{
-        color: {UTB_NAVY_DARK};
+        color: {R_AZUL_OSC};
         font-size: 14px;
         font-weight: 600;
-        background: rgba(255,255,255,0.92);
-        padding: 8px 16px;
-        border-radius: 20px;
-        border: 1px solid rgba(255,255,255,0.3);
-        box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+        background: #ffffff;
+        padding: 9px 22px;
+        border-radius: 999px;
+        display: inline-block;
     }}
+    .utb-next-run {{
+        margin-top: 9px;
+        color: #dbe7ff;
+        font-size: 12px;
+    }}
+    .utb-next-run span {{ color: {R_MENTA_CLARA}; font-weight: 700; }}
 
-    /* ── Métricas ── */
+    /* ── Tarjetas de indicadores (.small-box del R) ── */
     [data-testid="stMetric"] {{
-        background: {UTB_NAVY_LIGHT};
-        padding: 20px 24px;
-        border-radius: 12px;
-        border: 1px solid {UTB_BORDER};
-        box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+        background: #ffffff;
+        padding: 22px 24px 20px;
+        border-radius: 28px;
+        border: 0;
+        box-shadow: {R_SOMBRA};
         transition: all 0.2s;
+        position: relative;
+        overflow: hidden;
+    }}
+    [data-testid="stMetric"]::before {{
+        content: "";
+        display: block;
+        width: 34px;
+        height: 5px;
+        margin-bottom: 15px;
+        border-radius: 999px;
+        background: linear-gradient(90deg, {R_AZUL_MED}, {R_MENTA});
     }}
     [data-testid="stMetric"]:hover {{
-        border-color: {UTB_CYAN};
-        box-shadow: 0 4px 16px rgba(94,234,212,0.15);
+        box-shadow: 0 2px 4px rgba(17,17,19,.07), 0 20px 34px -14px rgba(17,17,19,.2);
         transform: translateY(-2px);
     }}
-    [data-testid="stMetricLabel"] {{
-        color: {UTB_GRAY} !important;
-        font-size: 12px !important;
+    [data-testid="stMetricLabel"], [data-testid="stMetricLabel"] p {{
+        color: {R_TENUE} !important;
+        font-size: 13px !important;
         font-weight: 600 !important;
-        text-transform: uppercase;
-        letter-spacing: 0.8px;
+        text-transform: none;
+        letter-spacing: .02em;
     }}
     [data-testid="stMetricValue"] {{
-        color: {UTB_WHITE} !important;
-        font-size: 32px !important;
+        color: {R_AZUL_OSC} !important;
+        font-size: 34px !important;
         font-weight: 700 !important;
+        letter-spacing: -1px;
     }}
-    [data-testid="stMetricDelta"] {{ color: {UTB_CYAN} !important; font-weight: 600 !important; }}
 
-    /* ── Sidebar ── */
-    [data-testid="stSidebar"] {{
-        background: {UTB_NAVY} !important;
-        border-right: 1px solid {UTB_BORDER};
+    /* ── Etiquetas y campos (controles del R) ── */
+    .stSelectbox label, .stTextInput label, .stDateInput label,
+    .stSelectbox label p, .stTextInput label p, .stDateInput label p {{
+        color: {R_TENUE} !important;
+        font-size: 11px !important;
+        font-weight: 700 !important;
+        text-transform: uppercase;
+        letter-spacing: 0.7px;
     }}
-    [data-testid="stSidebar"] * {{ color: rgba(255,255,255,0.85) !important; }}
+    .stApp [data-baseweb="select"] > div,
+    .stApp [data-baseweb="input"] {{
+        background: #f7faff !important;
+        border-color: #cbd9f3 !important;
+        border-radius: 10px !important;
+    }}
+    .stApp [data-baseweb="input"] > div, .stApp input {{ background: transparent !important; }}
+    [data-testid="stDataFrame"] {{
+        background: #ffffff;
+        border-radius: 24px;
+        border: 0;
+        box-shadow: {R_SOMBRA};
+        overflow: hidden;
+    }}
+
+    /* ── Graficas y mapas en caja blanca (.box del R) ── */
+    [data-testid="stPlotlyChart"] {{
+        background: #ffffff;
+        border: 0;
+        border-radius: 28px;
+        box-shadow: {R_SOMBRA};
+        padding: 14px 16px 10px;
+    }}
+    iframe[title="streamlit_folium.st_folium"] {{
+        border: 0 !important;
+        border-radius: 28px;
+        box-shadow: {R_SOMBRA};
+    }}
+
+    /* ── Leyenda editorial del índice de fluidez ── */
+    .flow-legend {{
+        position: relative;
+        overflow: hidden;
+        margin-top: 10px;
+        padding: 18px;
+        background: #ffffff;
+        border: 1px solid #e7eaf0;
+        border-radius: 22px;
+        box-shadow: 0 14px 34px -28px rgba(18,48,122,.55);
+    }}
+    .flow-legend::after {{
+        content: "";
+        position: absolute;
+        width: 180px;
+        height: 180px;
+        right: -105px;
+        top: -120px;
+        border-radius: 50%;
+        border: 1px solid rgba(47,102,224,.12);
+        pointer-events: none;
+    }}
+    .flow-legend-head {{
+        position: relative;
+        z-index: 1;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 14px;
+        margin-bottom: 14px;
+    }}
+    .flow-title-group {{ display: flex; align-items: center; gap: 10px; min-width: 0; }}
+    .flow-title-icon {{
+        width: 34px;
+        height: 34px;
+        display: grid;
+        place-items: center;
+        flex: 0 0 34px;
+        color: {R_AZUL};
+        background: #edf3ff;
+        border-radius: 11px;
+        font-size: 17px;
+        font-weight: 800;
+    }}
+    .flow-title {{
+        color: {R_AZUL};
+        font-size: 12px;
+        font-weight: 800;
+        letter-spacing: 1.35px;
+        text-transform: uppercase;
+    }}
+    .flow-subtitle {{ color: {R_TENUE}; font-size: 11px; margin-top: 2px; }}
+    .flow-formula {{
+        max-width: 560px;
+        padding: 8px 12px;
+        color: {R_TENUE};
+        background: #f6f8fc;
+        border: 1px solid #e4e9f3;
+        border-radius: 999px;
+        font-size: 11px;
+        line-height: 1.35;
+        text-align: right;
+    }}
+    .flow-formula b {{ color: {R_AZUL_OSC}; }}
+    .flow-scale {{ display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 10px; }}
+    .flow-level {{
+        position: relative;
+        min-width: 0;
+        min-height: 112px;
+        padding: 14px 15px 13px;
+        background: linear-gradient(145deg,#ffffff 0%,var(--flow-soft) 100%);
+        border: 1px solid color-mix(in srgb,var(--flow-color) 28%,#ffffff);
+        border-top: 4px solid var(--flow-color);
+        border-radius: 16px;
+        box-shadow: 0 12px 24px -24px var(--flow-color);
+        transition: transform .16s ease, box-shadow .16s ease;
+    }}
+    .flow-level:hover {{ transform: translateY(-2px); box-shadow: 0 16px 28px -22px var(--flow-color); }}
+    .flow-level-head {{ display: flex; align-items: center; gap: 8px; }}
+    .flow-dot {{
+        width: 10px;
+        height: 10px;
+        flex: 0 0 10px;
+        border-radius: 50%;
+        background: var(--flow-color);
+        box-shadow: 0 0 0 4px var(--flow-soft);
+    }}
+    .flow-level-name {{ color: {UTB_WHITE}; font-size: 14px; font-weight: 800; }}
+    .flow-range {{ color: {R_AZUL_OSC}; font-size: 20px; font-weight: 800; letter-spacing: -.3px; margin-top: 13px; }}
+    .flow-note {{ color: {R_TENUE}; font-size: 11px; line-height: 1.35; margin-top: 3px; }}
+    @media (max-width: 980px) {{
+        .flow-legend-head {{ align-items: flex-start; flex-direction: column; }}
+        .flow-formula {{ max-width: none; text-align: left; border-radius: 12px; }}
+        .flow-scale {{ grid-template-columns: repeat(2,minmax(0,1fr)); }}
+    }}
+    @media (max-width: 560px) {{
+        .flow-legend {{ padding: 14px; border-radius: 18px; }}
+        .flow-scale {{ grid-template-columns: 1fr; }}
+    }}
+
+    /* ── Barra lateral (degradado azul del R) ── */
+    [data-testid="stSidebar"] {{
+        background: linear-gradient(180deg, #1f48b8 0%, #2a5bd0 60%, #3b73e6 100%) !important;
+        border-right: 0;
+    }}
+    [data-testid="stSidebar"] > div {{ background: transparent !important; }}
+    [data-testid="stSidebarHeader"] {{
+        min-height: 44px !important;
+        height: 44px !important;
+        padding: 4px 10px 0 !important;
+    }}
+    [data-testid="stSidebarUserContent"] {{ padding-top: 0 !important; }}
+    .utb-sidebar-logo {{
+        text-align: center;
+        padding: 8px 16px 18px;
+        border-bottom: 1px solid rgba(255,255,255,0.15);
+        margin-bottom: 20px;
+    }}
+    [data-testid="stSidebar"] * {{ color: #dbe7ff !important; }}
     [data-testid="stSidebar"] h1,
     [data-testid="stSidebar"] h2,
-    [data-testid="stSidebar"] h3 {{ color: {UTB_CYAN} !important; }}
+    [data-testid="stSidebar"] h3 {{ color: #ffffff !important; }}
+    [data-testid="stSidebar"] hr {{ border-color: rgba(255,255,255,0.2) !important; }}
     [data-testid="stSidebar"] [data-testid="stExpander"] {{
-        background: rgba(255,255,255,0.06);
-        border: 1px solid {UTB_BORDER};
-        border-radius: 8px;
+        background: rgba(255,255,255,0.08);
+        border: 1px solid rgba(255,255,255,0.2);
+        border-radius: 10px;
     }}
-    [data-testid="stSidebar"] select,
-    [data-testid="stSidebar"] input {{
-        background: rgba(255,255,255,0.08) !important;
-        border-color: {UTB_BORDER} !important;
-        color: white !important;
+    [data-testid="stSidebar"] [data-testid="stExpander"] details,
+    [data-testid="stSidebar"] [data-testid="stExpander"] summary {{
+        background: transparent !important;
+        border: 0 !important;
     }}
+    [data-testid="stSidebar"] [data-baseweb="select"] > div {{
+        background: rgba(255,255,255,0.12) !important;
+        border: 1px solid rgba(255,255,255,0.28) !important;
+        border-radius: 10px !important;
+    }}
+    [data-testid="stSidebar"] [data-baseweb="select"] svg {{ fill: #ffffff !important; }}
+    /* Los botones tipo pildora mantienen contraste sobre la barra lateral */
+    [data-testid="stSidebar"] .stButton button,
+    [data-testid="stSidebar"] .stButton button * {{ color: #ffffff !important; }}
 
-    /* ── Tabs ── */
+    /* ── Pestañas (.nav-tabs-custom del R) ── */
     .stTabs [data-baseweb="tab-list"] {{
-        gap: 8px;
-        background: transparent;
-        border-bottom: 1px solid {UTB_BORDER};
+        gap: 6px;
+        background: #ffffff;
+        border: 0;
+        border-radius: 999px;
+        padding: 6px;
+        box-shadow: {R_SOMBRA};
+        overflow-x: auto;
     }}
     .stTabs [data-baseweb="tab"] {{
         background: transparent;
-        border-radius: 8px 8px 0 0;
-        padding: 12px 24px;
-        color: {UTB_GRAY};
+        border-radius: 999px;
+        padding: 10px 20px;
+        color: {R_TENUE};
         font-weight: 600;
         font-size: 14px;
     }}
+    .stTabs [data-baseweb="tab"] p {{ color: inherit; font-weight: 600; }}
     .stTabs [aria-selected="true"] {{
-        background: {UTB_NAVY_LIGHT} !important;
-        color: {UTB_CYAN} !important;
-        border-bottom: 2px solid {UTB_CYAN};
+        background: #111113 !important;
+        color: #ffffff !important;
+        box-shadow: none;
+    }}
+    .stTabs [data-baseweb="tab-highlight"], .stTabs [data-baseweb="tab-border"] {{
+        display: none;
     }}
 
-    /* ── Botones ── */
-    .stButton button {{
-        background: {UTB_CYAN};
-        color: {UTB_NAVY_DARK};
-        border: none;
-        border-radius: 8px;
-        font-weight: 700;
+    /* ── Botones (.btn-success del R) ── */
+    .stButton button, .stDownloadButton button {{
+        background: #111113;
+        color: #ffffff;
+        border: 1px solid #111113;
+        border-radius: 999px;
+        font-weight: 600;
         padding: 8px 20px;
         transition: all 0.2s;
     }}
-    .stButton button:hover {{
-        background: {UTB_CYAN_DARK};
+    .stButton button p, .stDownloadButton button p {{ color: inherit; font-weight: 600; }}
+    .stButton button:hover, .stDownloadButton button:hover {{
+        background: {R_AZUL};
+        border-color: {R_AZUL};
+        color: #ffffff;
         transform: translateY(-1px);
-        box-shadow: 0 4px 12px rgba(94,234,212,0.3);
     }}
 
-    /* ── Labels / inputs ── */
-    .stSelectbox label, .stTextInput label, .stDateInput label {{
-        color: {UTB_GRAY} !important;
-        font-size: 12px !important;
-        font-weight: 600 !important;
-        text-transform: uppercase;
-        letter-spacing: 0.5px;
-    }}
-    [data-testid="stDataFrame"] {{
-        background: {UTB_NAVY_LIGHT};
-        border-radius: 8px;
-        border: 1px solid {UTB_BORDER};
-    }}
-
-    /* ── Misc ── */
-    hr {{ border-color: {UTB_BORDER} !important; }}
-    .utb-footer {{
-        background: {UTB_NAVY_LIGHT};
-        padding: 16px;
-        border-radius: 8px;
-        margin-top: 24px;
-        text-align: center;
-        color: {UTB_GRAY};
-        font-size: 12px;
-        border-top: 2px solid {UTB_CYAN};
-    }}
-    h2 {{ color: {UTB_WHITE}; font-weight: 700; margin-top: 0; }}
+    /* ── Titulos de seccion (.sec-head del R): tinta, mayusculas, filete menta ── */
+    hr {{ border-color: {R_LINEA} !important; }}
+    h2 {{ color: #111113; font-weight: 700; letter-spacing: -.02em; margin-top: 0; }}
     h3 {{
-        color: {UTB_CYAN};
-        font-size: 16px;
-        font-weight: 600;
-        text-transform: uppercase;
-        letter-spacing: 0.8px;
-        margin-bottom: 12px;
+        color: #111113 !important;
+        font-size: 20px !important;
+        font-weight: 700 !important;
+        text-transform: none;
+        letter-spacing: -.02em;
+        border-left: 0;
+        padding: 0 !important;
+        margin: 16px 0 14px !important;
     }}
     .badge-ok {{
-        background: rgba(52,211,153,0.15); color: {COLOR_FLUIDO};
-        padding: 4px 10px; border-radius: 4px; font-size: 12px; font-weight: 600;
+        background: rgba(16,185,129,0.12); color: {TEXTO_FLUIDO};
+        padding: 4px 10px; border-radius: 6px; font-size: 12px; font-weight: 600;
     }}
     .badge-error {{
-        background: rgba(248,113,113,0.15); color: {COLOR_CONGESTIONADO};
-        padding: 4px 10px; border-radius: 4px; font-size: 12px; font-weight: 600;
+        background: rgba(239,68,68,0.12); color: {TEXTO_CONGESTIONADO};
+        padding: 4px 10px; border-radius: 6px; font-size: 12px; font-weight: 600;
     }}
     #MainMenu {{visibility: hidden;}}
     footer {{visibility: hidden;}}
     [data-testid="stHeader"] {{ background: transparent; height: 0; }}
-    [data-testid="collapsedControl"] {{
-        background: {UTB_CYAN} !important;
+    [data-testid="stToolbar"], [data-testid="stDecoration"],
+    [data-testid="stSidebarNav"] {{ display: none !important; }}
+    h2, h3 {{ scroll-margin-top: 1rem; }}
+    [data-testid="stExpandSidebarButton"] {{
+        background: {R_MENTA} !important;
         border-radius: 50%;
-        padding: 8px;
-        top: 14px; left: 14px;
-        z-index: 999;
-        box-shadow: 0 4px 12px rgba(94,234,212,0.4);
-        transition: all 0.2s;
+        box-shadow: 0 4px 12px rgba(45,212,191,0.4);
     }}
-    [data-testid="collapsedControl"]:hover {{
-        background: {UTB_CYAN_DARK} !important;
-        transform: scale(1.1);
+    [data-testid="stExpandSidebarButton"] svg {{
+        color: {R_AZUL_OSC} !important;
+        fill: {R_AZUL_OSC} !important;
     }}
-    [data-testid="collapsedControl"] svg {{
-        color: {UTB_NAVY_DARK} !important;
-        fill: {UTB_NAVY_DARK} !important;
+    [data-testid="stSidebarCollapseButton"] button {{ color: #ffffff !important; }}
+
+    /* ── Footer editorial inspirado en la composicion de Innvita ── */
+    .dashboard-footer {{
+        margin: 44px 0 4px;
+        padding: 42px 44px 24px;
+        border-radius: 40px;
+        background: #232326;
+        color: #ffffff;
+        overflow: hidden;
     }}
-    [data-testid="stSidebarCollapseButton"] button {{ color: {UTB_CYAN} !important; }}
+    .dashboard-footer * {{ font-family: 'Inter', system-ui, sans-serif !important; }}
+    .footer-brand {{
+        margin: 0 0 8px;
+        color: #ffffff;
+        font-size: 28px;
+        line-height: 1.1;
+        font-weight: 700;
+        letter-spacing: -.04em;
+    }}
+    .footer-brand span {{ color: {R_MENTA_CLARA}; }}
+    .footer-lead {{
+        max-width: 650px;
+        margin: 0 0 34px;
+        color: #a9a9af !important;
+        font-size: 19px;
+        line-height: 1.45;
+        letter-spacing: -.01em;
+    }}
+    .footer-lead strong {{ color: #ffffff; font-weight: 700; }}
+    .footer-grid {{
+        display: grid;
+        grid-template-columns: 1.1fr 1.25fr 1.1fr;
+        gap: 34px;
+        padding: 30px 0;
+        border-top: 1px solid rgba(255,255,255,.10);
+        border-bottom: 1px solid rgba(255,255,255,.10);
+    }}
+    .footer-kicker {{
+        margin-bottom: 12px;
+        color: #ffffff;
+        font-size: 13px;
+        font-weight: 700;
+        letter-spacing: .02em;
+    }}
+    .footer-copy {{
+        margin: 0;
+        color: #94949b !important;
+        font-size: 13px;
+        line-height: 1.7;
+    }}
+    .footer-bottom {{
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 16px;
+        padding-top: 20px;
+        color: #77777f;
+        font-size: 11px;
+        letter-spacing: .02em;
+    }}
+    .footer-admin-link {{
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        flex-shrink: 0;
+        min-height: 42px;
+        padding: 9px 16px 9px 18px;
+        border-radius: 999px;
+        background: #ffffff;
+        color: #111113 !important;
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: .01em;
+        text-decoration: none !important;
+        transition: transform .2s ease, background .2s ease;
+    }}
+    .footer-admin-link:hover {{
+        background: {R_MENTA_CLARA};
+        color: #111113 !important;
+        transform: translateY(-1px);
+    }}
+    .footer-admin-arrow {{
+        display: grid;
+        place-items: center;
+        width: 24px;
+        height: 24px;
+        border-radius: 50%;
+        background: #111113;
+        color: #ffffff !important;
+        font-size: 14px;
+        line-height: 1;
+    }}
+    @media (max-width: 800px) {{
+        .block-container {{ padding-left: 1rem; padding-right: 1rem; }}
+        .utb-header {{ border-radius: 28px; padding: 26px 24px; }}
+        .utb-header-content {{ min-width: 0; width: 100%; }}
+        .utb-brand {{ font-size: 36px !important; }}
+        .utb-route {{ display: none; }}
+        .utb-status {{ min-width: 0; text-align: left; }}
+        .dashboard-footer {{ margin-left: -1rem; margin-right: -1rem; padding: 34px 24px 22px; border-radius: 32px 32px 0 0; }}
+        .footer-grid {{ grid-template-columns: 1fr; gap: 24px; }}
+        .footer-bottom {{ flex-direction: column; align-items: flex-start; }}
+    }}
+    @media (min-width: 801px) and (max-width: 1120px) {{
+        .utb-route {{ display: none; }}
+    }}
 </style>
 """, unsafe_allow_html=True)
 
@@ -320,17 +700,37 @@ st.markdown(f"""
 # ============================================================
 # UTILIDADES
 # ============================================================
+# tema_plotly del R: fondo transparente (la caja blanca la pone el CSS),
+# tinta azul, rejilla celeste y etiqueta flotante azul oscuro
+REJILLA = "#e3eaf7"
+PLOTLY_CONFIG = {"displayModeBar": False, "responsive": True}
+
+
 def plotly_base(fig, height: int = 340):
     fig.update_layout(
-        paper_bgcolor=UTB_NAVY_LIGHT,
-        plot_bgcolor=UTB_NAVY_DARK,
-        font_color=UTB_WHITE,
-        font_family="DM Sans",
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        font_color="#1e3a6e",
+        font_family="Inter, Segoe UI, Helvetica, Arial, sans-serif",
         height=height,
-        margin=dict(l=0, r=0, t=30, b=0),
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, bgcolor="rgba(0,0,0,0)"),
-        xaxis=dict(gridcolor="rgba(255,255,255,0.08)", zerolinecolor="rgba(255,255,255,0.08)"),
-        yaxis=dict(gridcolor="rgba(255,255,255,0.08)", zerolinecolor="rgba(255,255,255,0.08)"),
+        margin=dict(l=12, r=24, t=30, b=42),
+        legend=dict(
+            orientation="h", yanchor="bottom", y=1.02,
+            bgcolor="rgba(0,0,0,0)", font=dict(color=R_TENUE),
+        ),
+        hoverlabel=dict(bgcolor=R_AZUL_OSC, font=dict(color="#ffffff", size=12)),
+        xaxis=dict(
+            gridcolor=REJILLA, zerolinecolor="#d3def2", linecolor="#c9d6ee",
+            tickfont=dict(color=R_TENUE, size=11),
+            title_font=dict(color=R_AZUL_OSC, size=12),
+            automargin=True,
+        ),
+        yaxis=dict(
+            gridcolor=REJILLA, zerolinecolor="#d3def2", linecolor="#c9d6ee",
+            tickfont=dict(color=R_TENUE, size=11),
+            title_font=dict(color=R_AZUL_OSC, size=12),
+            automargin=True,
+        ),
     )
     return fig
 
@@ -469,55 +869,54 @@ def leyenda_ratio(modo: str = "ratio"):
     modo='proceso'   → explica OK/Error en ejecuciones
     """
     if modo == "ratio":
+        # Escala de fluidez: cuatro tramos de menor a mayor ratio, cada uno con
+        # su nombre y su rango, y la explicacion del indice en una sola linea
+        tramos = [
+            (COLOR_CONGESTIONADO, "Congestionado", f"&lt; {UMBRAL_LENTO:.2f}", "Circulación muy reducida"),
+            (COLOR_LENTO, "Lento", f"{UMBRAL_LENTO:.2f} – {UMBRAL_MODERADO:.2f}", "Velocidad por debajo de lo normal"),
+            (COLOR_MODERADO, "Moderado", f"{UMBRAL_MODERADO:.2f} – {UMBRAL_FLUIDO:.2f}", "Tránsito estable con algunas demoras"),
+            (COLOR_FLUIDO, "Fluido", f"&gt; {UMBRAL_FLUIDO:.2f}", "Circulación cercana al flujo libre"),
+        ]
+        segmentos = "".join(
+            f'<div class="flow-level" style="--flow-color:{color};--flow-soft:{_rgba(color, 0.12)};">'
+            f'<div class="flow-level-head"><span class="flow-dot"></span>'
+            f'<span class="flow-level-name">{nombre}</span></div>'
+            f'<div class="flow-range">{rango}</div>'
+            f'<div class="flow-note">{descripcion}</div></div>'
+            for color, nombre, rango, descripcion in tramos
+        )
         st.markdown(f"""
-        <div style="display:flex;gap:20px;align-items:center;flex-wrap:wrap;
-                    background:rgba(255,255,255,0.05);border-radius:8px;
-                    padding:10px 16px;margin-top:4px;border:1px solid rgba(255,255,255,0.1);">
-            <span style="color:rgba(255,255,255,0.5);font-size:11px;font-weight:700;
-                         letter-spacing:1px;text-transform:uppercase;">Interpretación:</span>
-            <span style="display:flex;align-items:center;gap:6px;font-size:12px;color:rgba(255,255,255,0.85);">
-                <span style="width:12px;height:12px;border-radius:50%;
-                             background:{COLOR_FLUIDO};display:inline-block;flex-shrink:0;"></span>
-                <b style="color:{COLOR_FLUIDO};">Fluido</b>&nbsp;&gt; 0.90
-            </span>
-            <span style="display:flex;align-items:center;gap:6px;font-size:12px;color:rgba(255,255,255,0.85);">
-                <span style="width:12px;height:12px;border-radius:50%;
-                             background:{COLOR_MODERADO};display:inline-block;flex-shrink:0;"></span>
-                <b style="color:{COLOR_MODERADO};">Moderado</b>&nbsp;0.75 – 0.90
-            </span>
-            <span style="display:flex;align-items:center;gap:6px;font-size:12px;color:rgba(255,255,255,0.85);">
-                <span style="width:12px;height:12px;border-radius:50%;
-                             background:{COLOR_LENTO};display:inline-block;flex-shrink:0;"></span>
-                <b style="color:{COLOR_LENTO};">Lento</b>&nbsp;0.60 – 0.75
-            </span>
-            <span style="display:flex;align-items:center;gap:6px;font-size:12px;color:rgba(255,255,255,0.85);">
-                <span style="width:12px;height:12px;border-radius:50%;
-                             background:{COLOR_CONGESTIONADO};display:inline-block;flex-shrink:0;"></span>
-                <b style="color:{COLOR_CONGESTIONADO};">Congestionado</b>&nbsp;&lt; 0.60
-            </span>
-            <span style="color:rgba(255,255,255,0.4);font-size:11px;margin-left:auto;">
-                Ratio = velocidad actual ÷ velocidad libre · 1.0 = sin tráfico · 0.0 = detenido
-            </span>
+        <div class="flow-legend">
+            <div class="flow-legend-head">
+                <div class="flow-title-group">
+                    <span class="flow-title-icon">↗</span>
+                    <div><div class="flow-title">Índice de fluidez</div>
+                    <div class="flow-subtitle">Escala para interpretar el estado de la vía</div></div>
+                </div>
+                <div class="flow-formula"><b>Cómo se calcula:</b> velocidad actual ÷ velocidad libre<br>
+                    <span>1.0 = circulación libre · 0 = vehículo detenido</span></div>
+            </div>
+            <div class="flow-scale">{segmentos}</div>
         </div>
         """, unsafe_allow_html=True)
 
     elif modo == "velocidad":
         st.markdown(f"""
         <div style="display:flex;gap:20px;align-items:center;flex-wrap:wrap;
-                    background:rgba(255,255,255,0.05);border-radius:8px;
-                    padding:10px 16px;margin-top:4px;border:1px solid rgba(255,255,255,0.1);">
-            <span style="color:rgba(255,255,255,0.5);font-size:11px;font-weight:700;
+                    background:{SUPERFICIE_SUAVE};border-radius:8px;
+                    padding:10px 16px;margin-top:4px;border:1px solid {UTB_BORDER};">
+            <span style="color:{UTB_GRAY};font-size:11px;font-weight:700;
                          letter-spacing:1px;text-transform:uppercase;">Interpretación:</span>
-            <span style="display:flex;align-items:center;gap:6px;font-size:12px;color:rgba(255,255,255,0.85);">
-                <span style="width:12px;height:3px;background:{UTB_CYAN};display:inline-block;"></span>
-                <b style="color:{UTB_CYAN};">Velocidad actual</b>&nbsp;— km/h medidos en tiempo real con tráfico
+            <span style="display:flex;align-items:center;gap:6px;font-size:12px;color:{UTB_WHITE};">
+                <span style="width:12px;height:3px;background:{SERIE_ACTUAL};display:inline-block;"></span>
+                <b style="color:{SERIE_ACTUAL};">Velocidad actual</b>&nbsp;— km/h medidos en tiempo real con tráfico
             </span>
-            <span style="display:flex;align-items:center;gap:6px;font-size:12px;color:rgba(255,255,255,0.85);">
-                <span style="width:12px;height:3px;background:rgba(255,255,255,0.4);
-                             display:inline-block;border-top:2px dashed rgba(255,255,255,0.4);"></span>
-                <b style="color:rgba(255,255,255,0.6);">Velocidad libre</b>&nbsp;— km/h que tendría la vía sin tráfico
+            <span style="display:flex;align-items:center;gap:6px;font-size:12px;color:{UTB_WHITE};">
+                <span style="width:12px;height:3px;background:{SERIE_LIBRE};
+                             display:inline-block;border-top:2px dashed {SERIE_LIBRE};"></span>
+                <b style="color:{UTB_GRAY};">Velocidad libre</b>&nbsp;— km/h que tendría la vía sin tráfico
             </span>
-            <span style="color:rgba(255,255,255,0.4);font-size:11px;margin-left:auto;">
+            <span style="color:{UTB_GRAY};font-size:11px;margin-left:auto;">
                 La brecha entre ambas líneas representa el tiempo perdido por congestión
             </span>
         </div>
@@ -526,21 +925,21 @@ def leyenda_ratio(modo: str = "ratio"):
     elif modo == "proceso":
         st.markdown(f"""
         <div style="display:flex;gap:20px;align-items:center;flex-wrap:wrap;
-                    background:rgba(255,255,255,0.05);border-radius:8px;
-                    padding:10px 16px;margin-top:4px;border:1px solid rgba(255,255,255,0.1);">
-            <span style="color:rgba(255,255,255,0.5);font-size:11px;font-weight:700;
+                    background:{SUPERFICIE_SUAVE};border-radius:8px;
+                    padding:10px 16px;margin-top:4px;border:1px solid {UTB_BORDER};">
+            <span style="color:{UTB_GRAY};font-size:11px;font-weight:700;
                          letter-spacing:1px;text-transform:uppercase;">Interpretación:</span>
-            <span style="display:flex;align-items:center;gap:6px;font-size:12px;color:rgba(255,255,255,0.85);">
+            <span style="display:flex;align-items:center;gap:6px;font-size:12px;color:{UTB_WHITE};">
                 <span style="width:12px;height:12px;border-radius:3px;
                              background:{COLOR_FLUIDO};display:inline-block;"></span>
-                <b style="color:{COLOR_FLUIDO};">Consultas OK</b>&nbsp;— nodos respondidos correctamente por TomTom
+                <b style="color:{TEXTO_FLUIDO};">Consultas OK</b>&nbsp;— nodos respondidos correctamente por TomTom
             </span>
-            <span style="display:flex;align-items:center;gap:6px;font-size:12px;color:rgba(255,255,255,0.85);">
+            <span style="display:flex;align-items:center;gap:6px;font-size:12px;color:{UTB_WHITE};">
                 <span style="width:12px;height:12px;border-radius:3px;
                              background:{COLOR_CONGESTIONADO};display:inline-block;"></span>
-                <b style="color:{COLOR_CONGESTIONADO};">Errores</b>&nbsp;— nodos con fallo (red, cuota, API)
+                <b style="color:{TEXTO_CONGESTIONADO};">Errores</b>&nbsp;— nodos con fallo (red, cuota, API)
             </span>
-            <span style="color:rgba(255,255,255,0.4);font-size:11px;margin-left:auto;">
+            <span style="color:{UTB_GRAY};font-size:11px;margin-left:auto;">
                 Cada barra = una ejecución del cron · 113 nodos por ejecución
             </span>
         </div>
@@ -673,7 +1072,7 @@ def calcular_proxima_ejecucion():
 with st.sidebar:
     if LOGO_UTB_SVG:
         st.markdown(f"""
-        <div style="text-align:center;padding:24px 16px;border-bottom:1px solid rgba(255,255,255,0.15);margin-bottom:20px;">
+        <div class="utb-sidebar-logo">
             {LOGO_UTB_SVG}
         </div>
         """, unsafe_allow_html=True)
@@ -1118,14 +1517,14 @@ if snapshot_degradado:
     st.markdown(f"""
     <div style="background:rgba(239,68,68,0.12);border-left:4px solid {COLOR_CONGESTIONADO};
          padding:14px 18px;border-radius:8px;margin-bottom:16px;">
-        <div style="color:{COLOR_CONGESTIONADO};font-size:13px;font-weight:800;
+        <div style="color:{TEXTO_CONGESTIONADO};font-size:13px;font-weight:800;
              letter-spacing:1px;margin-bottom:6px;">
             &#9888; CAPTURA DE DATOS DETENIDA</div>
         <div style="color:{UTB_GRAY};font-size:13px;line-height:1.6;">
             La corrida <b style="color:{UTB_WHITE};">{_sd['label_fallido']}</b> devolvio
-            <b style="color:{COLOR_CONGESTIONADO};">0 de {_sd['nodos']} nodos validos</b>.<br/>
+            <b style="color:{TEXTO_CONGESTIONADO};">0 de {_sd['nodos']} nodos validos</b>.<br/>
             {_http_txt}Respuesta de la API:
-            <code style="background:{UTB_NAVY_LIGHT};color:{COLOR_LENTO};padding:2px 6px;
+            <code style="background:{UTB_NAVY_LIGHT};color:{TEXTO_LENTO};padding:2px 6px;
              border-radius:4px;font-size:12px;">{_motivo_txt}</code><br/>
             {_respaldo}
         </div>
@@ -1511,13 +1910,13 @@ with tab_historia:
                 fig_line = go.Figure()
                 fig_line.add_trace(go.Scatter(
                     x=evo["consultation_time"], y=evo["vel_libre"],
-                    name="Velocidad libre", line=dict(color=UTB_GRAY, dash="dash", width=1.5),
+                    name="Velocidad libre", line=dict(color=SERIE_LIBRE, dash="dash", width=1.5),
                     connectgaps=False,
                 ))
                 fig_line.add_trace(go.Scatter(
                     x=evo["consultation_time"], y=evo["vel_actual"],
-                    name="Velocidad actual", line=dict(color=UTB_CYAN, width=2),
-                    fill="tonexty", fillcolor="rgba(94,234,212,0.12)",
+                    name="Velocidad actual", line=dict(color=SERIE_ACTUAL, width=2),
+                    fill="tonexty", fillcolor="rgba(59,130,246,0.15)",
                     connectgaps=False,
                 ))
                 fig_line.update_layout(xaxis_title="Fecha/Hora", yaxis_title="km/h")
@@ -1577,18 +1976,28 @@ with tab_historia:
                         y=y_labels,
                         colorscale=[[0, COLOR_CONGESTIONADO], [0.5, COLOR_LENTO], [1, COLOR_FLUIDO]],
                         zmin=0, zmax=1,
-                        colorbar=dict(title="Ratio", tickfont=dict(color=UTB_WHITE)),
+                        colorbar=dict(
+                            title=dict(text="Ratio", font=dict(color=R_AZUL_OSC)),
+                            tickfont=dict(color=R_TENUE),
+                        ),
                         hovertemplate="Hora: %{x}<br>Dia: %{y}<br>Ratio: %{z:.2f}<extra></extra>",
                     ))
                     fig_heat.update_layout(
-                        paper_bgcolor=UTB_NAVY_LIGHT,
-                        plot_bgcolor=UTB_NAVY_DARK,
-                        font_color=UTB_WHITE,
-                        font_family="DM Sans",
+                        paper_bgcolor="rgba(0,0,0,0)",
+                        plot_bgcolor="rgba(0,0,0,0)",
+                        font_color="#1e3a6e",
+                        font_family="Inter, Segoe UI, Helvetica, Arial, sans-serif",
                         height=320,
                         margin=dict(l=0, r=0, t=10, b=0),
-                        xaxis=dict(title="Hora del dia", gridcolor="rgba(255,255,255,0.08)"),
-                        yaxis=dict(title="", gridcolor="rgba(255,255,255,0.08)"),
+                        xaxis=dict(
+                            title="Hora del dia", gridcolor=REJILLA,
+                            tickfont=dict(color=R_TENUE),
+                            title_font=dict(color=R_AZUL_OSC), automargin=True,
+                        ),
+                        yaxis=dict(
+                            title="", gridcolor=REJILLA,
+                            tickfont=dict(color=R_TENUE), automargin=True,
+                        ),
                     )
                     st.plotly_chart(fig_heat, use_container_width=True)
 
@@ -1635,7 +2044,7 @@ with tab_historia:
                         name="Velocidad libre",
                         x=df_f["franja"],
                         y=df_f["vel_libre"],
-                        marker_color=UTB_GRAY,
+                        marker_color=SERIE_LIBRE,
                         opacity=0.55,
                     ))
                     fig_franjas.add_trace(go.Bar(
@@ -1654,20 +2063,20 @@ with tab_historia:
                         y=df_f["ratio"],
                         mode="lines+markers",
                         yaxis="y2",
-                        line=dict(color=UTB_CYAN, width=2),
-                        marker=dict(size=8, color=UTB_CYAN),
+                        line=dict(color=R_MENTA_OSC, width=2),
+                        marker=dict(size=8, color=R_MENTA_OSC),
                     ))
                     fig_franjas.update_layout(
                         barmode="group",
                         xaxis_title="",
                         yaxis=dict(title="km/h", gridcolor="rgba(138,154,184,0.15)"),
                         yaxis2=dict(
-                            title=dict(text="Ratio (0–1)", font=dict(color=UTB_CYAN)),
+                            title=dict(text="Ratio (0–1)", font=dict(color=TEXTO_MENTA)),
                             overlaying="y",
                             side="right",
                             range=[0, 1.2],
                             showgrid=False,
-                            tickfont=dict(color=UTB_CYAN),
+                            tickfont=dict(color=TEXTO_MENTA),
                         ),
                     )
                     fig_franjas = plotly_base(fig_franjas, height=370)
@@ -1685,9 +2094,9 @@ with tab_historia:
                     })
                     st.dataframe(df_f_disp, use_container_width=True, hide_index=True)
                     st.markdown(
-                        f"<div style='background:rgba(255,255,255,0.05);border-left:3px solid {UTB_CYAN};"
+                        f"<div style='background:{SUPERFICIE_SUAVE};border:1px solid {UTB_BORDER};border-left:3px solid {R_MENTA};"
                         f"border-radius:6px;padding:10px 14px;margin-top:6px;font-size:12px;"
-                        f"color:rgba(255,255,255,0.75);'>"
+                        f"color:{UTB_GRAY};'>"
                         f"<b style='color:{UTB_CYAN};'>¿Por qué varían las muestras?</b> "
                         f"Cada franja agrupa distinta cantidad de horas y de ejecuciones: las franjas "
                         f"con más horas o más días dentro del rango seleccionado acumulan más mediciones "
@@ -1742,15 +2151,15 @@ with tab_historia:
                             x=df_nodo["consultation_time"],
                             y=df_nodo["freeFlowSpeed"],
                             name="Velocidad libre",
-                            line=dict(color=UTB_GRAY, dash="dash", width=1.5),
+                            line=dict(color=SERIE_LIBRE, dash="dash", width=1.5),
                         ))
                         fig_nodo.add_trace(go.Scatter(
                             x=df_nodo["consultation_time"],
                             y=df_nodo["currentSpeed"],
                             name="Velocidad actual",
-                            line=dict(color=UTB_CYAN, width=2),
+                            line=dict(color=SERIE_ACTUAL, width=2),
                             fill="tonexty",
-                            fillcolor="rgba(94,234,212,0.12)",
+                            fillcolor="rgba(59,130,246,0.15)",
                         ))
                         fig_nodo.update_layout(
                             xaxis_title="Fecha/Hora",
@@ -1799,7 +2208,7 @@ with tab_historia:
                                 st.markdown(
                                     f"<div style='background:rgba(239,68,68,0.1);border-left:3px solid {COLOR_CONGESTIONADO};"
                                     f"padding:12px 16px;border-radius:6px;'>"
-                                    f"<div style='color:{COLOR_CONGESTIONADO};font-size:11px;font-weight:700;'>⚠ PEOR HORA</div>"
+                                    f"<div style='color:{TEXTO_CONGESTIONADO};font-size:11px;font-weight:700;'>⚠ PEOR HORA</div>"
                                     f"<div style='color:{UTB_WHITE};font-size:22px;font-weight:700;'>{int(peor['hora_num']):02d}:00</div>"
                                     f"<div style='color:{UTB_GRAY};font-size:12px;'>Ratio {peor['ratio_h']:.2f} · "
                                     f"Vel. {peor['vel_h']:.1f} km/h</div></div>",
@@ -1809,7 +2218,7 @@ with tab_historia:
                                 st.markdown(
                                     f"<div style='background:rgba(16,185,129,0.1);border-left:3px solid {COLOR_FLUIDO};"
                                     f"padding:12px 16px;border-radius:6px;'>"
-                                    f"<div style='color:{COLOR_FLUIDO};font-size:11px;font-weight:700;'>✓ MEJOR HORA</div>"
+                                    f"<div style='color:{TEXTO_FLUIDO};font-size:11px;font-weight:700;'>✓ MEJOR HORA</div>"
                                     f"<div style='color:{UTB_WHITE};font-size:22px;font-weight:700;'>{int(mejor['hora_num']):02d}:00</div>"
                                     f"<div style='color:{UTB_GRAY};font-size:12px;'>Ratio {mejor['ratio_h']:.2f} · "
                                     f"Vel. {mejor['vel_h']:.1f} km/h</div></div>",

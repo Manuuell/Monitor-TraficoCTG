@@ -20,7 +20,8 @@ El sistema implementa un proceso **ETL** (Extract–Transform–Load) que se eje
 - ⏱️ **Automatización** con cron en dos servidores VPS (Turnos 1–4)
 - 💾 **Almacenamiento dual:** Google Sheets/Drive + PostgreSQL
 - 📊 **Dashboard interactivo** con mapa, análisis, monitoreo e histórico
-- 🛣️ **Mapa de calles trazadas** con la geometría real de cada segmento vial
+- 🗺️ **Mapa de nodos con filtros** (métrica, fechas, franja horaria, mes, tipo de día) y ventana emergente con foto de Google Street View
+- 🕸️ **Red de nodos** con las conexiones por vía (OpenStreetMap), ruta más rápida origen–destino y corredores con nombre
 - 🔥 **Snapshot a Firestore** que alimenta el motor de ETAs de la app TransCaribe
 - 📈 **Indicadores de congestión** alineados con el TomTom Traffic Index
 - 💰 **Costo de operación:** USD 0.00 (APIs dentro de su cuota gratuita)
@@ -77,13 +78,17 @@ proyect_r/
 │   ├── subir_firestore.py    # Snapshot de tráfico para la app TransCaribe
 │   └── autorizar_google.py   # Generación del token OAuth (una vez)
 ├── dashboard/
-│   └── monitor.py            # Dashboard Streamlit
+│   ├── monitor.py            # Dashboard Streamlit
+│   ├── mapa_nodos.py         # Filtros, ventana emergente y mapa Folium
+│   └── red_nodos.py          # Red de nodos: conexiones, rutas y mapa
 ├── deploy/
 │   ├── run.sh                # Wrapper que ejecuta el ETL
 │   ├── crontab_vps1.txt      # Horarios de VPS 1
 │   └── crontab_vps2.txt      # Horarios de VPS 2
 ├── migrar_a_postgres.py      # Migración Sheets → PostgreSQL (verificada)
 ├── capturar_geometria.py     # Captura única de la traza real de cada vía
+├── capturar_red.py           # Captura única de la red vial entre nodos vecinos (TomTom + control OSRM)
+├── reparar_columnas_sheet.py # Repara filas del Sheet escritas con un encabezado anterior (diagnóstico por defecto)
 ├── nodos.xlsx                # Catálogo de los 113 nodos
 └── requirements.txt          # Dependencias
 ```
@@ -122,6 +127,9 @@ FUENTE_DASHBOARD=db
 
 # Firestore (opcional — app TransCaribe)
 SUBIR_A_FIRESTORE=true
+
+# Foto del nodo en el mapa (opcional — Street View Static API)
+GOOGLE_STREETVIEW_KEY=tu_llave_google
 ```
 
 ---
@@ -138,10 +146,16 @@ python3 src/descargar_trafico.py
 streamlit run dashboard/monitor.py
 ```
 
-**Capturar la geometría de las calles** (una sola vez, habilita el modo "Calles" del mapa):
+**Capturar la geometría de las calles** (una sola vez; queda en `data/nodos_geometria.json` para la futura vista de red de nodos):
 ```bash
 python3 capturar_geometria.py
 ```
+
+**Capturar la red vial entre nodos** (una sola vez, o cuando cambie la hoja `REDES`; habilita "Seguir las carreteras" y las distancias por vía de la Red de Nodos):
+```bash
+python3 capturar_red.py
+```
+Toma de la hoja `REDES` de `nodos.xlsx` qué nodos son vecinos y de la **Routing API de TomTom** (el mismo mapa de las velocidades) la distancia por vía en cada sentido y el trazado: unas 832 consultas, una sola vez, con las llaves de `TOMTOM_API_KEYS_RED` o, si está vacía, las del ETL. Como control compara con OpenStreetMap (OSRM) y deja en `data/red_nodos_revision.csv` las conexiones donde no coinciden, con enlaces a Google Maps para revisarlas. Con `--fuente osrm` captura solo con OpenStreetMap, sin gastar créditos. Con `--resolver` vuelve a pedir con la ruta más corta las conexiones donde TomTom y OpenStreetMap no coinciden (la más rápida a veces da rodeos entre nodos vecinos); con `--completar-vuelta` agrega el trazado de vuelta a las conexiones asimétricas. Guarda `data/red_nodos.json`. Los corredores con nombre se definen en la hoja `CORREDORES` (`corredor`, `nodo_inicio`, `nodo_fin`).
 
 **Automatizar con cron** (instalar la tabla de horarios):
 ```bash

@@ -308,6 +308,14 @@ def tarjeta_cuota(nombre: str, datos: dict) -> str:
     )
 
 
+# Motivo de descarte del ETL (rotacion_llaves) en palabras para el panel
+MOTIVOS_AGOTADA = {
+    "sin_creditos": "sin saldo en TomTom",
+    "bloqueada": "rechazada por TomTom",
+    "limite": "límite de consultas por minuto",
+}
+
+
 def tarjeta_api_key(datos: dict) -> str:
     """Tarjeta de una llave TomTom: estado y consumo del mes frente a su limite."""
     pct = datos.get("pct")
@@ -320,20 +328,34 @@ def tarjeta_api_key(datos: dict) -> str:
         color = AZUL
     else:
         color = VERDE
-    rol = "En uso" if datos["tipo"] == "principal" else "Reserva"
+    # El papel configurado (principal o reserva) no cambia; el grupo y la
+    # etiqueta muestran su uso real en este momento
+    rol = "Llave principal" if datos["tipo"] == "principal" else "Llave de reserva"
+    if estado == "EN USO" and datos["tipo"] == "reserva":
+        rol += " · cubre a las principales agotadas"
     progreso = min(float(pct), 100) if pct is not None else 0
     limite = f"{pct:.1f}% del límite mensual" if pct is not None else "Sin límite configurado"
-    nota = f" · {texto_html(datos['motivo'])}" if datos.get("motivo") else ""
     identificador = texto_html(datos["identificador"])
-    ultimo_uso = texto_html(datos["ultima_vez"])
+    if datos.get("agotada"):
+        # agotada_desde es el ultimo descarte: el ETL la reprueba cada pocas
+        # horas y lo actualiza, asi que no marca desde cuando esta agotada
+        motivo = MOTIVOS_AGOTADA.get(datos.get("motivo"), "sin saldo")
+        intento = datos.get("agotada_desde")
+        try:
+            intento = datetime.strptime(str(intento), "%Y-%m-%d %H:%M:%S").strftime("%d/%m %H:%M")
+        except ValueError:
+            intento = None
+        detalle = motivo[:1].upper() + motivo[1:] + (f" · último intento {intento}" if intento else "")
+    else:
+        detalle = f"Último uso: {datos['ultima_vez']}"
     return (
         f'<div class="api-key-card" style="--key-color:{color}">'
         f'<div class="status-row"><div><div class="api-key-id">ID · {identificador}</div>'
-        f'<div class="api-key-service">TomTom Traffic Flow · {rol}</div></div>'
+        f'<div class="api-key-service">TomTom Traffic Flow · {texto_html(rol)}</div></div>'
         f'<span class="status-pill" style="background:{color}18;color:{color}">{estado}</span></div>'
         f'<div class="progress-track"><div class="progress-fill" style="width:{progreso:.1f}%;background:{color}"></div></div>'
         f'<div class="quota-meta"><span>{datos["consumo"]:,} / {datos["cuota"]:,} llamadas</span><span>{limite}</span></div>'
-        f'<div class="status-copy">Último uso: {ultimo_uso}{nota}</div></div>'
+        f'<div class="status-copy">{texto_html(detalle)}</div></div>'
     )
 
 
@@ -547,7 +569,14 @@ with tab_resumen:
             f'<span class="vps-keys-meta">{turnos_html} · actualizado {actualizado}</span></div>',
             unsafe_allow_html=True,
         )
-        for grupo, titulo in (("principal", "En uso"), ("reserva", "Reserva")):
+        if not vps["en_uso"]:
+            st.error(f"VPS {vps['vps_id']}: ninguna llave tiene saldo. Las corridas fallarán hasta que alguna se recargue.")
+        elif vps["usando_reserva"]:
+            st.warning(
+                f"VPS {vps['vps_id']} funciona con llaves de reserva: sus llaves principales "
+                "se quedaron sin saldo. Vuelven a usarse solas cuando TomTom las recargue."
+            )
+        for grupo, titulo in (("en_uso", "En uso"), ("reserva", "Reserva")):
             if vps[grupo]:
                 st.markdown(
                     f'<div class="key-group-title">{titulo} · {len(vps[grupo])}</div>'

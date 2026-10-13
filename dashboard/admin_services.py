@@ -560,20 +560,40 @@ def _tarjeta_llave(fila: dict) -> dict:
     consumo = int(fila.get("consumo") or 0)
     cuota = int(fila.get("cuota") or 0)
     agotada = bool(fila.get("agotada"))
-    if agotada:
-        estado = "AGOTADA"
-    else:
-        estado = "EN USO" if fila.get("tipo") == "principal" else "RESERVA"
+    desde = fila.get("agotada_desde")
     return {
         "identificador": fila["llave_id"],
-        "tipo": fila.get("tipo") or "principal",
+        "tipo": fila.get("tipo") or "principal",   # papel configurado en el .env
         "consumo": consumo,
         "cuota": cuota,
         "pct": consumo / cuota * 100 if cuota else None,
-        "estado": estado,
+        "agotada": agotada,
         "motivo": fila.get("motivo") if agotada else None,
+        "agotada_desde": desde if agotada and desde is not None and pd.notna(desde) else None,
         "ultima_vez": fila.get("ultima_vez") or "Sin uso registrado",
     }
+
+
+def _agrupar_por_uso(tarjetas: list) -> tuple[list, list]:
+    """
+    Reparte las llaves de un VPS como las usa el ETL (rotacion_llaves.
+    siguiente_llave): en uso, las principales con saldo; si ninguna tiene,
+    las de reserva con saldo. El resto queda en reserva: primero las que
+    esperan turno y despues las agotadas. Asi, cuando una llave se agota o
+    recupera saldo, el panel la cambia de grupo en la siguiente corrida.
+    """
+    con_saldo = [t for t in tarjetas if not t["agotada"]]
+    en_uso = (
+        [t for t in con_saldo if t["tipo"] == "principal"]
+        or [t for t in con_saldo if t["tipo"] == "reserva"]
+    )
+    en_uso_ids = {id(t) for t in en_uso}
+    reserva = sorted((t for t in tarjetas if id(t) not in en_uso_ids), key=lambda t: t["agotada"])
+    for t in en_uso:
+        t["estado"] = "EN USO"
+    for t in reserva:
+        t["estado"] = "AGOTADA" if t["agotada"] else "RESERVA"
+    return en_uso, reserva
 
 
 @st.cache_data(ttl=60, show_spinner=False)
@@ -602,20 +622,21 @@ def estado_api_keys() -> dict:
     por_vps: dict[str, dict] = {}
     for fila in publicado.to_dict("records"):
         vps = por_vps.setdefault(str(fila["vps_id"]), {
-            "vps_id": str(fila["vps_id"]), "actualizado": fila.get("actualizado"),
-            "principal": [], "reserva": [],
+            "vps_id": str(fila["vps_id"]), "actualizado": fila.get("actualizado"), "llaves": [],
         })
-        tarjeta = _tarjeta_llave(fila)
-        vps["reserva" if tarjeta["tipo"] == "reserva" else "principal"].append(tarjeta)
+        vps["llaves"].append(_tarjeta_llave(fila))
 
     local = str(config.VPS_ID)
     if local not in por_vps and (config.API_KEYS or config.API_KEYS_RESERVA):
-        vps = por_vps[local] = {"vps_id": local, "actualizado": None, "principal": [], "reserva": []}
-        for fila in rotacion_llaves.resumen():
-            tarjeta = _tarjeta_llave(fila)
-            vps["reserva" if tarjeta["tipo"] == "reserva" else "principal"].append(tarjeta)
+        por_vps[local] = {
+            "vps_id": local, "actualizado": None,
+            "llaves": [_tarjeta_llave(fila) for fila in rotacion_llaves.resumen()],
+        }
 
     for vps_id, vps in por_vps.items():
+        vps["en_uso"], vps["reserva"] = _agrupar_por_uso(vps.pop("llaves"))
+        # True cuando las principales se agotaron y la reserva sostiene el VPS
+        vps["usando_reserva"] = any(t["tipo"] == "reserva" for t in vps["en_uso"])
         vps["turnos"] = list(config.VPS_TURNOS.get(vps_id, []))
         actualizado = vps.get("actualizado")
         vps["actualizado"] = (

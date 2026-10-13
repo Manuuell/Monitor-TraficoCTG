@@ -185,5 +185,42 @@ class AdminServicesTests(unittest.TestCase):
             self.assertEqual(resultado["google"]["estado"], "Pendiente")
 
 
+class AgruparLlavesTests(unittest.TestCase):
+    """Las llaves se muestran como las usa el ETL, no por su papel en el .env."""
+
+    @staticmethod
+    def _llave(llave_id: str, tipo: str, agotada: bool = False) -> dict:
+        return servicios._tarjeta_llave({
+            "llave_id": llave_id, "tipo": tipo, "consumo": 100, "cuota": 20000,
+            "agotada": agotada, "motivo": "sin_creditos" if agotada else None,
+            "agotada_desde": "2026-10-07 17:30:03" if agotada else None,
+        })
+
+    def test_principales_con_saldo_en_uso_y_reserva_en_espera(self) -> None:
+        en_uso, reserva = servicios._agrupar_por_uso([
+            self._llave("p1", "principal"), self._llave("p2", "principal"),
+            self._llave("r1", "reserva"),
+        ])
+        self.assertEqual([t["identificador"] for t in en_uso], ["p1", "p2"])
+        self.assertEqual([(t["identificador"], t["estado"]) for t in reserva], [("r1", "RESERVA")])
+
+    def test_principales_agotadas_pasan_a_reserva_y_la_reserva_queda_en_uso(self) -> None:
+        en_uso, reserva = servicios._agrupar_por_uso([
+            self._llave("p1", "principal", agotada=True), self._llave("p2", "principal", agotada=True),
+            self._llave("r1", "reserva"), self._llave("r2", "reserva"),
+        ])
+        self.assertEqual([(t["identificador"], t["estado"]) for t in en_uso],
+                         [("r1", "EN USO"), ("r2", "EN USO")])
+        self.assertEqual([(t["identificador"], t["estado"]) for t in reserva],
+                         [("p1", "AGOTADA"), ("p2", "AGOTADA")])
+
+    def test_sin_saldo_en_ninguna_llave_no_queda_ninguna_en_uso(self) -> None:
+        en_uso, reserva = servicios._agrupar_por_uso([
+            self._llave("p1", "principal", agotada=True), self._llave("r1", "reserva", agotada=True),
+        ])
+        self.assertEqual(en_uso, [])
+        self.assertEqual({t["estado"] for t in reserva}, {"AGOTADA"})
+
+
 if __name__ == "__main__":
     unittest.main()

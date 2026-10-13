@@ -695,7 +695,7 @@ with tab_ejecuciones:
         )
         st.plotly_chart(
             figura,
-            use_container_width=True,
+            width="stretch",
             theme=None,
             config={"displayModeBar": False},
         )

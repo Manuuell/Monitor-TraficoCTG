@@ -2057,37 +2057,41 @@ if snapshot_degradado:
 # El footer se emite antes de las pestañas para que Streamlit no lo retenga
 # mientras ejecuta el contenido de las vistas no seleccionadas. Su contenedor
 # tiene un orden CSS alto, por lo que conserva su posicion visual al final.
-with st.container(key="dashboard_footer"):
-    st.markdown(f"""
-    <div class="dashboard-footer">
-        <div class="footer-brand">Smart City <span>Cartagena</span></div>
-        <p class="footer-lead">
-            Datos de movilidad convertidos en información para
-            <strong>analizar el comportamiento vial de la ciudad.</strong>
-        </p>
-        <div class="footer-grid">
-            <div>
-                <div class="footer-kicker">Qué muestra</div>
-                <p class="footer-copy">Velocidad actual, nivel de fluidez, demoras, rutas y comportamiento histórico de los nodos.</p>
+# Oculto por ahora: el acceso al panel admin quedo en la barra lateral.
+# Poner en True para volver a mostrarlo.
+MOSTRAR_FOOTER = False
+if MOSTRAR_FOOTER:
+    with st.container(key="dashboard_footer"):
+        st.markdown(f"""
+        <div class="dashboard-footer">
+            <div class="footer-brand">Smart City <span>Cartagena</span></div>
+            <p class="footer-lead">
+                Datos de movilidad convertidos en información para
+                <strong>analizar el comportamiento vial de la ciudad.</strong>
+            </p>
+            <div class="footer-grid">
+                <div>
+                    <div class="footer-kicker">Qué muestra</div>
+                    <p class="footer-copy">Velocidad actual, nivel de fluidez, demoras, rutas y comportamiento histórico de los nodos.</p>
+                </div>
+                <div>
+                    <div class="footer-kicker">Cómo se interpreta</div>
+                    <p class="footer-copy">El índice de fluidez compara la velocidad actual con la velocidad de flujo libre. Verde indica circulación fluida; rojo, mayor congestión.</p>
+                </div>
+                <div>
+                    <div class="footer-kicker">Fuente y actualización</div>
+                    <p class="footer-copy">TomTom Traffic Flow<br>28 consultas programadas al día<br>Consolidación de VPS 1 y VPS 2</p>
+                </div>
             </div>
-            <div>
-                <div class="footer-kicker">Cómo se interpreta</div>
-                <p class="footer-copy">El índice de fluidez compara la velocidad actual con la velocidad de flujo libre. Verde indica circulación fluida; rojo, mayor congestión.</p>
-            </div>
-            <div>
-                <div class="footer-kicker">Fuente y actualización</div>
-                <p class="footer-copy">TomTom Traffic Flow<br>28 consultas programadas al día<br>Consolidación de VPS 1 y VPS 2</p>
+            <div class="footer-bottom">
+                <span>Movilidad urbana basada en datos</span>
+                <a class="footer-admin-link" href="/admin" target="_self">
+                    Ingresar al panel administrativo
+                    <span class="footer-admin-arrow">→</span>
+                </a>
             </div>
         </div>
-        <div class="footer-bottom">
-            <span>Movilidad urbana basada en datos</span>
-            <a class="footer-admin-link" href="/admin" target="_self">
-                Ingresar al panel administrativo
-                <span class="footer-admin-arrow">→</span>
-            </a>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
+        """, unsafe_allow_html=True)
 
 # ============================================================
 # TABS

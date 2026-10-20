@@ -563,7 +563,7 @@ st.markdown(f"""
     }}
     .stTabs [data-baseweb="tab"] p {{ color: inherit; font-weight: 600; }}
     .stTabs [aria-selected="true"] {{
-        background: #111113 !important;
+        background: {R_AZUL} !important;
         color: #ffffff !important;
         box-shadow: none;
     }}

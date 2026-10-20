@@ -1270,7 +1270,9 @@ def render_analisis_nodo():
 
         diaria = analisis_nodo.serie_diaria(ejecuciones)
         hora = analisis_nodo.resumen_por_hora(ejecuciones)
-        horas = pd.DataFrame({"hora": range(24)}).merge(hora, on="hora", how="left")
+        # Solo horas con corridas: el eje no muestra la franja vacia de 01 a 03
+        horas = pd.DataFrame({"hora": config.HORAS_CON_DATOS}).merge(hora, on="hora", how="left")
+        horas["etiqueta"] = horas["hora"].map(lambda h: f"{h:02d}:00")
         distribucion = analisis_nodo.distribucion_congestion(
             ejecuciones,
             UMBRAL_FLUIDO,
@@ -1278,8 +1280,13 @@ def render_analisis_nodo():
             UMBRAL_LENTO,
         )
         # Siete marcas caben incluso cuando los graficos quedan en dos columnas
-        # estrechas; los datos siguen conservando las 24 posiciones horarias.
-        ticks_hora = list(range(0, 24, 4)) + [23]
+        # estrechas; los datos conservan todas las horas con corridas.
+        ticks_hora = [f"{h:02d}:00" for h in config.HORAS_CON_DATOS
+                      if h % 4 == 0 or h == config.HORAS_CON_DATOS[-1]]
+        eje_horas = dict(
+            type="category", categoryorder="array", categoryarray=list(horas["etiqueta"]),
+            tickmode="array", tickvals=ticks_hora, ticktext=ticks_hora,
+        )
 
         fila_1a, fila_1b = st.columns(2, gap="medium")
         with fila_1a, st.container(border=True):
@@ -1324,7 +1331,7 @@ def render_analisis_nodo():
                 unsafe_allow_html=True,
             )
             fig_patron = go.Figure(go.Scatter(
-                x=horas["hora"],
+                x=horas["etiqueta"],
                 y=horas["ratio_promedio"],
                 mode="lines+markers",
                 name="Índice promedio",
@@ -1333,7 +1340,7 @@ def render_analisis_nodo():
                 customdata=horas[["ratio_mediana", "ejecuciones"]].fillna(0).to_numpy(),
                 connectgaps=False,
                 hovertemplate=(
-                    "Hora: %{x:02.0f}:00<br>Índice promedio: %{y:.3f}"
+                    "Hora: %{x}<br>Índice promedio: %{y:.3f}"
                     "<br>Mediana: %{customdata[0]:.3f}"
                     "<br>Ejecuciones: %{customdata[1]:.0f}<extra></extra>"
                 ),
@@ -1343,10 +1350,7 @@ def render_analisis_nodo():
                 yaxis_title="Índice de fluidez",
                 showlegend=False,
             )
-            fig_patron.update_xaxes(
-                range=[-0.5, 23.5], tickmode="array", tickvals=ticks_hora,
-                ticktext=[f"{h:02d}:00" for h in ticks_hora],
-            )
+            fig_patron.update_xaxes(**eje_horas)
             fig_patron.update_yaxes(
                 range=[0, max(1.05, float(hora["ratio_promedio"].max()) * 1.08)]
             )
@@ -1364,34 +1368,31 @@ def render_analisis_nodo():
             )
             fig_velocidad = go.Figure()
             fig_velocidad.add_trace(go.Scatter(
-                x=horas["hora"],
+                x=horas["etiqueta"],
                 y=horas["flujo_libre_promedio"],
                 mode="lines+markers",
                 name="Flujo libre",
                 line=dict(color=SERIE_LIBRE, width=2, dash="dash"),
                 marker=dict(size=5),
                 connectgaps=False,
-                hovertemplate="Hora: %{x:02.0f}:00<br>Flujo libre: %{y:.1f} km/h<extra></extra>",
+                hovertemplate="Hora: %{x}<br>Flujo libre: %{y:.1f} km/h<extra></extra>",
             ))
             fig_velocidad.add_trace(go.Scatter(
-                x=horas["hora"],
+                x=horas["etiqueta"],
                 y=horas["velocidad_promedio"],
                 mode="lines+markers",
                 name="Velocidad actual",
                 line=dict(color=SERIE_ACTUAL, width=3),
                 marker=dict(size=6, color=COLOR_MODERADO),
                 connectgaps=False,
-                hovertemplate="Hora: %{x:02.0f}:00<br>Velocidad actual: %{y:.1f} km/h<extra></extra>",
+                hovertemplate="Hora: %{x}<br>Velocidad actual: %{y:.1f} km/h<extra></extra>",
             ))
             fig_velocidad.update_layout(
                 xaxis_title="Hora del día",
                 yaxis_title="Velocidad (km/h)",
                 legend=dict(orientation="h", y=1.12),
             )
-            fig_velocidad.update_xaxes(
-                range=[-0.5, 23.5], tickmode="array", tickvals=ticks_hora,
-                ticktext=[f"{h:02d}:00" for h in ticks_hora],
-            )
+            fig_velocidad.update_xaxes(**eje_horas)
             fig_velocidad = plotly_base(fig_velocidad, height=330)
             st.plotly_chart(fig_velocidad, theme=None, config=PLOTLY_CONFIG)
             st.caption("Ambas líneas usan las mismas ejecuciones; los huecos indican falta de datos.")
@@ -1498,15 +1499,7 @@ def render_analisis_temporal():
             key=f"{prefijo}_franja",
             on_change=_al_cambiar_franja,
         )
-        hora_ini, hora_fin = st.slider(
-            "Rango de horas:",
-            0,
-            23,
-            key=f"{prefijo}_horas",
-            on_change=_al_mover_horas,
-            format="%d:00",
-        )
-        st.markdown(mapa_nodos._escala_horas(), unsafe_allow_html=True)
+        hora_ini, hora_fin = mapa_nodos.barra_horas(f"{prefijo}_horas", _al_mover_horas)
         ids = st.multiselect(
             "Punto de monitoreo:",
             list(nombres),
@@ -1619,7 +1612,8 @@ def render_analisis_temporal():
 
         with vista_calor:
             calor, conteos = analisis_temporal.mapa_calor(serie)
-            horas_vista = list(range(hora_ini, hora_fin + 1))
+            # Solo horas con corridas: sin la franja vacia de 01 a 03
+            horas_vista = [h for h in config.HORAS_CON_DATOS if hora_ini <= h <= hora_fin]
             calor = calor[horas_vista]
             conteos = conteos[horas_vista]
             filas_con_datos = calor.notna().any(axis=1)

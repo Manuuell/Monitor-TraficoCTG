@@ -86,6 +86,13 @@ HORARIOS = {
     "Turno 4": ["18:30", "19:00", "20:00", "21:00", "22:00", "23:00", "00:00"],
 }
 
+# Horas en las que el cron toma datos (00 y 04-23). Los ejes horarios y la
+# barra de horas del dashboard muestran solo estas: las demas siempre quedan
+# vacias y solo meten ruido.
+HORAS_CON_DATOS = sorted({
+    int(hora.split(":")[0]) for horas in HORARIOS.values() for hora in horas
+})
+
 VPS_TURNOS = {
     "1": ["Turno 1", "Turno 2"],
     "2": ["Turno 3", "Turno 4"],

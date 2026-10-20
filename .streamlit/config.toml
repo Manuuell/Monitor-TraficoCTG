@@ -1,3 +1,9 @@
+[global]
+# La barra de horas (select_slider) necesita `value` para ser de rango y a la
+# vez la manejan las franjas por session_state: sin esto Streamlit muestra un
+# aviso amarillo la primera vez.
+disableWidgetStateDuplicationWarning = true
+
 [theme]
 # Smart City Cartagena — tema claro coherente con el dashboard
 primaryColor = "#1F48B8"

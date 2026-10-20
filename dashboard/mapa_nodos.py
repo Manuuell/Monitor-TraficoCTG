@@ -33,7 +33,7 @@ PERSONALIZADO = "Personalizado"
 FRANJAS = {
     TODO_EL_DIA:               (0, 23),
     PERSONALIZADO:             None,      # rango libre con la barra de horas
-    "Madrugada (02–05)":       (2, 5),
+    "Madrugada (04–05)":       (4, 5),    # de 01 a 03 no hay corridas
     "Mañana temprano (06–07)": (6, 7),
     "Hora pico AM (08–09)":    (8, 9),
     "Media mañana (10–11)":    (10, 11),
@@ -181,15 +181,36 @@ def tarjeta_filtros(clave: str, titulo: str):
 
 
 def _escala_horas() -> str:
-    """Marcas de 0 a 23 bajo la barra de horas, con numero cada 3 horas y en 23."""
+    """Una marca por hora con datos bajo la barra; numero en 0, 4, 8... y 23."""
+    horas = config.HORAS_CON_DATOS
     partes = []
-    for h in range(24):
-        mayor = h % 3 == 0 or h == 23
-        izq = f"{h / 23 * 100:.2f}%"
+    for i, h in enumerate(horas):
+        mayor = h % 4 == 0 or h == horas[-1]
+        izq = f"{i / (len(horas) - 1) * 100:.2f}%"
         partes.append(f'<span class="marca{" mayor" if mayor else ""}" style="left:{izq}"></span>')
         if mayor:
             partes.append(f'<span class="num" style="left:{izq}">{h}</span>')
     return f'<div class="escala-horas">{"".join(partes)}</div>'
+
+
+def barra_horas(clave: str, on_change) -> tuple:
+    """Barra de rango que solo ofrece las horas con datos (sin la franja 01-03).
+
+    Devuelve (hora_ini, hora_fin). Como entre ellas no hay horas con datos
+    que falten, los filtros siguen usando el rango hora_ini..hora_fin.
+
+    A diferencia de st.slider, select_slider solo sabe que es de rango por
+    `value`: sin el, al mover la barra devuelve una sola hora. El valor real
+    sigue saliendo de session_state (franjas y Restablecer lo escriben); el
+    aviso de Streamlit por usar ambos se apaga en .streamlit/config.toml.
+    """
+    hora_ini, hora_fin = st.select_slider(
+        "Rango de horas:", options=config.HORAS_CON_DATOS, key=clave,
+        value=(config.HORAS_CON_DATOS[0], config.HORAS_CON_DATOS[-1]),
+        on_change=on_change, format_func=lambda h: f"{h}:00",
+    )
+    st.markdown(_escala_horas(), unsafe_allow_html=True)
+    return hora_ini, hora_fin
 
 
 def _valores_iniciales(prefijo: str, fechas) -> dict:
@@ -254,11 +275,7 @@ def panel_filtros(prefijo: str, nodos: dict, fechas=None) -> dict:
         key=f"{prefijo}_franja", on_change=_al_cambiar_franja,
     )
     # La barra siempre se puede mover; elegir una franja fija la ajusta sola
-    hora_ini, hora_fin = st.slider(
-        "Rango de horas:", 0, 23, key=f"{prefijo}_horas",
-        on_change=_al_mover_horas, format="%d:00",
-    )
-    st.markdown(_escala_horas(), unsafe_allow_html=True)
+    hora_ini, hora_fin = barra_horas(f"{prefijo}_horas", _al_mover_horas)
     ids = st.multiselect(
         "Punto de monitoreo:", list(nodos), key=f"{prefijo}_nodos",
         format_func=lambda i: nodos.get(i, i), placeholder="Todos los puntos",

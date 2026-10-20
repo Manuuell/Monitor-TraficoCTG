@@ -1,8 +1,6 @@
 """Panel administrativo de Smart City Cartagena."""
 from __future__ import annotations
 
-import hashlib
-import hmac
 import html
 import json
 import os
@@ -22,6 +20,7 @@ sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 import admin_services as servicios  # noqa: E402
 import config  # noqa: E402
+from security_utils import clave_valida, huella_clave  # noqa: E402
 
 
 st.set_page_config(
@@ -211,7 +210,7 @@ def proteger_panel() -> None:
             "en el .env de este servidor."
         )
         st.stop()
-    huella = hashlib.sha256(esperada.encode("utf-8")).hexdigest()
+    huella = huella_clave(esperada)
     if st.session_state.get("admin_auth") == huella:
         return
     st.markdown('<div class="login-espacio"></div>', unsafe_allow_html=True)
@@ -265,7 +264,7 @@ def proteger_panel() -> None:
                 placeholder="Ingresa tu contraseña",
             )
             if st.button("Ingresar", type="primary", width="stretch"):
-                if hmac.compare_digest(clave, esperada):
+                if clave_valida(clave, esperada):
                     st.session_state["admin_auth"] = huella
                     st.rerun()
                 st.error("Contraseña incorrecta.")

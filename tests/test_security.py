@@ -17,7 +17,23 @@ sys.path.insert(0, str(ROOT / "src"))
 import config  # noqa: E402
 import google_upload  # noqa: E402
 import rotacion_llaves  # noqa: E402
-from security_utils import sanitizar_error  # noqa: E402
+from security_utils import clave_valida, huella_clave, sanitizar_error  # noqa: E402
+
+
+class ClaveAdministrativaTest(unittest.TestCase):
+    def test_acepta_solo_la_clave_exacta_aunque_tenga_ene(self):
+        self.assertTrue(clave_valida("contraseña-ñ", "contraseña-ñ"))
+        self.assertFalse(clave_valida("contrasena-n", "contraseña-ñ"))
+        self.assertFalse(clave_valida("", "contraseña-ñ"))
+
+    def test_sin_clave_configurada_el_panel_queda_cerrado(self):
+        self.assertFalse(clave_valida("", ""))
+        self.assertFalse(clave_valida("cualquiera", ""))
+
+    def test_la_huella_no_contiene_la_clave(self):
+        huella = huella_clave("secreto-admin")
+        self.assertNotIn("secreto-admin", huella)
+        self.assertEqual(huella, huella_clave("secreto-admin"))
 
 
 class ErroresSinSecretosTest(unittest.TestCase):

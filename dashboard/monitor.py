@@ -1439,7 +1439,6 @@ def render_analisis_temporal():
         f"{prefijo}_franja": mapa_nodos.TODO_EL_DIA,
         f"{prefijo}_horas": (0, 23),
         f"{prefijo}_nodos": [],
-        f"{prefijo}_mes": mapa_nodos.MESES[0],
         f"{prefijo}_tipo_dia": analisis_temporal.TIPOS_DIA[0],
     }
     for clave, valor in iniciales.items():
@@ -1501,9 +1500,6 @@ def render_analisis_temporal():
             format_func=lambda i: nombres.get(i, i),
             placeholder="Todos los puntos",
         )
-        mes_label = st.selectbox(
-            "Mes:", mapa_nodos.MESES, key=f"{prefijo}_mes"
-        )
         tipo_dia = st.selectbox(
             "Tipo de día:",
             analisis_temporal.TIPOS_DIA,
@@ -1520,8 +1516,8 @@ def render_analisis_temporal():
     columna = meta["columna"]
     unidad = meta["unidad"]
     decimales = meta["decimales"]
-    mes = mapa_nodos.MESES.index(mes_label) or None
 
+    # Filtro de mes desactivado: el rango de fechas ya acota el periodo
     with st.spinner("Calculando análisis temporal..."):
         df_base, fuente = cargar_historico(fecha_ini, fecha_fin)
         filtrado = analisis_temporal.filtrar_mediciones(
@@ -1531,7 +1527,6 @@ def render_analisis_temporal():
             fecha_fin=fecha_fin,
             hora_ini=hora_ini,
             hora_fin=hora_fin,
-            mes=mes,
             tipo_dia=tipo_dia,
             ids=tuple(ids),
         )
@@ -2115,7 +2110,7 @@ with tab_mapa:
         en_vivo = filtros["en_vivo"]
 
         # Sin filtros de datos: la ultima ejecucion, como en produccion.
-        # Al tocar fechas, horas, mes o tipo de dia: promedios del periodo.
+        # Al tocar fechas, horas o tipo de dia: promedios del periodo.
         if en_vivo:
             promedios = lecturas_ultima_ejecucion(df_snapshot)
         else:

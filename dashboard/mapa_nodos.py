@@ -199,7 +199,6 @@ def _valores_iniciales(prefijo: str, fechas) -> dict:
         f"{prefijo}_franja":  TODO_EL_DIA,
         f"{prefijo}_horas":   (0, 23),
         f"{prefijo}_nodos":   [],
-        f"{prefijo}_mes":     MESES[0],
         f"{prefijo}_dia":     TIPOS_DIA[0],
     }
     if fechas:
@@ -217,7 +216,7 @@ def panel_filtros(prefijo: str, nodos: dict, fechas=None) -> dict:
     Devuelve {"metrica", "metrica_label", "consulta", "en_vivo"}; "consulta"
     son los argumentos de db.promedios_por_nodo / promedios_por_nodo_df.
     "en_vivo" es True mientras no se toque ningun filtro de datos (fechas,
-    horas, mes, tipo de dia): entonces se muestra la ultima ejecucion, como
+    horas, tipo de dia): entonces se muestra la ultima ejecucion, como
     en produccion, y no promedios. Metrica y punto de monitoreo no cuentan:
     solo cambian el color o que nodos se ven.
     """
@@ -264,7 +263,6 @@ def panel_filtros(prefijo: str, nodos: dict, fechas=None) -> dict:
         "Punto de monitoreo:", list(nodos), key=f"{prefijo}_nodos",
         format_func=lambda i: nodos.get(i, i), placeholder="Todos los puntos",
     )
-    mes = st.selectbox("Mes:", MESES, key=f"{prefijo}_mes")
     dia = st.selectbox("Tipo de día:", TIPOS_DIA, key=f"{prefijo}_dia")
     st.button(
         "↺ Restablecer filtros", on_click=_restablecer,
@@ -276,7 +274,9 @@ def panel_filtros(prefijo: str, nodos: dict, fechas=None) -> dict:
         "fecha_fin": fecha_fin,
         "hora_ini": hora_ini,
         "hora_fin": hora_fin,
-        "mes": MESES.index(mes) or None,
+        # Filtro de mes desactivado en el panel: el rango de fechas ya acota
+        # el periodo. La consulta lo conserva para reactivarlo sin tocar la BD.
+        "mes": None,
         "dia_semana": DIAS.index(dia) + 1 if dia in DIAS else None,
         "quincena": dia == QUINCENA,
         "ids": tuple(ids),
@@ -284,7 +284,6 @@ def panel_filtros(prefijo: str, nodos: dict, fechas=None) -> dict:
     filtrando = (
         (fechas is not None and (fecha_ini, fecha_fin) != tuple(fechas))
         or (hora_ini, hora_fin) != (0, 23)
-        or consulta["mes"] is not None
         or consulta["dia_semana"] is not None
         or consulta["quincena"]
     )

@@ -1781,11 +1781,6 @@ with st.sidebar:
         </div>
         """, unsafe_allow_html=True)
 
-    st.markdown(
-        "<div style='color:#5eead4;font-size:11px;font-weight:800;"
-        "letter-spacing:1.5px;margin-bottom:8px;'>VISTA DE MOVILIDAD</div>",
-        unsafe_allow_html=True,
-    )
     st.markdown("### Archivo a visualizar")
     archivos = listar_archivos()
     if archivos:

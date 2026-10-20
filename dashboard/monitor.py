@@ -562,11 +562,18 @@ st.markdown(f"""
         font-size: 14px;
     }}
     .stTabs [data-baseweb="tab"] p {{ color: inherit; font-weight: 600; }}
+    /* La regla de color de arriba anula el hover de Streamlit: se repone */
+    .stTabs [data-baseweb="tab"] {{ transition: background .2s ease, color .2s ease; }}
+    .stTabs [aria-selected="false"]:hover {{
+        background: rgba(31,72,184,0.08);
+        color: {R_AZUL};
+    }}
     .stTabs [aria-selected="true"] {{
         background: {R_AZUL} !important;
         color: #ffffff !important;
         box-shadow: none;
     }}
+    .stTabs [aria-selected="true"]:hover {{ background: {R_AZUL_OSC} !important; }}
     .stTabs [data-baseweb="tab-highlight"], .stTabs [data-baseweb="tab-border"] {{
         display: none;
     }}

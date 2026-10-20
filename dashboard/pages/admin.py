@@ -659,6 +659,12 @@ with tab_ejecuciones:
     if por_hora.empty:
         st.info("No hay datos suficientes para construir el gráfico por hora.")
     else:
+        # Horas del cron (sin la franja 01-03, que nunca tiene corridas) mas
+        # cualquier hora con una corrida fuera de horario, que si interesa ver.
+        # Una hora programada sin barras sigue apareciendo vacia: es la alerta.
+        horas_eje = sorted(
+            {f"{hora:02d}:00" for hora in config.HORAS_CON_DATOS} | set(por_hora["hora"])
+        )
         figura = go.Figure()
         figura.add_bar(
             x=por_hora["hora"], y=por_hora["completas"],
@@ -685,10 +691,13 @@ with tab_ejecuciones:
             xaxis=dict(
                 title="Hora del día",
                 categoryorder="array",
-                categoryarray=[f"{hora:02d}:00" for hora in range(24)],
+                categoryarray=horas_eje,
                 gridcolor="#e3eaf7",
             ),
-            yaxis=dict(title="Número de ejecuciones", gridcolor="#e3eaf7", dtick=1),
+            # automargin: con margen fijo el titulo se encimaba con los numeros
+            yaxis=dict(
+                title="Número de ejecuciones", gridcolor="#e3eaf7", dtick=1, automargin=True,
+            ),
             legend=dict(orientation="h", y=1.12, x=0),
             hovermode="x unified",
         )

@@ -4,7 +4,6 @@ Diseño claro con tarjetas, tipografía Inter y componentes de movilidad urbana.
 """
 import html
 import json
-import os
 import sys
 import time
 import glob
@@ -26,7 +25,7 @@ import analisis_nodo  # noqa: E402
 import analisis_temporal  # noqa: E402
 import mapa_nodos     # noqa: E402
 import red_nodos      # noqa: E402
-from security_utils import clave_valida, huella_clave, sanitizar_error  # noqa: E402
+from security_utils import sanitizar_error  # noqa: E402
 
 # ============================================================
 # CONFIGURACION DE PAGINA
@@ -511,37 +510,6 @@ st.markdown(f"""
     /* Los botones tipo pildora mantienen contraste sobre la barra lateral */
     [data-testid="stSidebar"] .stButton button,
     [data-testid="stSidebar"] .stButton button * {{ color: #ffffff !important; }}
-    /* Acceso al panel administrativo: campo translucido y boton blanco */
-    [data-testid="stSidebar"] [data-baseweb="input"] {{
-        background: rgba(255,255,255,0.12) !important;
-        border: 1px solid rgba(255,255,255,0.28) !important;
-        border-radius: 10px !important;
-    }}
-    [data-testid="stSidebar"] input {{
-        color: #ffffff !important;
-        -webkit-text-fill-color: #ffffff !important;
-    }}
-    [data-testid="stSidebar"] input::placeholder {{
-        color: rgba(255,255,255,0.6) !important;
-        -webkit-text-fill-color: rgba(255,255,255,0.6) !important;
-    }}
-    [data-testid="stSidebar"] [data-testid="stFormSubmitButton"] button {{
-        background: #ffffff;
-        border: 1px solid #ffffff;
-        border-radius: 999px;
-        padding: 8px 20px;
-        transition: all 0.2s;
-    }}
-    [data-testid="stSidebar"] [data-testid="stFormSubmitButton"] button,
-    [data-testid="stSidebar"] [data-testid="stFormSubmitButton"] button * {{
-        color: #1f48b8 !important;
-        font-weight: 700;
-    }}
-    [data-testid="stSidebar"] [data-testid="stFormSubmitButton"] button:hover {{
-        background: #5eead4;
-        border-color: #5eead4;
-        transform: translateY(-1px);
-    }}
 
     /* ── Pestañas (.nav-tabs-custom del R) ── */
     .stTabs [data-baseweb="tab-list"] {{
@@ -742,6 +710,13 @@ st.markdown(f"""
         color: #ffffff !important;
         font-size: 14px;
         line-height: 1;
+    }}
+    /* El mismo boton en la barra lateral ocupa todo el ancho */
+    .sidebar-admin-link {{
+        display: flex;
+        justify-content: space-between;
+        width: 100%;
+        box-sizing: border-box;
     }}
     @media (max-width: 800px) {{
         .block-container {{ padding-left: 1rem; padding-right: 1rem; }}
@@ -1807,32 +1782,16 @@ with st.sidebar:
     # Sin boton "Recargar datos": st.cache_data.clear() vacia la cache de
     # todos los visitantes. Recargar queda en el panel administrativo.
     st.divider()
-    st.markdown("### Panel administrativo")
-    # Misma sesion que pages/admin.py: st.switch_page conserva session_state,
-    # un enlace <a href="/admin"> abriria una sesion nueva y pediria la clave
-    # otra vez.
-    clave_admin = os.environ.get("ADMIN_PASSWORD", "")
-    if not clave_admin:
-        st.caption("Acceso administrativo no disponible en este servidor.")
-    elif st.session_state.get("admin_auth") == huella_clave(clave_admin):
-        st.caption("Sesión administrativa iniciada.")
-        if st.button("Abrir panel →", width="stretch", key="sidebar_admin_abrir"):
-            st.switch_page("pages/admin.py")
-    else:
-        with st.form("sidebar_admin_login", clear_on_submit=True, border=False):
-            intento = st.text_input(
-                "Contraseña",
-                type="password",
-                autocomplete="current-password",
-                placeholder="Contraseña de administrador",
-                label_visibility="collapsed",
-            )
-            enviado = st.form_submit_button("Ingresar", width="stretch")
-        if enviado:
-            if clave_valida(intento, clave_admin):
-                st.session_state["admin_auth"] = huella_clave(clave_admin)
-                st.switch_page("pages/admin.py")
-            st.error("Contraseña incorrecta.")
+    # Mismo boton que el pie de pagina: abre /admin, donde se pide la clave
+    st.markdown(
+        """
+        <a class="footer-admin-link sidebar-admin-link" href="/admin" target="_self">
+            Ingresar al panel administrativo
+            <span class="footer-admin-arrow">→</span>
+        </a>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 # ============================================================

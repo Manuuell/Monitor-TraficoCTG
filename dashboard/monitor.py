@@ -1279,10 +1279,11 @@ def render_analisis_nodo():
             UMBRAL_MODERADO,
             UMBRAL_LENTO,
         )
-        # Siete marcas caben incluso cuando los graficos quedan en dos columnas
-        # estrechas; los datos conservan todas las horas con corridas.
+        # Cinco marcas caben incluso cuando los graficos quedan en dos columnas
+        # estrechas (00:00 y 04:00 son vecinas: numerar ambas las encima); los
+        # datos conservan todas las horas con corridas.
         ticks_hora = [f"{h:02d}:00" for h in config.HORAS_CON_DATOS
-                      if h % 4 == 0 or h == config.HORAS_CON_DATOS[-1]]
+                      if h % 6 == 0 or h == config.HORAS_CON_DATOS[-1]]
         eje_horas = dict(
             type="category", categoryorder="array", categoryarray=list(horas["etiqueta"]),
             tickmode="array", tickvals=ticks_hora, ticktext=ticks_hora,

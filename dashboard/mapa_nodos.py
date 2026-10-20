@@ -181,11 +181,15 @@ def tarjeta_filtros(clave: str, titulo: str):
 
 
 def _escala_horas() -> str:
-    """Una marca por hora con datos bajo la barra; numero en 0, 4, 8... y 23."""
+    """Una marca por hora con datos bajo la barra; numero en 0, 6, 12, 18 y 23.
+
+    Numerar el 4 lo pegaria al 0 (son posiciones vecinas) y en paneles
+    angostos se leeria "04".
+    """
     horas = config.HORAS_CON_DATOS
     partes = []
     for i, h in enumerate(horas):
-        mayor = h % 4 == 0 or h == horas[-1]
+        mayor = h % 6 == 0 or h == horas[-1]
         izq = f"{i / (len(horas) - 1) * 100:.2f}%"
         partes.append(f'<span class="marca{" mayor" if mayor else ""}" style="left:{izq}"></span>')
         if mayor:

@@ -30,7 +30,8 @@ class HorasConDatosTest(unittest.TestCase):
     def test_escala_marca_una_posicion_por_hora_con_datos(self):
         escala = mapa_nodos._escala_horas()
         self.assertEqual(escala.count('class="marca'), len(config.HORAS_CON_DATOS))
-        self.assertNotIn(">2<", escala)
+        numeros = [n.split("<")[0] for n in escala.split('class="num"')[1:]]
+        self.assertEqual([n.split(">")[-1] for n in numeros], ["0", "6", "12", "18", "23"])
 
 
 if __name__ == "__main__":

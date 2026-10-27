@@ -367,12 +367,16 @@ st.markdown(f"""
     /* Boton propio: Plotly no recibe el control nativo de pantalla completa
        en esta version de Streamlit. */
     [class*="st-key-expandir_grafica_"] button {{
-        min-height: 36px !important;
+        width: 38px !important;
+        min-width: 38px !important;
+        height: 38px !important;
+        min-height: 38px !important;
+        padding: 0 !important;
         border: 0 !important;
         border-radius: 12px !important;
         background: {R_AZUL} !important;
         color: #ffffff !important;
-        font-size: 12px !important;
+        font-size: 18px !important;
         font-weight: 700 !important;
         box-shadow: 0 6px 14px -8px rgba(18,48,122,.65) !important;
     }}
@@ -783,13 +787,13 @@ def grafica_ampliada(fig, clave: str):
 
 def mostrar_grafica(fig, clave: str) -> None:
     """Renderiza una grafica con un control de ampliacion siempre visible."""
-    espacio, accion = st.columns([7, 1])
+    espacio, accion = st.columns([12, 1])
     with accion:
         ampliar = st.button(
-            "⛶ Ampliar",
+            "⛶",
             key=f"expandir_grafica_{clave}",
             help="Abrir esta gráfica en una vista grande",
-            width="stretch",
+            width="content",
         )
     if ampliar:
         grafica_ampliada(fig, clave)

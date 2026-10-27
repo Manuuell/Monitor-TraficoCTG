@@ -1556,8 +1556,8 @@ def render_analisis_temporal():
         with s4:
             st.metric("Nodos por ejecución", f"{nodos_promedio:.1f}")
 
-        vista_hora, vista_calor, vista_tendencia, vista_box = st.tabs(
-            ["▥ Por hora", "▦ Hora × día", "↗ Tendencia mensual", "▭ Distribución"]
+        vista_tendencia, vista_box, vista_calor, vista_hora = st.tabs(
+            ["↗ Tendencia mensual", "▭ Distribución", "▦ Hora × día", "▥ Por hora"]
         )
 
         with vista_hora:

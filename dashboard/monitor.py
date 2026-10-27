@@ -11,6 +11,7 @@ import streamlit.components.v1 as components
 from datetime import datetime, timedelta
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
@@ -1636,7 +1637,20 @@ def render_analisis_temporal():
                     ]
                     zmin, zmax = 0, 1
                 else:
-                    escala, zmin, zmax = "Blues", None, None
+                    # Velocidad actual y flujo libre con la misma escala: el minimo
+                    # y el maximo de ambas con estos filtros. Con escalas propias,
+                    # el flujo libre (casi constante) parecia variar tanto como el
+                    # trafico real.
+                    escala = "Blues"
+                    otra = next(c for c in analisis_temporal.VELOCIDADES if c != columna)
+                    calor_otra, _ = analisis_temporal.mapa_calor(
+                        analisis_temporal.serie_por_ejecucion(
+                            analisis_temporal.filtrar_mediciones(df_base, otra, **filtros), otra,
+                        )
+                    )
+                    ambas = pd.concat([calor, calor_otra.reindex_like(calor)])
+                    zmin = float(np.floor(np.nanmin(ambas.to_numpy(dtype=float))))
+                    zmax = float(np.ceil(np.nanmax(ambas.to_numpy(dtype=float))))
                 fig_calor = go.Figure(go.Heatmap(
                     z=calor.to_numpy(),
                     x=list(calor.columns),
@@ -1657,10 +1671,15 @@ def render_analisis_temporal():
                 fig_calor.update_xaxes(type="category")
                 fig_calor = plotly_base(fig_calor, height=430)
                 st.plotly_chart(fig_calor, theme=None, config=PLOTLY_CONFIG)
+                nota_escala = (
+                    f" Velocidad actual y flujo libre usan la misma escala de color "
+                    f"({zmin:.0f}–{zmax:.0f} km/h) para poder compararlas."
+                    if columna in analisis_temporal.VELOCIDADES else ""
+                )
                 st.caption(
                     "Cada celda es el promedio de las ejecuciones observadas en esa "
                     "combinación de día de la semana y corrida del horario (incluidas "
-                    "las de 5:30, 6:30...). Las celdas vacías no se estiman."
+                    "las de 5:30, 6:30...). Las celdas vacías no se estiman." + nota_escala
                 )
 
         with vista_tendencia:

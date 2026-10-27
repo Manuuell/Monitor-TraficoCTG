@@ -30,6 +30,8 @@ METRICAS = {
         "decimales": 2,
     },
 }
+# Las dos velocidades comparten escala de color para poder compararlas
+VELOCIDADES = ("currentSpeed", "freeFlowSpeed")
 
 DIAS = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"]
 TIPOS_DIA = ["Todos", "Días laborables (L–V)", "Fin de semana", "Quincena"] + DIAS

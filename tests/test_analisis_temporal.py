@@ -115,6 +115,12 @@ class AnalisisTemporalTest(unittest.TestCase):
         self.assertEqual(list(valores.columns)[0], "04:00")
         self.assertEqual(list(valores.columns)[-1], "00:00")
 
+    def test_solo_quedan_las_tres_metricas_pedidas(self):
+        self.assertEqual(
+            list(temporal.METRICAS),
+            ["Velocidad actual (km/h)", "Velocidad de flujo libre (km/h)", "Índice de fluidez (0–1)"],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

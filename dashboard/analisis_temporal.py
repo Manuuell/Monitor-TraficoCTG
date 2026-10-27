@@ -18,31 +18,16 @@ METRICAS = {
         "columna": "currentSpeed",
         "unidad": "km/h",
         "decimales": 1,
-        "sentido": "alto_mejor",
     },
     "Velocidad de flujo libre (km/h)": {
         "columna": "freeFlowSpeed",
         "unidad": "km/h",
         "decimales": 1,
-        "sentido": "alto_mejor",
     },
     "Índice de fluidez (0–1)": {
         "columna": "velocidad_ratio",
         "unidad": "índice",
         "decimales": 2,
-        "sentido": "alto_mejor",
-    },
-    "Retraso (s)": {
-        "columna": "delay_abs_seg",
-        "unidad": "s",
-        "decimales": 1,
-        "sentido": "bajo_mejor",
-    },
-    "Retraso relativo (%)": {
-        "columna": "delay_rel_pct",
-        "unidad": "%",
-        "decimales": 1,
-        "sentido": "bajo_mejor",
     },
 }
 

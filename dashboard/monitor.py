@@ -1635,8 +1635,6 @@ def render_analisis_temporal():
                         [1.0, "#047857"],
                     ]
                     zmin, zmax = 0, 1
-                elif meta["sentido"] == "bajo_mejor":
-                    escala, zmin, zmax = "YlOrRd", None, None
                 else:
                     escala, zmin, zmax = "Blues", None, None
                 fig_calor = go.Figure(go.Heatmap(

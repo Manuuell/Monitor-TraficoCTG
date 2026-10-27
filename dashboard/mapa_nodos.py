@@ -242,7 +242,8 @@ def _valores_iniciales(prefijo: str, fechas) -> dict:
         f"{prefijo}_dia":     TIPOS_DIA[0],
     }
     if fechas:
-        iniciales[f"{prefijo}_fechas"] = tuple(fechas)
+        iniciales[f"{prefijo}_fecha_ini"] = fechas[0]
+        iniciales[f"{prefijo}_fecha_fin"] = fechas[1]
     return iniciales
 
 
@@ -282,14 +283,17 @@ def panel_filtros(prefijo: str, nodos: dict, fechas=None) -> dict:
     metrica = st.selectbox("Métrica a mostrar:", list(METRICAS), key=f"{prefijo}_metrica")
     fecha_ini = fecha_fin = None
     if fechas:
-        rango = st.date_input(
-            "Rango de fechas:", key=f"{prefijo}_fechas",
+        fecha_ini = st.date_input(
+            "Fecha inicial:", key=f"{prefijo}_fecha_ini",
+            min_value=fechas[0], max_value=fechas[1], format="DD/MM/YYYY",
+        )
+        fecha_fin = st.date_input(
+            "Fecha final:", key=f"{prefijo}_fecha_fin",
             min_value=fechas[0], max_value=fechas[1], format="DD/MM/YYYY",
         )
         mostrar_hora_actual()
-        # Mientras se elige el rango llega una sola fecha: cuenta como ese dia
-        if rango:
-            fecha_ini, fecha_fin = rango[0], rango[-1]
+        if fecha_fin < fecha_ini:
+            st.error("La fecha final debe ser igual o posterior a la fecha inicial.")
     st.selectbox(
         "Franja horaria:", list(FRANJAS),
         key=f"{prefijo}_franja", on_change=_al_cambiar_franja,

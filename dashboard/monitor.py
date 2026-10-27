@@ -1250,7 +1250,8 @@ def render_analisis_nodo():
     prefijo = "analisis_nodo"
     iniciales = {
         f"{prefijo}_id": ids_nodos[0],
-        f"{prefijo}_fechas": (min_fecha, max_fecha),
+        f"{prefijo}_fecha_ini": min_fecha,
+        f"{prefijo}_fecha_fin": max_fecha,
         f"{prefijo}_tipo_dia": analisis_nodo.TIPOS_DIA[0],
     }
     for clave, valor in iniciales.items():
@@ -1270,16 +1271,23 @@ def render_analisis_nodo():
             key=f"{prefijo}_id",
             format_func=lambda valor: nombres.get(valor, valor),
         )
-        rango = st.date_input(
-            "Rango de fechas:",
-            key=f"{prefijo}_fechas",
+        fecha_ini = st.date_input(
+            "Fecha inicial:",
+            key=f"{prefijo}_fecha_ini",
+            min_value=min_fecha,
+            max_value=max_fecha,
+            format="DD/MM/YYYY",
+        )
+        fecha_fin = st.date_input(
+            "Fecha final:",
+            key=f"{prefijo}_fecha_fin",
             min_value=min_fecha,
             max_value=max_fecha,
             format="DD/MM/YYYY",
         )
         mapa_nodos.mostrar_hora_actual()
-        fecha_ini = rango[0] if rango else min_fecha
-        fecha_fin = rango[-1] if rango else fecha_ini
+        if fecha_fin < fecha_ini:
+            st.error("La fecha final debe ser igual o posterior a la fecha inicial.")
         tipo_dia = st.selectbox(
             "Tipo de día:",
             analisis_nodo.TIPOS_DIA,
@@ -1513,7 +1521,8 @@ def render_analisis_temporal():
     prefijo = "temporal"
     iniciales = {
         f"{prefijo}_metrica": next(iter(analisis_temporal.METRICAS)),
-        f"{prefijo}_fechas": (min_fecha, max_fecha),
+        f"{prefijo}_fecha_ini": min_fecha,
+        f"{prefijo}_fecha_fin": max_fecha,
         f"{prefijo}_franja": mapa_nodos.TODO_EL_DIA,
         f"{prefijo}_horas": horario.DIA_COMPLETO,
         f"{prefijo}_nodos": [],
@@ -1547,16 +1556,23 @@ def render_analisis_temporal():
             list(analisis_temporal.METRICAS),
             key=f"{prefijo}_metrica",
         )
-        rango = st.date_input(
-            "Rango de fechas:",
-            key=f"{prefijo}_fechas",
+        fecha_ini = st.date_input(
+            "Fecha inicial:",
+            key=f"{prefijo}_fecha_ini",
+            min_value=min_fecha,
+            max_value=max_fecha,
+            format="DD/MM/YYYY",
+        )
+        fecha_fin = st.date_input(
+            "Fecha final:",
+            key=f"{prefijo}_fecha_fin",
             min_value=min_fecha,
             max_value=max_fecha,
             format="DD/MM/YYYY",
         )
         mapa_nodos.mostrar_hora_actual()
-        fecha_ini = rango[0] if rango else min_fecha
-        fecha_fin = rango[-1] if rango else fecha_ini
+        if fecha_fin < fecha_ini:
+            st.error("La fecha final debe ser igual o posterior a la fecha inicial.")
         st.selectbox(
             "Franja horaria:",
             list(mapa_nodos.FRANJAS),

@@ -164,6 +164,11 @@ _CSS_TARJETA = f"""
     color: transparent !important;
     -webkit-text-fill-color: transparent !important;
 }}
+{_T} [class*="st-key-"][class*="_fechas"] input:placeholder-shown::placeholder {{
+    color: transparent !important;
+    -webkit-text-fill-color: transparent !important;
+    opacity: 0 !important;
+}}
 {_T} [class*="st-key-"][class*="_fechas"] [data-baseweb="input"]:has(input:placeholder-shown)::after {{
     content: "Seleccionar rango de fechas";
     position: absolute; left: 16px; top: 50%; transform: translateY(-50%);

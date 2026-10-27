@@ -7,7 +7,9 @@ en las secciones que aplican los mismos filtros (red de nodos, analisis
 temporal) sin que los widgets choquen entre si.
 """
 import html
+from datetime import datetime
 from urllib.parse import urlencode
+from zoneinfo import ZoneInfo
 
 import folium
 import pandas as pd
@@ -61,6 +63,14 @@ TIPOS_DIA = ["Todos", QUINCENA] + DIAS
 # porque cambio el minimo o el maximo.
 VEL_MIN, VEL_MAX = 10, 75
 COLOR_SIN_DATO = "#94a3b8"
+ZONA_CARTAGENA = ZoneInfo("America/Bogota")
+
+
+@st.fragment(run_every=60)
+def mostrar_hora_actual() -> None:
+    """Muestra el momento vigente sin recalcular el resto del tablero."""
+    ahora = datetime.now(ZONA_CARTAGENA)
+    st.caption(f"Hasta este momento: {ahora.strftime('%d/%m/%Y · %H:%M')} · hora de Colombia")
 
 # Estilo vectorial del modo oscuro: el mismo CARTO Dark Matter que dibujaba
 # pydeck en produccion. Sus mosaicos vectoriales no piden llave (los raster
@@ -276,6 +286,7 @@ def panel_filtros(prefijo: str, nodos: dict, fechas=None) -> dict:
             "Rango de fechas:", key=f"{prefijo}_fechas",
             min_value=fechas[0], max_value=fechas[1], format="DD/MM/YYYY",
         )
+        mostrar_hora_actual()
         # Mientras se elige el rango llega una sola fecha: cuenta como ese dia
         if rango:
             fecha_ini, fecha_fin = rango[0], rango[-1]

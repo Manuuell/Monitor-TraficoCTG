@@ -1277,6 +1277,7 @@ def render_analisis_nodo():
             max_value=max_fecha,
             format="DD/MM/YYYY",
         )
+        mapa_nodos.mostrar_hora_actual()
         fecha_ini = rango[0] if rango else min_fecha
         fecha_fin = rango[-1] if rango else fecha_ini
         tipo_dia = st.selectbox(
@@ -1553,6 +1554,7 @@ def render_analisis_temporal():
             max_value=max_fecha,
             format="DD/MM/YYYY",
         )
+        mapa_nodos.mostrar_hora_actual()
         fecha_ini = rango[0] if rango else min_fecha
         fecha_fin = rango[-1] if rango else fecha_ini
         st.selectbox(

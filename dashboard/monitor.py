@@ -364,6 +364,22 @@ st.markdown(f"""
         box-shadow: {R_SOMBRA};
         padding: 14px 16px 10px;
     }}
+    /* Streamlit oculta el control de pantalla completa hasta pasar el cursor.
+       Se mantiene visible en las graficas para que la accion sea descubrible. */
+    [data-testid="stElementContainer"]:has([data-testid="stPlotlyChart"])
+    [data-testid="stElementToolbar"] {{
+        opacity: 1 !important;
+        top: .35rem !important;
+        right: .45rem !important;
+        padding: 0 !important;
+        z-index: 20 !important;
+    }}
+    [data-testid="stElementContainer"]:has([data-testid="stPlotlyChart"])
+    [data-testid="stElementToolbarButtonContainer"] {{
+        background: rgba(255,255,255,.94) !important;
+        border: 1px solid {R_LINEA};
+        box-shadow: 0 4px 12px rgba(17,17,19,.12) !important;
+    }}
     iframe[title="streamlit_folium.st_folium"] {{
         border: 0 !important;
         border-radius: 28px;
@@ -1659,7 +1675,14 @@ def render_analisis_temporal():
                     colorscale=escala,
                     zmin=zmin,
                     zmax=zmax,
-                    colorbar=dict(title=unidad),
+                    colorbar=dict(
+                        title=dict(text=unidad, side="top"),
+                        orientation="h",
+                        x=0.5, xanchor="center",
+                        y=-0.30, yanchor="top",
+                        len=0.70,
+                        thickness=14,
+                    ),
                     hoverongaps=False,
                     hovertemplate=(
                         "Día: %{y}<br>Hora: %{x}<br>Promedio: %{z:."
@@ -1669,7 +1692,8 @@ def render_analisis_temporal():
                 ))
                 fig_calor.update_layout(xaxis_title="Hora del día", yaxis_title="")
                 fig_calor.update_xaxes(type="category")
-                fig_calor = plotly_base(fig_calor, height=430)
+                fig_calor = plotly_base(fig_calor, height=480)
+                fig_calor.update_layout(margin=dict(b=110))
                 st.plotly_chart(fig_calor, theme=None, config=PLOTLY_CONFIG)
                 nota_escala = (
                     f" Velocidad actual y flujo libre usan la misma escala de color "
@@ -2512,6 +2536,11 @@ with tab_historia:
                         colorbar=dict(
                             title=dict(text="Ratio", font=dict(color=R_AZUL_OSC)),
                             tickfont=dict(color=R_TENUE),
+                            orientation="h",
+                            x=0.5, xanchor="center",
+                            y=-0.34, yanchor="top",
+                            len=0.70,
+                            thickness=14,
                         ),
                         hovertemplate="Hora: %{x}<br>Dia: %{y}<br>Ratio: %{z:.2f}<extra></extra>",
                     ))
@@ -2520,8 +2549,8 @@ with tab_historia:
                         plot_bgcolor="rgba(0,0,0,0)",
                         font_color="#1e3a6e",
                         font_family="Inter, Segoe UI, Helvetica, Arial, sans-serif",
-                        height=320,
-                        margin=dict(l=0, r=0, t=10, b=0),
+                        height=390,
+                        margin=dict(l=0, r=0, t=10, b=105),
                         xaxis=dict(
                             title="Hora del dia", gridcolor=REJILLA, type="category",
                             tickfont=dict(color=R_TENUE),

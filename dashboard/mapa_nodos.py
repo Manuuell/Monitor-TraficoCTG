@@ -15,6 +15,7 @@ import streamlit as st
 from branca.colormap import LinearColormap
 from branca.element import MacroElement
 from folium.elements import JSCSSMixin
+from folium.plugins import Fullscreen
 from jinja2 import Template
 
 import config
@@ -616,6 +617,12 @@ def agregar_nodos(m: folium.Map, df: pd.DataFrame, metrica: str, escala,
 
 def terminar_mapa(m: folium.Map, lat: pd.Series, lon: pd.Series) -> folium.Map:
     """Selector de mapa, encuadre sobre los puntos dados y estilos del popup."""
+    Fullscreen(
+        position="topleft",
+        title="Expandir mapa",
+        title_cancel="Salir de pantalla completa",
+        force_separate_button=True,
+    ).add_to(m)
     # Selector siempre visible (no detras del boton de capas): Calles / Oscuro
     control = folium.LayerControl(collapsed=False).add_to(m)
     _CapaOscura(m, control, m.capa_calles).add_to(m)

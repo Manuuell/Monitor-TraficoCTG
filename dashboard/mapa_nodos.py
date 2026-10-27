@@ -66,11 +66,9 @@ COLOR_SIN_DATO = "#94a3b8"
 ZONA_CARTAGENA = ZoneInfo("America/Bogota")
 
 
-@st.fragment(run_every=60)
-def mostrar_hora_actual() -> None:
-    """Muestra el momento vigente sin recalcular el resto del tablero."""
-    ahora = datetime.now(ZONA_CARTAGENA)
-    st.caption(f"Hasta este momento: {ahora.strftime('%d/%m/%Y · %H:%M')} · hora de Colombia")
+def hoy_cartagena():
+    """Fecha vigente en Cartagena, independiente de la zona horaria del VPS."""
+    return datetime.now(ZONA_CARTAGENA).date()
 
 # Estilo vectorial del modo oscuro: el mismo CARTO Dark Matter que dibujaba
 # pydeck en produccion. Sus mosaicos vectoriales no piden llave (los raster
@@ -243,7 +241,7 @@ def _valores_iniciales(prefijo: str, fechas) -> dict:
     }
     if fechas:
         iniciales[f"{prefijo}_fecha_ini"] = fechas[0]
-        iniciales[f"{prefijo}_fecha_fin"] = fechas[1]
+        iniciales[f"{prefijo}_fecha_fin"] = max(fechas[0], hoy_cartagena())
     return iniciales
 
 
@@ -283,15 +281,15 @@ def panel_filtros(prefijo: str, nodos: dict, fechas=None) -> dict:
     metrica = st.selectbox("Métrica a mostrar:", list(METRICAS), key=f"{prefijo}_metrica")
     fecha_ini = fecha_fin = None
     if fechas:
+        fecha_max_selector = max(fechas[1], hoy_cartagena())
         fecha_ini = st.date_input(
             "Fecha inicial:", key=f"{prefijo}_fecha_ini",
-            min_value=fechas[0], max_value=fechas[1], format="DD/MM/YYYY",
+            min_value=fechas[0], max_value=fecha_max_selector, format="DD/MM/YYYY",
         )
         fecha_fin = st.date_input(
             "Fecha final:", key=f"{prefijo}_fecha_fin",
-            min_value=fechas[0], max_value=fechas[1], format="DD/MM/YYYY",
+            min_value=fechas[0], max_value=fecha_max_selector, format="DD/MM/YYYY",
         )
-        mostrar_hora_actual()
         if fecha_fin < fecha_ini:
             st.error("La fecha final debe ser igual o posterior a la fecha inicial.")
     st.selectbox(
@@ -323,7 +321,9 @@ def panel_filtros(prefijo: str, nodos: dict, fechas=None) -> dict:
         "ids": tuple(ids),
     }
     filtrando = (
-        (fechas is not None and (fecha_ini, fecha_fin) != tuple(fechas))
+        (fechas is not None and (fecha_ini, fecha_fin) != (
+            iniciales[f"{prefijo}_fecha_ini"], iniciales[f"{prefijo}_fecha_fin"]
+        ))
         or (desde, hasta) != horario.DIA_COMPLETO
         or consulta["dia_semana"] is not None
         or consulta["quincena"]

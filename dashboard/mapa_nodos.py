@@ -25,7 +25,7 @@ import horario
 # OPCIONES DE LOS FILTROS (tal como las define el documento)
 # ============================================================
 METRICAS = {
-    "Velocidad actual (km/h)": "vel_actual",
+    "Velocidad de circulación (km/h)": "vel_actual",
     "Velocidad de flujo libre (km/h)": "vel_libre",
     "Ratio (Índice de fluidez)": "ratio",
 }
@@ -405,7 +405,7 @@ def popup_html(fila: dict, clasificar_ratio, en_vivo: bool = False) -> str:
         vel = fila["vel_actual"]
         ratio = fila["ratio"]
         filas += [
-            ("Velocidad actual" if en_vivo else "Velocidad promedio",
+            ("Velocidad de circulación" if en_vivo else "Velocidad promedio",
              f"{vel:.1f} km/h" if pd.notna(vel) else "—"),
             ("Índice de fluidez",
              f'<span class="np-punto" style="background:{color};"></span>'

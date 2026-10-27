@@ -1089,7 +1089,7 @@ def leyenda_ratio(modo: str = "ratio"):
                     <div><div class="flow-title">Índice de fluidez</div>
                     <div class="flow-subtitle">Escala para interpretar el estado de la vía</div></div>
                 </div>
-                <div class="flow-formula"><b>Cómo se calcula:</b> velocidad actual ÷ velocidad libre<br>
+                <div class="flow-formula"><b>Cómo se calcula:</b> velocidad de circulación ÷ velocidad libre<br>
                     <span>1.0 = circulación libre · 0 = vehículo detenido</span></div>
             </div>
             <div class="flow-scale">{segmentos}</div>
@@ -1105,7 +1105,7 @@ def leyenda_ratio(modo: str = "ratio"):
                          letter-spacing:1px;text-transform:uppercase;">Interpretación:</span>
             <span style="display:flex;align-items:center;gap:6px;font-size:12px;color:{UTB_WHITE};">
                 <span style="width:12px;height:3px;background:{SERIE_ACTUAL};display:inline-block;"></span>
-                <b style="color:{SERIE_ACTUAL};">Velocidad actual</b>&nbsp;— km/h medidos en tiempo real con tráfico
+                <b style="color:{SERIE_ACTUAL};">Velocidad de circulación</b>&nbsp;— km/h medidos en tiempo real con tráfico
             </span>
             <span style="display:flex;align-items:center;gap:6px;font-size:12px;color:{UTB_WHITE};">
                 <span style="width:12px;height:3px;background:{SERIE_LIBRE};
@@ -1322,7 +1322,7 @@ def render_analisis_nodo():
         with m1:
             st.metric("Índice de fluidez", f"{ratio_promedio:.3f}", estado)
         with m2:
-            st.metric("Velocidad actual", f"{velocidad_promedio:.1f} km/h")
+            st.metric("Velocidad de circulación", f"{velocidad_promedio:.1f} km/h")
         m3, m4 = st.columns(2)
         with m3:
             st.metric("Velocidad de flujo libre", f"{flujo_libre_promedio:.1f} km/h")
@@ -1424,7 +1424,7 @@ def render_analisis_nodo():
         with fila_2a, st.container(border=True):
             st.markdown(
                 f"<div style='border-top:4px solid {COLOR_MODERADO};padding-top:9px;'>"
-                f"<b style='color:{R_AZUL_OSC};'>Velocidad actual vs. flujo libre por hora</b><br>"
+                f"<b style='color:{R_AZUL_OSC};'>Velocidad de circulación vs. flujo libre por hora</b><br>"
                 f"<span style='color:{UTB_GRAY};font-size:12px;'>Hora vs. km/h</span></div>",
                 unsafe_allow_html=True,
             )
@@ -1443,11 +1443,11 @@ def render_analisis_nodo():
                 x=horas["etiqueta"],
                 y=horas["velocidad_promedio"],
                 mode="lines+markers",
-                name="Velocidad actual",
+                name="Velocidad de circulación",
                 line=dict(color=SERIE_ACTUAL, width=3),
                 marker=dict(size=6, color=COLOR_MODERADO),
                 connectgaps=False,
-                hovertemplate="Hora: %{x}<br>Velocidad actual: %{y:.1f} km/h<extra></extra>",
+                hovertemplate="Hora: %{x}<br>Velocidad de circulación: %{y:.1f} km/h<extra></extra>",
             ))
             fig_velocidad.update_layout(
                 xaxis_title="Hora del día",
@@ -1696,7 +1696,7 @@ def render_analisis_temporal():
                     ]
                     zmin, zmax = 0, 1
                 else:
-                    # Velocidad actual y flujo libre con la misma escala: el minimo
+                    # Velocidad de circulación y flujo libre con la misma escala: el minimo
                     # y el maximo de ambas con estos filtros. Con escalas propias,
                     # el flujo libre (casi constante) parecia variar tanto como el
                     # trafico real.
@@ -1739,7 +1739,7 @@ def render_analisis_temporal():
                 fig_calor.update_layout(margin=dict(b=110))
                 mostrar_grafica(fig_calor, "temporal_calor")
                 nota_escala = (
-                    f" Velocidad actual y flujo libre usan la misma escala de color "
+                    f" Velocidad de circulación y flujo libre usan la misma escala de color "
                     f"({zmin:.0f}–{zmax:.0f} km/h) para poder compararlas."
                     if columna in analisis_temporal.VELOCIDADES else ""
                 )
@@ -2155,11 +2155,11 @@ if MOSTRAR_FOOTER:
             <div class="footer-grid">
                 <div>
                     <div class="footer-kicker">Qué muestra</div>
-                    <p class="footer-copy">Velocidad actual, nivel de fluidez, demoras, rutas y comportamiento histórico de los nodos.</p>
+                    <p class="footer-copy">Velocidad de circulación, nivel de fluidez, demoras, rutas y comportamiento histórico de los nodos.</p>
                 </div>
                 <div>
                     <div class="footer-kicker">Cómo se interpreta</div>
-                    <p class="footer-copy">El índice de fluidez compara la velocidad actual con la velocidad de flujo libre. Verde indica circulación fluida; rojo, mayor congestión.</p>
+                    <p class="footer-copy">El índice de fluidez compara la velocidad de circulación con la velocidad de flujo libre. Verde indica circulación fluida; rojo, mayor congestión.</p>
                 </div>
                 <div>
                     <div class="footer-kicker">Fuente y actualización</div>
@@ -2508,7 +2508,7 @@ with tab_historia:
                 ))
                 fig_line.add_trace(go.Scatter(
                     x=evo["consultation_time"], y=evo["vel_actual"],
-                    name="Velocidad actual", line=dict(color=SERIE_ACTUAL, width=2),
+                    name="Velocidad de circulación", line=dict(color=SERIE_ACTUAL, width=2),
                     fill="tonexty", fillcolor="rgba(59,130,246,0.15)",
                     connectgaps=False,
                 ))
@@ -2647,7 +2647,7 @@ with tab_historia:
                         opacity=0.55,
                     ))
                     fig_franjas.add_trace(go.Bar(
-                        name="Velocidad actual",
+                        name="Velocidad de circulación",
                         x=x_franjas,
                         y=df_f["vel_actual"],
                         # Mismo nivel que el mapa y la leyenda (0.90 / 0.75 / 0.60)
@@ -2754,7 +2754,7 @@ with tab_historia:
                         fig_nodo.add_trace(go.Scatter(
                             x=df_nodo["consultation_time"],
                             y=df_nodo["currentSpeed"],
-                            name="Velocidad actual",
+                            name="Velocidad de circulación",
                             line=dict(color=SERIE_ACTUAL, width=2),
                             fill="tonexty",
                             fillcolor="rgba(59,130,246,0.15)",
@@ -2848,7 +2848,7 @@ with tab_historia:
                         fig_r1.add_trace(go.Scatter(x=evo2["consultation_time"], y=evo2["vel_libre"],
                             name="Velocidad libre", line=dict(color="#8A9AB8", dash="dash", width=1.5)))
                         fig_r1.add_trace(go.Scatter(x=evo2["consultation_time"], y=evo2["vel_actual"],
-                            name="Velocidad actual", line=dict(color="#00D4D4", width=2),
+                            name="Velocidad de circulación", line=dict(color="#00D4D4", width=2),
                             fill="tonexty", fillcolor="rgba(94,234,212,0.12)"))
                         fig_r1.update_layout(title="Evolucion de velocidad promedio",
                             xaxis_title="Fecha/Hora", yaxis_title="km/h",

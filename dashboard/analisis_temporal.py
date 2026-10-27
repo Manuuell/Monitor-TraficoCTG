@@ -14,7 +14,7 @@ import horario
 
 
 METRICAS = {
-    "Velocidad actual (km/h)": {
+    "Velocidad de circulación (km/h)": {
         "columna": "currentSpeed",
         "unidad": "km/h",
         "decimales": 1,

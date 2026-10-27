@@ -118,7 +118,7 @@ class AnalisisTemporalTest(unittest.TestCase):
     def test_solo_quedan_las_tres_metricas_pedidas(self):
         self.assertEqual(
             list(temporal.METRICAS),
-            ["Velocidad actual (km/h)", "Velocidad de flujo libre (km/h)", "Índice de fluidez (0–1)"],
+            ["Velocidad de circulación (km/h)", "Velocidad de flujo libre (km/h)", "Índice de fluidez (0–1)"],
         )
 
 

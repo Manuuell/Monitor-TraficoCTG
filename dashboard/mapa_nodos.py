@@ -155,6 +155,20 @@ _CSS_TARJETA = f"""
     -webkit-text-fill-color: {_TENUE} !important;
     opacity: .75 !important;
 }}
+/* El rango del mapa nace vacio: sustituye la mascara tecnica de Streamlit
+   por una instruccion clara dentro del propio campo. */
+{_T} [class*="st-key-"][class*="_fechas"] [data-baseweb="input"]:has(input:placeholder-shown) {{
+    position: relative;
+}}
+{_T} [class*="st-key-"][class*="_fechas"] input:placeholder-shown {{
+    color: transparent !important;
+    -webkit-text-fill-color: transparent !important;
+}}
+{_T} [class*="st-key-"][class*="_fechas"] [data-baseweb="input"]:has(input:placeholder-shown)::after {{
+    content: "Seleccionar rango de fechas";
+    position: absolute; left: 16px; top: 50%; transform: translateY(-50%);
+    color: {_TINTA}; font-size: 14px; pointer-events: none;
+}}
 {_T} [aria-disabled="true"], {_T} [disabled] {{ opacity: 1 !important; }}
 {_T} [data-baseweb="select"] > div:focus-within, {_T} [data-baseweb="input"]:focus-within {{
     border-color: {_MENTA_OSC} !important; box-shadow: 0 0 0 3px rgba(45,212,191,.25);
@@ -260,6 +274,12 @@ def _etiqueta_ultima(corrida):
     return f"Última ejecución ({horario.etiqueta(corrida)})" if corrida else None
 
 
+def _fecha_ultima(fechas, ultima_ejecucion):
+    if ultima_ejecucion is not None and not pd.isna(ultima_ejecucion):
+        return pd.Timestamp(ultima_ejecucion).date()
+    return max(fechas[0], hoy_cartagena()) if fechas else None
+
+
 def _valores_iniciales(prefijo: str, fechas, ultima_ejecucion=None) -> dict:
     corrida_ultima = _corrida_ultima(ultima_ejecucion)
     etiqueta_ultima = _etiqueta_ultima(corrida_ultima)
@@ -274,13 +294,7 @@ def _valores_iniciales(prefijo: str, fechas, ultima_ejecucion=None) -> dict:
         f"{prefijo}_dia":     TIPOS_DIA[0],
     }
     if fechas:
-        fecha_ultima = (
-            pd.Timestamp(ultima_ejecucion).date()
-            if ultima_ejecucion is not None and not pd.isna(ultima_ejecucion)
-            else max(fechas[0], hoy_cartagena())
-        )
-        iniciales[f"{prefijo}_fecha_ini"] = fecha_ultima
-        iniciales[f"{prefijo}_fecha_fin"] = fecha_ultima
+        iniciales[f"{prefijo}_fechas"] = ()
     return iniciales
 
 
@@ -332,23 +346,21 @@ def panel_filtros(prefijo: str, nodos: dict, fechas=None, ultima_ejecucion=None)
 
     metrica = st.selectbox("Métrica a mostrar:", list(METRICAS), key=f"{prefijo}_metrica")
     fecha_ini = fecha_fin = None
+    rango = ()
     if fechas:
         fecha_max_selector = max(fechas[1], hoy_cartagena())
-        st.markdown(
-            '<div class="grupo-filtro-label">Seleccionar rango de fechas</div>',
-            unsafe_allow_html=True,
-        )
-        fecha_ini = st.date_input(
-            "Desde:", key=f"{prefijo}_fecha_ini",
+        rango = st.date_input(
+            "Seleccionar rango de fechas",
+            key=f"{prefijo}_fechas",
             min_value=fechas[0], max_value=fecha_max_selector, format="DD/MM/YYYY",
+            label_visibility="collapsed",
         )
-        fecha_fin = st.date_input(
-            "Hasta:", key=f"{prefijo}_fecha_fin",
-            min_value=fechas[0], max_value=fecha_max_selector, format="DD/MM/YYYY",
-        )
+        fecha_default = _fecha_ultima(fechas, ultima_ejecucion)
+        if rango and len(rango) == 2:
+            fecha_ini, fecha_fin = rango
+        else:
+            fecha_ini = fecha_fin = fecha_default
         mostrar_hora_actual()
-        if fecha_fin < fecha_ini:
-            st.error("La fecha final debe ser igual o posterior a la fecha inicial.")
     st.selectbox(
         "Franja horaria:", opciones_franja,
         key=f"{prefijo}_franja", on_change=_al_cambiar_franja,
@@ -378,9 +390,9 @@ def panel_filtros(prefijo: str, nodos: dict, fechas=None, ultima_ejecucion=None)
         "ids": tuple(ids),
     }
     filtrando = (
-        (fechas is not None and (fecha_ini, fecha_fin) != (
-            iniciales[f"{prefijo}_fecha_ini"], iniciales[f"{prefijo}_fecha_fin"]
-        ))
+        (fechas is not None and rango and len(rango) == 2 and (
+            fecha_ini, fecha_fin
+        ) != (_fecha_ultima(fechas, ultima_ejecucion),) * 2)
         or (desde, hasta) != tuple(iniciales[f"{prefijo}_horas"])
         or consulta["dia_semana"] is not None
         or consulta["quincena"]

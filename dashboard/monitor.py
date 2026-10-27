@@ -364,30 +364,25 @@ st.markdown(f"""
         box-shadow: {R_SOMBRA};
         padding: 14px 16px 10px;
     }}
-    /* Streamlit oculta el control de pantalla completa hasta pasar el cursor.
-       Se mantiene visible en las graficas para que la accion sea descubrible. */
-    [data-testid="stElementToolbar"], .stElementToolbar {{
-        opacity: 1 !important;
-        top: .35rem !important;
-        right: .45rem !important;
-        padding: 0 !important;
-        z-index: 20 !important;
-    }}
-    [data-testid="stElementToolbarButtonContainer"] {{
-        background: rgba(255,255,255,.94) !important;
-        border: 1px solid {R_LINEA};
-        box-shadow: 0 4px 12px rgba(17,17,19,.12) !important;
-    }}
-    [data-testid="stElementToolbarButton"] button[aria-label="Fullscreen"] {{
-        width: 38px !important;
-        height: 38px !important;
+    /* Boton propio: Plotly no recibe el control nativo de pantalla completa
+       en esta version de Streamlit. */
+    [class*="st-key-expandir_grafica_"] button {{
+        min-height: 36px !important;
+        border: 0 !important;
         border-radius: 12px !important;
         background: {R_AZUL} !important;
         color: #ffffff !important;
+        font-size: 12px !important;
+        font-weight: 700 !important;
+        box-shadow: 0 6px 14px -8px rgba(18,48,122,.65) !important;
     }}
-    [data-testid="stElementToolbarButton"] button[aria-label="Fullscreen"] svg {{
-        fill: currentColor !important;
+    [class*="st-key-expandir_grafica_"] button:hover {{
+        background: {R_AZUL_OSC} !important;
         color: #ffffff !important;
+    }}
+    [data-testid="stDialog"] [role="dialog"] {{
+        width: min(96vw, 1800px) !important;
+        max-width: 96vw !important;
     }}
     iframe[title="streamlit_folium.st_folium"] {{
         border: 0 !important;
@@ -770,6 +765,40 @@ st.markdown(f"""
 # tinta azul, rejilla celeste y etiqueta flotante azul oscuro
 REJILLA = "#e3eaf7"
 PLOTLY_CONFIG = {"displayModeBar": False, "responsive": True}
+
+
+@st.dialog("Gráfica ampliada", width="large")
+def grafica_ampliada(fig, clave: str):
+    """Abre una copia grande de la grafica sin alterar sus filtros."""
+    fig_grande = go.Figure(fig)
+    fig_grande.update_layout(height=720)
+    st.plotly_chart(
+        fig_grande,
+        theme=None,
+        config=PLOTLY_CONFIG,
+        key=f"{clave}_ampliada",
+    )
+    st.caption("Pulsa × o la tecla Esc para volver al tablero.")
+
+
+def mostrar_grafica(fig, clave: str) -> None:
+    """Renderiza una grafica con un control de ampliacion siempre visible."""
+    espacio, accion = st.columns([7, 1])
+    with accion:
+        ampliar = st.button(
+            "⛶ Ampliar",
+            key=f"expandir_grafica_{clave}",
+            help="Abrir esta gráfica en una vista grande",
+            width="stretch",
+        )
+    if ampliar:
+        grafica_ampliada(fig, clave)
+    st.plotly_chart(
+        fig,
+        theme=None,
+        config=PLOTLY_CONFIG,
+        key=f"grafica_{clave}",
+    )
 
 
 def plotly_base(fig, height: int = 340):
@@ -1348,7 +1377,7 @@ def render_analisis_nodo():
                 range=[0, max(1.05, float(diaria["ratio_promedio"].max()) * 1.08)]
             )
             fig_serie = plotly_base(fig_serie, height=330)
-            st.plotly_chart(fig_serie, theme=None, config=PLOTLY_CONFIG)
+            mostrar_grafica(fig_serie, "nodo_serie")
             st.caption("Cada punto es el promedio de las ejecuciones válidas de un día.")
 
         with fila_1b, st.container(border=True):
@@ -1383,7 +1412,7 @@ def render_analisis_nodo():
                 range=[0, max(1.05, float(hora["ratio_promedio"].max()) * 1.08)]
             )
             fig_patron = plotly_base(fig_patron, height=330)
-            st.plotly_chart(fig_patron, theme=None, config=PLOTLY_CONFIG)
+            mostrar_grafica(fig_patron, "nodo_patron")
             st.caption("Las horas sin mediciones quedan vacías: no se interpolan ni se estiman.")
 
         fila_2a, fila_2b = st.columns(2, gap="medium")
@@ -1422,7 +1451,7 @@ def render_analisis_nodo():
             )
             fig_velocidad.update_xaxes(**eje_horas)
             fig_velocidad = plotly_base(fig_velocidad, height=330)
-            st.plotly_chart(fig_velocidad, theme=None, config=PLOTLY_CONFIG)
+            mostrar_grafica(fig_velocidad, "nodo_velocidad")
             st.caption("Ambas líneas usan las mismas ejecuciones; los huecos indican falta de datos.")
 
         with fila_2b, st.container(border=True):
@@ -1456,7 +1485,7 @@ def render_analisis_nodo():
                 )],
             )
             fig_distribucion = plotly_base(fig_distribucion, height=330)
-            st.plotly_chart(fig_distribucion, theme=None, config=PLOTLY_CONFIG)
+            mostrar_grafica(fig_distribucion, "nodo_distribucion")
             st.caption("Cada ejecución válida pesa una vez en la clasificación del nodo.")
 
 
@@ -1629,7 +1658,7 @@ def render_analisis_temporal():
             if columna == "velocidad_ratio":
                 fig_hora.update_yaxes(range=[0, max(1.05, float(hora["promedio"].max()) * 1.08)])
             fig_hora = plotly_base(fig_hora, height=430)
-            st.plotly_chart(fig_hora, theme=None, config=PLOTLY_CONFIG)
+            mostrar_grafica(fig_hora, "temporal_hora")
             st.caption(
                 "Las barras muestran el promedio entre ejecuciones; la línea muestra la "
                 "mediana, menos sensible a valores extremos."
@@ -1703,7 +1732,7 @@ def render_analisis_temporal():
                 fig_calor.update_xaxes(type="category")
                 fig_calor = plotly_base(fig_calor, height=480)
                 fig_calor.update_layout(margin=dict(b=110))
-                st.plotly_chart(fig_calor, theme=None, config=PLOTLY_CONFIG)
+                mostrar_grafica(fig_calor, "temporal_calor")
                 nota_escala = (
                     f" Velocidad actual y flujo libre usan la misma escala de color "
                     f"({zmin:.0f}–{zmax:.0f} km/h) para poder compararlas."
@@ -1757,7 +1786,7 @@ def render_analisis_temporal():
             # expanda un unico mes a milisegundos alrededor del primer dia.
             fig_tendencia.update_xaxes(type="category")
             fig_tendencia = plotly_base(fig_tendencia, height=430)
-            st.plotly_chart(fig_tendencia, theme=None, config=PLOTLY_CONFIG)
+            mostrar_grafica(fig_tendencia, "temporal_tendencia")
             st.caption(
                 "Primero se promedian las ejecuciones de cada día; después se resumen los "
                 "días del mes. Así cada día observado tiene el mismo peso."
@@ -1786,7 +1815,7 @@ def render_analisis_temporal():
                 ),
             )
             fig_box = plotly_base(fig_box, height=430)
-            st.plotly_chart(fig_box, theme=None, config=PLOTLY_CONFIG)
+            mostrar_grafica(fig_box, "temporal_distribucion")
             st.caption(
                 "La caja contiene el 50% central de las ejecuciones; la línea sólida es la "
                 "mediana, la línea discontinua marca el promedio y los puntos son valores atípicos."
@@ -2480,7 +2509,7 @@ with tab_historia:
                 ))
                 fig_line.update_layout(xaxis_title="Fecha/Hora", yaxis_title="km/h")
                 fig_line = plotly_base(fig_line, height=320)
-                st.plotly_chart(fig_line, theme=None, config=PLOTLY_CONFIG)
+                mostrar_grafica(fig_line, "historico_evolucion")
                 leyenda_ratio("velocidad")
 
                 # --- Grafica 2: Top nodos mas congestionados en el periodo ---
@@ -2507,7 +2536,7 @@ with tab_historia:
                 fig_nodos.update_traces(textposition="outside")
                 fig_nodos = plotly_base(fig_nodos, height=430)
                 fig_nodos.update_layout(xaxis=dict(range=[0, 1.15]), showlegend=False)
-                st.plotly_chart(fig_nodos, theme=None, config=PLOTLY_CONFIG)
+                mostrar_grafica(fig_nodos, "historico_nodos")
                 leyenda_ratio("ratio")
 
                 # --- Grafica 3: Heatmap hora x dia de semana ---
@@ -2570,7 +2599,7 @@ with tab_historia:
                             tickfont=dict(color=R_TENUE), automargin=True,
                         ),
                     )
-                    st.plotly_chart(fig_heat, theme=None, config=PLOTLY_CONFIG)
+                    mostrar_grafica(fig_heat, "historico_calor")
 
                 # ------------------------------------------------
                 # Grafica 4: Hora pico vs hora valle
@@ -2644,7 +2673,7 @@ with tab_historia:
                         ),
                     )
                     fig_franjas = plotly_base(fig_franjas, height=370)
-                    st.plotly_chart(fig_franjas, theme=None, config=PLOTLY_CONFIG)
+                    mostrar_grafica(fig_franjas, "historico_franjas")
                     leyenda_ratio("velocidad")
 
                     # Mini tabla resumen
@@ -2731,7 +2760,7 @@ with tab_historia:
                             title=dict(text=nodo_sel, font=dict(color=UTB_WHITE, size=13)),
                         )
                         fig_nodo = plotly_base(fig_nodo, height=300)
-                        st.plotly_chart(fig_nodo, theme=None, config=PLOTLY_CONFIG)
+                        mostrar_grafica(fig_nodo, "historico_nodo_serie")
                         leyenda_ratio("velocidad")
 
                         # Ratio promedio por hora del dia (barras)
@@ -2761,7 +2790,7 @@ with tab_historia:
                             yaxis=dict(range=[0, 1.2]),
                         )
                         fig_hora_n = plotly_base(fig_hora_n, height=280)
-                        st.plotly_chart(fig_hora_n, theme=None, config=PLOTLY_CONFIG)
+                        mostrar_grafica(fig_hora_n, "historico_nodo_hora")
                         leyenda_ratio("ratio")
 
                         # Peor hora / Mejor hora

@@ -785,6 +785,7 @@ def grafica_ampliada(fig, clave: str):
     st.caption("Pulsa × o la tecla Esc para volver al tablero.")
 
 
+@st.fragment
 def mostrar_grafica(fig, clave: str) -> None:
     """Renderiza una grafica con un control de ampliacion siempre visible."""
     espacio, accion = st.columns([12, 1])

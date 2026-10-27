@@ -1291,7 +1291,6 @@ def render_analisis_nodo():
             max_value=fecha_max_selector,
             format="DD/MM/YYYY",
         )
-        mapa_nodos.mostrar_hora_actual()
         if fecha_fin < fecha_ini:
             st.error("La fecha final debe ser igual o posterior a la fecha inicial.")
         tipo_dia = st.selectbox(
@@ -1582,7 +1581,6 @@ def render_analisis_temporal():
             max_value=fecha_max_selector,
             format="DD/MM/YYYY",
         )
-        mapa_nodos.mostrar_hora_actual()
         if fecha_fin < fecha_ini:
             st.error("La fecha final debe ser igual o posterior a la fecha inicial.")
         st.selectbox(

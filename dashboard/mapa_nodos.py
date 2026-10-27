@@ -70,13 +70,6 @@ def hoy_cartagena():
     """Fecha vigente en Cartagena, independiente de la zona horaria del VPS."""
     return datetime.now(ZONA_CARTAGENA).date()
 
-
-@st.fragment(run_every=60)
-def mostrar_hora_actual() -> None:
-    """Muestra la fecha y hora vigentes sin recalcular el resto del tablero."""
-    ahora = datetime.now(ZONA_CARTAGENA)
-    st.caption(f"Fecha y hora actual: {ahora.strftime('%d/%m/%Y · %H:%M')} · Colombia")
-
 # Estilo vectorial del modo oscuro: el mismo CARTO Dark Matter que dibujaba
 # pydeck en produccion. Sus mosaicos vectoriales no piden llave (los raster
 # de CARTO si), por eso se dibuja con MapLibre dentro de Leaflet.
@@ -365,7 +358,6 @@ def panel_filtros(prefijo: str, nodos: dict, fechas=None, ultima_ejecucion=None)
             fecha_ini, fecha_fin = rango
         else:
             fecha_ini = fecha_fin = fecha_default
-        mostrar_hora_actual()
     st.selectbox(
         "Franja horaria:", opciones_franja,
         key=f"{prefijo}_franja", on_change=_al_cambiar_franja,

@@ -161,15 +161,19 @@ _CSS_TARJETA = f"""
 }}
 {_T} [data-baseweb="slider"] > div > div {{ height: 6px !important; border-radius: 3px; }}
 {_T} [data-testid="stSliderTickBar"] {{ display: none; }}
-.escala-horas {{ position: relative; height: 24px; margin: -12px 0 0; }}
+/* Escala legible: numeros mas grandes y oscuros, separados del filtro de abajo */
+.escala-horas {{ position: relative; height: 30px; margin: -8px 0 10px; }}
 .escala-horas .marca {{
-    position: absolute; top: 0; width: 1px; height: 4px; background: #c9d6ee;
+    position: absolute; top: 0; width: 1px; height: 5px; background: #b8c6e3;
 }}
-.escala-horas .marca.mayor {{ height: 7px; background: #93a6c9; }}
+.escala-horas .marca.mayor {{ width: 2px; height: 9px; background: #6f84ad; }}
 .escala-horas .num {{
-    position: absolute; top: 10px; transform: translateX(-50%);
-    font-size: 10px; color: {_TENUE};
+    position: absolute; top: 12px; transform: translateX(-50%);
+    font-size: 11px; font-weight: 600; color: #3d4f73;
 }}
+/* Los extremos no se salen de la tarjeta */
+.escala-horas .num.inicio {{ transform: none; }}
+.escala-horas .num.fin {{ transform: translateX(-100%); }}
 </style>
 """
 

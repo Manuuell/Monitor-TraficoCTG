@@ -1273,15 +1273,19 @@ def render_analisis_nodo():
             key=f"{prefijo}_id",
             format_func=lambda valor: nombres.get(valor, valor),
         )
+        st.markdown(
+            '<div class="grupo-filtro-label">Seleccionar rango de fechas</div>',
+            unsafe_allow_html=True,
+        )
         fecha_ini = st.date_input(
-            "Fecha inicial:",
+            "Desde:",
             key=f"{prefijo}_fecha_ini",
             min_value=min_fecha,
             max_value=fecha_max_selector,
             format="DD/MM/YYYY",
         )
         fecha_fin = st.date_input(
-            "Fecha final:",
+            "Hasta:",
             key=f"{prefijo}_fecha_fin",
             min_value=min_fecha,
             max_value=fecha_max_selector,
@@ -1560,15 +1564,19 @@ def render_analisis_temporal():
             list(analisis_temporal.METRICAS),
             key=f"{prefijo}_metrica",
         )
+        st.markdown(
+            '<div class="grupo-filtro-label">Seleccionar rango de fechas</div>',
+            unsafe_allow_html=True,
+        )
         fecha_ini = st.date_input(
-            "Fecha inicial:",
+            "Desde:",
             key=f"{prefijo}_fecha_ini",
             min_value=min_fecha,
             max_value=fecha_max_selector,
             format="DD/MM/YYYY",
         )
         fecha_fin = st.date_input(
-            "Fecha final:",
+            "Hasta:",
             key=f"{prefijo}_fecha_fin",
             min_value=min_fecha,
             max_value=fecha_max_selector,
@@ -2223,7 +2231,7 @@ with tab_mapa:
         with col_filtros, mapa_nodos.tarjeta_filtros("mapa", "Filtros del Mapa"):
             filtros = mapa_nodos.panel_filtros(
                 "mapa", dict(zip(catalogo["id_nodo"], catalogo["nombre_nodo"])),
-                fechas_disponibles(),
+                fechas_disponibles(), _hora_snapshot,
             )
         consulta = filtros["consulta"]
         en_vivo = filtros["en_vivo"]
@@ -2290,7 +2298,9 @@ with tab_red:
         nombres = dict(zip(catalogo["id_nodo"], catalogo["nombre_nodo"]))
         col_filtros, col_mapa = st.columns([1, 3])
         with col_filtros, mapa_nodos.tarjeta_filtros("red", "Filtros del Mapa de Red"):
-            filtros_red = mapa_nodos.panel_filtros("red", nombres, fechas_disponibles())
+            filtros_red = mapa_nodos.panel_filtros(
+                "red", nombres, fechas_disponibles(), _hora_snapshot
+            )
             mostrar_conexiones = st.checkbox("Mostrar conexiones", value=True, key="red_conexiones")
             # La clave cambia con la disponibilidad del trazado: si el JSON
             # aparece a mitad de sesion, la casilla vuelve a nacer marcada.

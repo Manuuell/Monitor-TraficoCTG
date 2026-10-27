@@ -117,6 +117,10 @@ _CSS_TARJETA = f"""
     font-weight: 700 !important; text-transform: uppercase !important;
     letter-spacing: 0.7px !important;
 }}
+{_T} .grupo-filtro-label {{
+    color: {_TENUE}; font-size: 11px; font-weight: 700;
+    text-transform: uppercase; letter-spacing: 0.7px; margin: 2px 0 -4px;
+}}
 /* Casillas y opciones en tinta, sin mayusculas (como .checkbox del R) */
 {_T} [data-testid="stCheckbox"] p, {_T} [data-testid="stRadio"] [role="radiogroup"] p {{
     color: {_TINTA} !important; font-size: 13px !important; font-weight: 500 !important;
@@ -237,28 +241,58 @@ def barra_horas(clave: str, on_change) -> tuple:
     return desde, hasta
 
 
-def _valores_iniciales(prefijo: str, fechas) -> dict:
+def _corrida_ultima(ultima_ejecucion):
+    """Corrida del cron correspondiente a la ultima medicion disponible."""
+    if ultima_ejecucion is None or pd.isna(ultima_ejecucion):
+        return None
+    ts = pd.Timestamp(ultima_ejecucion)
+    corrida = f"{ts.hour:02d}:{(ts.minute // 30) * 30:02d}"
+    if corrida in horario.CORRIDAS:
+        return corrida
+    minuto = horario.minuto_operativo(corrida)
+    return min(
+        horario.CORRIDAS,
+        key=lambda valor: abs(horario.minuto_operativo(valor) - minuto),
+    )
+
+
+def _etiqueta_ultima(corrida):
+    return f"Última ejecución ({horario.etiqueta(corrida)})" if corrida else None
+
+
+def _valores_iniciales(prefijo: str, fechas, ultima_ejecucion=None) -> dict:
+    corrida_ultima = _corrida_ultima(ultima_ejecucion)
+    etiqueta_ultima = _etiqueta_ultima(corrida_ultima)
     iniciales = {
         # Como en produccion: la vista inicial se colorea por indice de fluidez
         f"{prefijo}_metrica": "Ratio (Índice de fluidez)",
-        f"{prefijo}_franja":  TODO_EL_DIA,
-        f"{prefijo}_horas":   horario.DIA_COMPLETO,
+        f"{prefijo}_franja":  etiqueta_ultima or TODO_EL_DIA,
+        f"{prefijo}_horas":   (
+            (corrida_ultima, corrida_ultima) if corrida_ultima else horario.DIA_COMPLETO
+        ),
         f"{prefijo}_nodos":   [],
         f"{prefijo}_dia":     TIPOS_DIA[0],
     }
     if fechas:
-        iniciales[f"{prefijo}_fecha_ini"] = fechas[0]
-        iniciales[f"{prefijo}_fecha_fin"] = max(fechas[0], hoy_cartagena())
+        fecha_ultima = (
+            pd.Timestamp(ultima_ejecucion).date()
+            if ultima_ejecucion is not None and not pd.isna(ultima_ejecucion)
+            else max(fechas[0], hoy_cartagena())
+        )
+        iniciales[f"{prefijo}_fecha_ini"] = fecha_ultima
+        iniciales[f"{prefijo}_fecha_fin"] = fecha_ultima
     return iniciales
 
 
-def panel_filtros(prefijo: str, nodos: dict, fechas=None) -> dict:
+def panel_filtros(prefijo: str, nodos: dict, fechas=None, ultima_ejecucion=None) -> dict:
     """
     Dibuja los filtros y devuelve la seleccion.
 
     nodos:  {id_nodo: nombre_nodo} para el selector de punto de monitoreo.
     fechas: (primera, ultima) fecha con datos, o None si no se conoce (sin
             filtro de rango de fechas).
+    ultima_ejecucion: timestamp de la captura que se muestra al entrar. Las
+            fechas y la barra horaria se inicializan en ese punto.
     Devuelve {"metrica", "metrica_label", "consulta", "en_vivo"}; "consulta"
     son los argumentos de db.promedios_por_nodo / promedios_por_nodo_df.
     "en_vivo" es True mientras no se toque ningun filtro de datos (fechas,
@@ -266,20 +300,31 @@ def panel_filtros(prefijo: str, nodos: dict, fechas=None) -> dict:
     en produccion, y no promedios. Metrica y punto de monitoreo no cuentan:
     solo cambian el color o que nodos se ven.
     """
-    iniciales = _valores_iniciales(prefijo, fechas)
+    corrida_ultima = _corrida_ultima(ultima_ejecucion)
+    etiqueta_ultima = _etiqueta_ultima(corrida_ultima)
+    opciones_franja = ([etiqueta_ultima] if etiqueta_ultima else []) + list(FRANJAS)
+    iniciales = _valores_iniciales(prefijo, fechas, ultima_ejecucion)
     for clave, valor in iniciales.items():
         st.session_state.setdefault(clave, valor)
 
     def _al_cambiar_franja():
-        rango = FRANJAS[st.session_state[f"{prefijo}_franja"]]
+        seleccion = st.session_state[f"{prefijo}_franja"]
+        rango = (
+            (corrida_ultima, corrida_ultima)
+            if etiqueta_ultima and seleccion == etiqueta_ultima
+            else FRANJAS[seleccion]
+        )
         if rango is not None:
             st.session_state[f"{prefijo}_horas"] = rango
 
     def _al_mover_horas():
         # Mover la barra elige la franja fija con esas horas, o Personalizado
         rango = tuple(st.session_state[f"{prefijo}_horas"])
-        st.session_state[f"{prefijo}_franja"] = next(
-            (nombre for nombre, horas in FRANJAS.items() if horas == rango), PERSONALIZADO)
+        if etiqueta_ultima and rango == (corrida_ultima, corrida_ultima):
+            st.session_state[f"{prefijo}_franja"] = etiqueta_ultima
+        else:
+            st.session_state[f"{prefijo}_franja"] = next(
+                (nombre for nombre, horas in FRANJAS.items() if horas == rango), PERSONALIZADO)
 
     def _restablecer():
         for clave, valor in iniciales.items():
@@ -289,19 +334,23 @@ def panel_filtros(prefijo: str, nodos: dict, fechas=None) -> dict:
     fecha_ini = fecha_fin = None
     if fechas:
         fecha_max_selector = max(fechas[1], hoy_cartagena())
+        st.markdown(
+            '<div class="grupo-filtro-label">Seleccionar rango de fechas</div>',
+            unsafe_allow_html=True,
+        )
         fecha_ini = st.date_input(
-            "Fecha inicial:", key=f"{prefijo}_fecha_ini",
+            "Desde:", key=f"{prefijo}_fecha_ini",
             min_value=fechas[0], max_value=fecha_max_selector, format="DD/MM/YYYY",
         )
         fecha_fin = st.date_input(
-            "Fecha final:", key=f"{prefijo}_fecha_fin",
+            "Hasta:", key=f"{prefijo}_fecha_fin",
             min_value=fechas[0], max_value=fecha_max_selector, format="DD/MM/YYYY",
         )
         mostrar_hora_actual()
         if fecha_fin < fecha_ini:
             st.error("La fecha final debe ser igual o posterior a la fecha inicial.")
     st.selectbox(
-        "Franja horaria:", list(FRANJAS),
+        "Franja horaria:", opciones_franja,
         key=f"{prefijo}_franja", on_change=_al_cambiar_franja,
     )
     # La barra siempre se puede mover; elegir una franja fija la ajusta sola
@@ -332,7 +381,7 @@ def panel_filtros(prefijo: str, nodos: dict, fechas=None) -> dict:
         (fechas is not None and (fecha_ini, fecha_fin) != (
             iniciales[f"{prefijo}_fecha_ini"], iniciales[f"{prefijo}_fecha_fin"]
         ))
-        or (desde, hasta) != horario.DIA_COMPLETO
+        or (desde, hasta) != tuple(iniciales[f"{prefijo}_horas"])
         or consulta["dia_semana"] is not None
         or consulta["quincena"]
     )

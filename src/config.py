@@ -85,13 +85,7 @@ HORARIOS = {
     "Turno 3": ["13:30", "14:00", "15:00", "16:00", "17:00", "17:30", "18:00"],
     "Turno 4": ["18:30", "19:00", "20:00", "21:00", "22:00", "23:00", "00:00"],
 }
-
-# Horas en las que el cron toma datos (00 y 04-23). Los ejes horarios y la
-# barra de horas del dashboard muestran solo estas: las demas siempre quedan
-# vacias y solo meten ruido.
-HORAS_CON_DATOS = sorted({
-    int(hora.split(":")[0]) for horas in HORARIOS.values() for hora in horas
-})
+# El dashboard ordena y filtra las horas segun estas corridas (ver horario.py)
 
 VPS_TURNOS = {
     "1": ["Turno 1", "Turno 2"],

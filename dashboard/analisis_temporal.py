@@ -10,6 +10,8 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
+import horario
+
 
 METRICAS = {
     "Velocidad actual (km/h)": {
@@ -60,13 +62,16 @@ def filtrar_mediciones(
     columna_metrica: str,
     fecha_ini=None,
     fecha_fin=None,
-    hora_ini: int = 0,
-    hora_fin: int = 23,
+    desde: str | None = None,
+    hasta: str | None = None,
     mes: int | None = None,
     tipo_dia: str = "Todos",
     ids: tuple = (),
 ) -> pd.DataFrame:
-    """Devuelve solo observaciones validas que cumplen todos los filtros."""
+    """Devuelve solo observaciones validas que cumplen todos los filtros.
+
+    desde y hasta son corridas "HH:MM" del dia operativo (ver horario.py).
+    """
     requeridas = {"consultation_time", columna_metrica}
     if df.empty or not requeridas.issubset(df.columns):
         return pd.DataFrame(columns=list(df.columns))
@@ -80,7 +85,7 @@ def filtrar_mediciones(
     valores = datos[columna_metrica]
     mascara = _mascara_ok(datos) & ts.notna() & valores.notna()
     mascara &= pd.Series(np.isfinite(valores), index=datos.index)
-    mascara &= ts.dt.hour.between(int(hora_ini), int(hora_fin))
+    mascara &= horario.en_horario(ts, desde, hasta)
 
     if fecha_ini is not None:
         mascara &= ts.dt.date >= fecha_ini
@@ -129,15 +134,29 @@ def serie_por_ejecucion(df: pd.DataFrame, columna_metrica: str) -> pd.DataFrame:
     )
 
 
-def resumen_por_hora(serie: pd.DataFrame) -> pd.DataFrame:
-    """Media, mediana y dispersion entre ejecuciones para cada hora."""
-    columnas = ["hora", "promedio", "mediana", "p25", "p75", "ejecuciones", "nodos_promedio"]
+def _con_corrida(serie: pd.DataFrame) -> pd.DataFrame:
+    """Agrega la corrida "HH:MM" de cada ejecucion y deja solo las del cron."""
+    datos = serie.copy()
+    datos["corrida"] = horario.corrida_de(datos["consultation_time"])
+    return datos[datos["corrida"].isin(horario.CORRIDAS)]
+
+
+def _orden_corridas(df: pd.DataFrame) -> pd.DataFrame:
+    """Ordena por la corrida en el dia operativo: 04:00 ... 23:00, 00:00."""
+    return df.sort_values("corrida", key=lambda c: c.map(horario.minuto_operativo))
+
+
+def resumen_por_corrida(serie: pd.DataFrame) -> pd.DataFrame:
+    """Media, mediana y dispersion entre ejecuciones para cada corrida del cron.
+
+    Las corridas de media hora (05:30, 06:30...) quedan aparte de la hora en punto.
+    """
+    columnas = ["corrida", "promedio", "mediana", "p25", "p75", "ejecuciones", "nodos_promedio"]
     if serie.empty:
         return pd.DataFrame(columns=columnas)
-    datos = serie.copy()
-    datos["hora"] = datos["consultation_time"].dt.hour
-    return (
-        datos.groupby("hora", as_index=False)
+    datos = _con_corrida(serie)
+    resumen = (
+        datos.groupby("corrida", as_index=False)
         .agg(
             promedio=("valor", "mean"),
             mediana=("valor", "median"),
@@ -147,25 +166,25 @@ def resumen_por_hora(serie: pd.DataFrame) -> pd.DataFrame:
             nodos_promedio=("n_nodos", "mean"),
         )[columnas]
     )
+    return _orden_corridas(resumen).reset_index(drop=True)
 
 
 def mapa_calor(serie: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Matrices hora x dia de semana para promedio y numero de ejecuciones."""
-    horas = list(range(24))
+    """Matrices corrida x dia de semana para promedio y numero de ejecuciones."""
+    corridas = list(horario.CORRIDAS)
     dias = list(range(7))
     if serie.empty:
-        vacia = pd.DataFrame(index=dias, columns=horas, dtype=float)
+        vacia = pd.DataFrame(index=dias, columns=corridas, dtype=float)
         return vacia, vacia.copy()
 
-    datos = serie.copy()
+    datos = _con_corrida(serie)
     datos["dia_num"] = datos["consultation_time"].dt.weekday
-    datos["hora"] = datos["consultation_time"].dt.hour
     promedio = datos.pivot_table(
-        index="dia_num", columns="hora", values="valor", aggfunc="mean"
-    ).reindex(index=dias, columns=horas)
+        index="dia_num", columns="corrida", values="valor", aggfunc="mean"
+    ).reindex(index=dias, columns=corridas)
     conteo = datos.pivot_table(
-        index="dia_num", columns="hora", values="valor", aggfunc="size"
-    ).reindex(index=dias, columns=horas)
+        index="dia_num", columns="corrida", values="valor", aggfunc="size"
+    ).reindex(index=dias, columns=corridas)
     return promedio, conteo
 
 
@@ -193,11 +212,9 @@ def tendencia_mensual(serie: pd.DataFrame) -> pd.DataFrame:
     )
 
 
-def distribucion_por_hora(serie: pd.DataFrame) -> pd.DataFrame:
-    """Valores por ejecucion usados por el boxplot; nunca filas crudas."""
+def distribucion_por_corrida(serie: pd.DataFrame) -> pd.DataFrame:
+    """Valores por ejecucion usados por el boxplot, en orden de dia operativo."""
+    columnas = ["corrida", "valor", "n_nodos"]
     if serie.empty:
-        return pd.DataFrame(columns=["hora", "hora_label", "valor", "n_nodos"])
-    datos = serie.copy()
-    datos["hora"] = datos["consultation_time"].dt.hour
-    datos["hora_label"] = datos["hora"].map(lambda h: f"{h:02d}:00")
-    return datos[["hora", "hora_label", "valor", "n_nodos"]]
+        return pd.DataFrame(columns=columnas)
+    return _orden_corridas(_con_corrida(serie))[columnas].reset_index(drop=True)

@@ -21,6 +21,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BASE_DIR / "src"))
 import config        # noqa: E402
 import google_upload  # noqa: E402
+import horario       # noqa: E402
 import analisis_nodo  # noqa: E402
 import analisis_temporal  # noqa: E402
 import mapa_nodos     # noqa: E402
@@ -1136,15 +1137,15 @@ def cargar_corredores() -> pd.DataFrame:
 
 
 @st.cache_data(ttl=300)
-def promedios_mapa(fecha_ini, fecha_fin, hora_ini, hora_fin, mes, dia_semana,
+def promedios_mapa(fecha_ini, fecha_fin, desde, hasta, mes, dia_semana,
                    quincena, ids) -> tuple:
     """
     Promedio por nodo con los filtros del mapa, y la fuente usada.
     PostgreSQL agrega en la consulta (113 filas); Sheets descarga el
     historico completo y agrega en pandas (respaldo si la BD no responde).
     """
-    consulta = dict(fecha_ini=fecha_ini, fecha_fin=fecha_fin, hora_ini=hora_ini,
-                    hora_fin=hora_fin, mes=mes, dia_semana=dia_semana,
+    consulta = dict(fecha_ini=fecha_ini, fecha_fin=fecha_fin, desde=desde,
+                    hasta=hasta, mes=mes, dia_semana=dia_semana,
                     quincena=quincena, ids=ids)
     if getattr(config, "FUENTE_DASHBOARD", "sheets") == "db":
         try:
@@ -1270,8 +1271,9 @@ def render_analisis_nodo():
 
         diaria = analisis_nodo.serie_diaria(ejecuciones)
         hora = analisis_nodo.resumen_por_hora(ejecuciones)
-        # Solo horas con corridas: el eje no muestra la franja vacia de 01 a 03
-        horas = pd.DataFrame({"hora": config.HORAS_CON_DATOS}).merge(hora, on="hora", how="left")
+        # Solo horas con corridas y en orden de dia operativo (04:00 ... 00:00):
+        # el eje no muestra la franja vacia de 01 a 03
+        horas = pd.DataFrame({"hora": horario.HORAS}).merge(hora, on="hora", how="left")
         horas["etiqueta"] = horas["hora"].map(lambda h: f"{h:02d}:00")
         distribucion = analisis_nodo.distribucion_congestion(
             ejecuciones,
@@ -1279,11 +1281,10 @@ def render_analisis_nodo():
             UMBRAL_MODERADO,
             UMBRAL_LENTO,
         )
-        # Cinco marcas caben incluso cuando los graficos quedan en dos columnas
-        # estrechas (00:00 y 04:00 son vecinas: numerar ambas las encima); los
-        # datos conservan todas las horas con corridas.
-        ticks_hora = [f"{h:02d}:00" for h in config.HORAS_CON_DATOS
-                      if h % 6 == 0 or h == config.HORAS_CON_DATOS[-1]]
+        # Una marca cada 4 horas (04, 08 ... 20, 00) cabe incluso cuando los
+        # graficos quedan en dos columnas estrechas; los datos conservan todas
+        # las horas con corridas.
+        ticks_hora = [f"{h:02d}:00" for h in horario.HORAS if horario.orden_hora(h) % 240 == 0]
         eje_horas = dict(
             type="category", categoryorder="array", categoryarray=list(horas["etiqueta"]),
             tickmode="array", tickvals=ticks_hora, ticktext=ticks_hora,
@@ -1453,7 +1454,7 @@ def render_analisis_temporal():
         f"{prefijo}_metrica": next(iter(analisis_temporal.METRICAS)),
         f"{prefijo}_fechas": (min_fecha, max_fecha),
         f"{prefijo}_franja": mapa_nodos.TODO_EL_DIA,
-        f"{prefijo}_horas": (0, 23),
+        f"{prefijo}_horas": horario.DIA_COMPLETO,
         f"{prefijo}_nodos": [],
         f"{prefijo}_tipo_dia": analisis_temporal.TIPOS_DIA[0],
     }
@@ -1500,7 +1501,7 @@ def render_analisis_temporal():
             key=f"{prefijo}_franja",
             on_change=_al_cambiar_franja,
         )
-        hora_ini, hora_fin = mapa_nodos.barra_horas(f"{prefijo}_horas", _al_mover_horas)
+        desde, hasta = mapa_nodos.barra_horas(f"{prefijo}_horas", _al_mover_horas)
         ids = st.multiselect(
             "Punto de monitoreo:",
             list(nombres),
@@ -1526,18 +1527,13 @@ def render_analisis_temporal():
     decimales = meta["decimales"]
 
     # Filtro de mes desactivado: el rango de fechas ya acota el periodo
+    filtros = dict(
+        fecha_ini=fecha_ini, fecha_fin=fecha_fin, desde=desde, hasta=hasta,
+        tipo_dia=tipo_dia, ids=tuple(ids),
+    )
     with st.spinner("Calculando análisis temporal..."):
         df_base, fuente = cargar_historico(fecha_ini, fecha_fin)
-        filtrado = analisis_temporal.filtrar_mediciones(
-            df_base,
-            columna,
-            fecha_ini=fecha_ini,
-            fecha_fin=fecha_fin,
-            hora_ini=hora_ini,
-            hora_fin=hora_fin,
-            tipo_dia=tipo_dia,
-            ids=tuple(ids),
-        )
+        filtrado = analisis_temporal.filtrar_mediciones(df_base, columna, **filtros)
         serie = analisis_temporal.serie_por_ejecucion(filtrado, columna)
 
     with col_graficos:
@@ -1564,8 +1560,9 @@ def render_analisis_temporal():
         )
 
         with vista_hora:
-            hora = analisis_temporal.resumen_por_hora(serie)
-            etiquetas_hora = hora["hora"].map(lambda h: f"{h:02d}:00")
+            # Una barra por corrida del cron (04:00 ... 00:00), con 05:30, 06:30... aparte
+            hora = analisis_temporal.resumen_por_corrida(serie)
+            etiquetas_hora = hora["corrida"]
             custom = hora[["mediana", "p25", "p75", "ejecuciones", "nodos_promedio"]].to_numpy()
             fig_hora = go.Figure()
             fig_hora.add_trace(go.Bar(
@@ -1602,6 +1599,7 @@ def render_analisis_temporal():
                 legend=dict(orientation="h", y=1.12),
                 bargap=0.22,
             )
+            fig_hora.update_xaxes(type="category")
             if columna == "velocidad_ratio":
                 fig_hora.update_yaxes(range=[0, max(1.05, float(hora["promedio"].max()) * 1.08)])
             fig_hora = plotly_base(fig_hora, height=430)
@@ -1613,10 +1611,15 @@ def render_analisis_temporal():
 
         with vista_calor:
             calor, conteos = analisis_temporal.mapa_calor(serie)
-            # Solo horas con corridas: sin la franja vacia de 01 a 03
-            horas_vista = [h for h in config.HORAS_CON_DATOS if hora_ini <= h <= hora_fin]
-            calor = calor[horas_vista]
-            conteos = conteos[horas_vista]
+            # Una columna por corrida del rango (04:00 ... 00:00): sin la franja
+            # vacia de 01 a 03 y con las de 05:30, 06:30... aparte
+            columnas_vista = [
+                c for c in horario.CORRIDAS
+                if horario.minuto_operativo(desde) <= horario.minuto_operativo(c)
+                <= horario.minuto_operativo(hasta)
+            ]
+            calor = calor[columnas_vista]
+            conteos = conteos[columnas_vista]
             filas_con_datos = calor.notna().any(axis=1)
             calor = calor.loc[filas_con_datos]
             conteos = conteos.loc[filas_con_datos]
@@ -1638,7 +1641,7 @@ def render_analisis_temporal():
                     escala, zmin, zmax = "Blues", None, None
                 fig_calor = go.Figure(go.Heatmap(
                     z=calor.to_numpy(),
-                    x=[f"{h:02d}:00" for h in calor.columns],
+                    x=list(calor.columns),
                     y=[analisis_temporal.DIAS[i] for i in calor.index],
                     customdata=conteos.fillna(0).to_numpy(),
                     colorscale=escala,
@@ -1653,11 +1656,13 @@ def render_analisis_temporal():
                     ),
                 ))
                 fig_calor.update_layout(xaxis_title="Hora del día", yaxis_title="")
+                fig_calor.update_xaxes(type="category")
                 fig_calor = plotly_base(fig_calor, height=430)
                 st.plotly_chart(fig_calor, theme=None, config=PLOTLY_CONFIG)
                 st.caption(
                     "Cada celda es el promedio de las ejecuciones observadas en esa "
-                    "combinación de día de la semana y hora. Las celdas vacías no se estiman."
+                    "combinación de día de la semana y corrida del horario (incluidas "
+                    "las de 5:30, 6:30...). Las celdas vacías no se estiman."
                 )
 
         with vista_tendencia:
@@ -1709,17 +1714,16 @@ def render_analisis_temporal():
             )
 
         with vista_box:
-            distribucion = analisis_temporal.distribucion_por_hora(serie)
-            orden_horas = [
-                f"{h:02d}:00" for h in sorted(distribucion["hora"].unique())
-            ]
+            distribucion = analisis_temporal.distribucion_por_corrida(serie)
+            # Ya viene en orden de dia operativo (04:00 ... 00:00)
+            orden_horas = list(dict.fromkeys(distribucion["corrida"]))
             fig_box = px.box(
                 distribucion,
-                x="hora_label",
+                x="corrida",
                 y="valor",
                 points="outliers",
-                category_orders={"hora_label": orden_horas},
-                labels={"hora_label": "Hora del día", "valor": metrica_label},
+                category_orders={"corrida": orden_horas},
+                labels={"corrida": "Hora del día", "valor": metrica_label},
                 color_discrete_sequence=[SERIE_ACTUAL],
             )
             fig_box.update_traces(
@@ -2471,6 +2475,8 @@ with tab_historia:
                         .mean()
                         .unstack(fill_value=None)
                     )
+                    # Horas del cron en orden de dia operativo: 04:00 ... 23:00, 00:00
+                    pivot = pivot.reindex(columns=[h for h in horario.HORAS if h in pivot.columns])
                     dias_es = ["Lunes", "Martes", "Miercoles", "Jueves", "Viernes", "Sabado", "Domingo"]
                     y_labels = [dias_es[i] for i in pivot.index if i < 7]
                     x_labels = [f"{h:02d}:00" for h in pivot.columns]
@@ -2500,7 +2506,7 @@ with tab_historia:
                         height=320,
                         margin=dict(l=0, r=0, t=10, b=0),
                         xaxis=dict(
-                            title="Hora del dia", gridcolor=REJILLA,
+                            title="Hora del dia", gridcolor=REJILLA, type="category",
                             tickfont=dict(color=R_TENUE),
                             title_font=dict(color=R_AZUL_OSC), automargin=True,
                         ),
@@ -2517,25 +2523,17 @@ with tab_historia:
                 st.markdown("### Hora pico vs hora valle")
                 st.caption("Velocidad promedio por franja horaria — identifica cuando fluye mejor la ciudad")
 
-                FRANJAS = {
-                    "Madrugada (00–05)": (0, 5),
-                    "Mañana temprano (06–07)": (6, 7),
-                    "Hora pico AM (08–09)": (8, 9),
-                    "Media mañana (10–11)": (10, 11),
-                    "Hora pico medio (12–13)": (12, 13),
-                    "Tarde (14–15)": (14, 15),
-                    "Pre-pico PM (16)": (16, 16),
-                    "Hora pico PM (17–18)": (17, 18),
-                    "Noche (19–23)": (19, 23),
+                # Las mismas franjas que los filtros (horas pico de 5:30-7:30,
+                # 12:00-13:30 y 17:00-18:30), por corrida del cron
+                franjas_hist = {
+                    nombre: rango for nombre, rango in mapa_nodos.FRANJAS.items()
+                    if nombre not in (mapa_nodos.TODO_EL_DIA, mapa_nodos.PERSONALIZADO)
                 }
 
-                df_franjas = df_periodo.copy()
-                df_franjas["hora_num"] = df_franjas["consultation_time"].dt.hour
-
                 filas_f = []
-                for label, (h_ini, h_fin) in FRANJAS.items():
-                    sub = df_franjas[
-                        (df_franjas["hora_num"] >= h_ini) & (df_franjas["hora_num"] <= h_fin)
+                for label, (desde_f, hasta_f) in franjas_hist.items():
+                    sub = df_periodo[
+                        horario.en_horario(df_periodo["consultation_time"], desde_f, hasta_f)
                     ]
                     if sub.empty:
                         continue
@@ -2549,18 +2547,8 @@ with tab_historia:
 
                 if filas_f:
                     df_f = pd.DataFrame(filas_f)
-                    etiquetas_franja = {
-                        "Madrugada (00–05)": "00–05",
-                        "Mañana temprano (06–07)": "06–07",
-                        "Hora pico AM (08–09)": "08–09",
-                        "Media mañana (10–11)": "10–11",
-                        "Hora pico medio (12–13)": "12–13",
-                        "Tarde (14–15)": "14–15",
-                        "Pre-pico PM (16)": "16:00",
-                        "Hora pico PM (17–18)": "17–18",
-                        "Noche (19–23)": "19–23",
-                    }
-                    x_franjas = df_f["franja"].map(etiquetas_franja).fillna(df_f["franja"])
+                    # "Hora pico AM (5:30–7:30)" -> nombre arriba y horario abajo
+                    x_franjas = df_f["franja"].str.replace(" (", "<br>", regex=False).str.rstrip(")")
                     fig_franjas = go.Figure()
                     fig_franjas.add_trace(go.Bar(
                         name="Velocidad libre",
@@ -2588,7 +2576,8 @@ with tab_historia:
                     ))
                     fig_franjas.update_layout(
                         barmode="group",
-                        xaxis=dict(title="", tickangle=-35, tickfont=dict(size=9)),
+                        # Etiquetas en dos lineas (nombre y horario): caben derechas
+                        xaxis=dict(title="", tickangle=0, tickfont=dict(size=10)),
                         yaxis=dict(title="km/h", gridcolor=REJILLA),
                         yaxis2=dict(
                             title=dict(text="Ratio (0–1)", font=dict(color=TEXTO_MENTA)),
@@ -2696,6 +2685,8 @@ with tab_historia:
                             df_nodo.groupby("hora_num")
                             .agg(ratio_h=("velocidad_ratio", "mean"), vel_h=("currentSpeed", "mean"))
                             .reset_index()
+                            # Dia operativo: 04:00 ... 23:00, 00:00
+                            .sort_values("hora_num", key=lambda h: h.map(horario.orden_hora))
                         )
 
                         fig_hora_n = go.Figure()
@@ -2710,6 +2701,7 @@ with tab_historia:
                         ))
                         fig_hora_n.update_layout(
                             xaxis_title="Hora del dia",
+                            xaxis_type="category",
                             yaxis_title="Índice de fluidez",
                             yaxis=dict(range=[0, 1.2]),
                         )

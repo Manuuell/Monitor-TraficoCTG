@@ -10,6 +10,7 @@ import pandas as pd
 
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(ROOT / "dashboard"))
 
 import analisis_temporal as temporal  # noqa: E402
@@ -35,8 +36,8 @@ class AnalisisTemporalTest(unittest.TestCase):
             "currentSpeed",
             fecha_ini=date(2026, 10, 5),
             fecha_fin=date(2026, 10, 5),
-            hora_ini=7,
-            hora_fin=9,
+            desde="07:00",
+            hasta="09:00",
             tipo_dia="Días laborables (L–V)",
             ids=("A",),
         )
@@ -49,21 +50,36 @@ class AnalisisTemporalTest(unittest.TestCase):
                 "2026-10-05 08:00:00",
                 "2026-10-05 08:00:00",
                 "2026-10-05 08:00:00",
-                "2026-10-05 08:30:00",
-                "2026-10-05 08:30:00",
+                "2026-10-06 08:00:00",
+                "2026-10-06 08:00:00",
             ]),
             "id_nodo": ["A", "A", "B", "A", "B"],
             "currentSpeed": [10, 30, 40, 50, 70],
         })
 
         serie = temporal.serie_por_ejecucion(df, "currentSpeed")
-        hora = temporal.resumen_por_hora(serie).iloc[0]
+        corrida = temporal.resumen_por_corrida(serie).iloc[0]
 
         # Ejecucion 1: promedio de A=(10+30)/2 y B=40 -> 30.
-        # Ejecucion 2: promedio de A=50 y B=70 -> 60. Hora -> 45.
+        # Ejecucion 2: promedio de A=50 y B=70 -> 60. Corrida de las 08:00 -> 45.
         self.assertEqual(serie["valor"].tolist(), [30.0, 60.0])
-        self.assertAlmostEqual(hora["promedio"], 45.0)
-        self.assertEqual(hora["ejecuciones"], 2)
+        self.assertEqual(corrida["corrida"], "08:00")
+        self.assertAlmostEqual(corrida["promedio"], 45.0)
+        self.assertEqual(corrida["ejecuciones"], 2)
+
+    def test_corridas_de_media_hora_aparte_y_en_orden_de_dia_operativo(self):
+        serie = pd.DataFrame({
+            "consultation_time": pd.to_datetime([
+                "2026-10-06 00:00:03", "2026-10-05 05:30:02", "2026-10-05 05:00:01",
+            ]),
+            "valor": [30.0, 20.0, 40.0],
+            "n_nodos": [113, 113, 113],
+        })
+
+        resumen = temporal.resumen_por_corrida(serie)
+
+        self.assertEqual(resumen["corrida"].tolist(), ["05:00", "05:30", "00:00"])
+        self.assertEqual(resumen["promedio"].tolist(), [40.0, 20.0, 30.0])
 
     def test_tendencia_mensual_da_el_mismo_peso_a_cada_dia(self):
         serie = pd.DataFrame({
@@ -92,9 +108,12 @@ class AnalisisTemporalTest(unittest.TestCase):
 
         valores, conteos = temporal.mapa_calor(serie)
 
-        self.assertAlmostEqual(valores.loc[0, 8], 0.75)
-        self.assertEqual(conteos.loc[0, 8], 1)
-        self.assertTrue(pd.isna(valores.loc[1, 8]))
+        self.assertAlmostEqual(valores.loc[0, "08:00"], 0.75)
+        self.assertEqual(conteos.loc[0, "08:00"], 1)
+        self.assertTrue(pd.isna(valores.loc[1, "08:00"]))
+        # Columnas = corridas del cron, de 04:00 a 00:00
+        self.assertEqual(list(valores.columns)[0], "04:00")
+        self.assertEqual(list(valores.columns)[-1], "00:00")
 
 
 if __name__ == "__main__":

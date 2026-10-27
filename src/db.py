@@ -24,6 +24,7 @@ from sqlalchemy.types import (
 )
 
 import config
+import horario
 
 TABLA = "mediciones"
 
@@ -249,7 +250,7 @@ def leer_resumen_ejecuciones(n_dias: int = 7) -> pd.DataFrame:
 
 def promedios_por_nodo(
     fecha_ini: date = None, fecha_fin: date = None,
-    hora_ini: int = 0, hora_fin: int = 23, mes: int = None,
+    desde: str = None, hasta: str = None, mes: int = None,
     dia_semana: int = None, quincena: bool = False, ids: list = None,
 ) -> pd.DataFrame:
     """
@@ -258,7 +259,8 @@ def promedios_por_nodo(
     traer cientos de miles de mediciones al dashboard.
 
         fecha_ini, fecha_fin  dias inclusive, o None para no acotar
-        hora_ini, hora_fin  rango de horas inclusive (05 incluye 05:30)
+        desde, hasta        corridas "HH:MM" inclusive del dia operativo
+                            (04:00 ... 00:00, ver horario.py), o None
         mes                 1-12, o None para todos
         dia_semana          1=Lunes ... 7=Domingo (ISODOW), o None
         quincena            solo el dia 15 y el ultimo dia de cada mes
@@ -271,11 +273,11 @@ def promedios_por_nodo(
     cuando la BD no responde.
     """
     ts = '"consultation_time"'
-    condiciones = [
-        "ok", f"{ts} IS NOT NULL",
-        f"EXTRACT(HOUR FROM {ts}) BETWEEN :h0 AND :h1",
-    ]
-    params = {"h0": hora_ini, "h1": hora_fin}
+    condiciones = ["ok", f"{ts} IS NOT NULL"]
+    params = {}
+    if desde is not None and hasta is not None:
+        condiciones.append(horario.condicion_sql(ts))
+        params.update(horario.parametros_sql(desde, hasta))
     # Comparar el timestamp directo (no su fecha) usa idx_mediciones_ct
     if fecha_ini is not None:
         condiciones.append(f"{ts} >= :ini")

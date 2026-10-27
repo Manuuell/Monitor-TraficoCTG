@@ -20,6 +20,7 @@ sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 import admin_services as servicios  # noqa: E402
 import config  # noqa: E402
+import horario  # noqa: E402
 from security_utils import clave_valida, huella_clave  # noqa: E402
 
 
@@ -660,10 +661,12 @@ with tab_ejecuciones:
         st.info("No hay datos suficientes para construir el gráfico por hora.")
     else:
         # Horas del cron (sin la franja 01-03, que nunca tiene corridas) mas
-        # cualquier hora con una corrida fuera de horario, que si interesa ver.
-        # Una hora programada sin barras sigue apareciendo vacia: es la alerta.
+        # cualquier hora con una corrida fuera de horario, que si interesa ver,
+        # en orden de dia operativo: 04:00 ... 23:00, 00:00. Una hora
+        # programada sin barras sigue apareciendo vacia: es la alerta.
         horas_eje = sorted(
-            {f"{hora:02d}:00" for hora in config.HORAS_CON_DATOS} | set(por_hora["hora"])
+            {f"{hora:02d}:00" for hora in horario.HORAS} | set(por_hora["hora"]),
+            key=lambda etiqueta: horario.orden_hora(int(etiqueta[:2])),
         )
         figura = go.Figure()
         figura.add_bar(

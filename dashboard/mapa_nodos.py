@@ -18,6 +18,7 @@ from folium.elements import JSCSSMixin
 from jinja2 import Template
 
 import config
+import horario
 
 # ============================================================
 # OPCIONES DE LOS FILTROS (tal como las define el documento)
@@ -28,20 +29,21 @@ METRICAS = {
     "Ratio (Índice de fluidez)": "ratio",
 }
 
-TODO_EL_DIA = "Todo el día (0:00 – 23:59)"
+TODO_EL_DIA = "Todo el día (4:00 – 0:00)"
 PERSONALIZADO = "Personalizado"
+# Rangos de corridas del cron (desde, hasta), sin huecos ni solapes. Las horas
+# pico son las de las corridas extra de media hora: 5:30-7:30 en la manana,
+# 12:00-13:30 al medio dia y 17:00-18:30 en la tarde.
 FRANJAS = {
-    TODO_EL_DIA:               (0, 23),
-    PERSONALIZADO:             None,      # rango libre con la barra de horas
-    "Madrugada (04–05)":       (4, 5),    # de 01 a 03 no hay corridas
-    "Mañana temprano (06–07)": (6, 7),
-    "Hora pico AM (08–09)":    (8, 9),
-    "Media mañana (10–11)":    (10, 11),
-    "Hora pico medio (12–13)": (12, 13),
-    "Tarde (14–15)":           (14, 15),
-    "Pre-pico PM (16)":        (16, 16),
-    "Hora pico PM (17–18)":    (17, 18),
-    "Noche (19–23)":           (19, 23),
+    TODO_EL_DIA:                    horario.DIA_COMPLETO,
+    PERSONALIZADO:                  None,      # rango libre con la barra de horas
+    "Madrugada (4:00–5:00)":        ("04:00", "05:00"),
+    "Hora pico AM (5:30–7:30)":     ("05:30", "07:30"),
+    "Mañana (8:00–11:00)":          ("08:00", "11:00"),
+    "Medio día (12:00–13:30)":      ("12:00", "13:30"),
+    "Tarde (14:00–16:00)":          ("14:00", "16:00"),
+    "Hora pico PM (17:00–18:30)":   ("17:00", "18:30"),
+    "Noche (19:00–0:00)":           ("19:00", "00:00"),
 }
 
 # El indice de cada mes es su numero (1-12)
@@ -181,40 +183,38 @@ def tarjeta_filtros(clave: str, titulo: str):
 
 
 def _escala_horas() -> str:
-    """Una marca por hora con datos bajo la barra; numero en 0, 6, 12, 18 y 23.
-
-    Numerar el 4 lo pegaria al 0 (son posiciones vecinas) y en paneles
-    angostos se leeria "04".
-    """
-    horas = config.HORAS_CON_DATOS
+    """Una marca por corrida bajo la barra; numero cada 4 horas: 4, 8 ... 20, 0."""
+    corridas = horario.CORRIDAS
     partes = []
-    for i, h in enumerate(horas):
-        mayor = h % 6 == 0 or h == horas[-1]
-        izq = f"{i / (len(horas) - 1) * 100:.2f}%"
+    for i, corrida in enumerate(corridas):
+        hora, minutos = int(corrida[:2]), corrida[3:]
+        mayor = minutos == "00" and horario.orden_hora(hora) % 240 == 0
+        izq = f"{i / (len(corridas) - 1) * 100:.2f}%"
         partes.append(f'<span class="marca{" mayor" if mayor else ""}" style="left:{izq}"></span>')
         if mayor:
-            partes.append(f'<span class="num" style="left:{izq}">{h}</span>')
+            extremo = " inicio" if i == 0 else " fin" if i == len(corridas) - 1 else ""
+            partes.append(f'<span class="num{extremo}" style="left:{izq}">{hora}</span>')
     return f'<div class="escala-horas">{"".join(partes)}</div>'
 
 
 def barra_horas(clave: str, on_change) -> tuple:
-    """Barra de rango que solo ofrece las horas con datos (sin la franja 01-03).
+    """Barra de rango sobre las corridas del cron, de 4:00 a 0:00.
 
-    Devuelve (hora_ini, hora_fin). Como entre ellas no hay horas con datos
-    que falten, los filtros siguen usando el rango hora_ini..hora_fin.
+    Devuelve (desde, hasta) como "HH:MM". Ofrece cada corrida (tambien las de
+    5:30, 6:30...) y no tiene la franja vacia de 01 a 03.
 
     A diferencia de st.slider, select_slider solo sabe que es de rango por
-    `value`: sin el, al mover la barra devuelve una sola hora. El valor real
+    `value`: sin el, al mover la barra devuelve una sola corrida. El valor real
     sigue saliendo de session_state (franjas y Restablecer lo escriben); el
     aviso de Streamlit por usar ambos se apaga en .streamlit/config.toml.
     """
-    hora_ini, hora_fin = st.select_slider(
-        "Rango de horas:", options=config.HORAS_CON_DATOS, key=clave,
-        value=(config.HORAS_CON_DATOS[0], config.HORAS_CON_DATOS[-1]),
-        on_change=on_change, format_func=lambda h: f"{h}:00",
+    desde, hasta = st.select_slider(
+        "Rango de horas:", options=horario.CORRIDAS, key=clave,
+        value=horario.DIA_COMPLETO, on_change=on_change,
+        format_func=horario.etiqueta,
     )
     st.markdown(_escala_horas(), unsafe_allow_html=True)
-    return hora_ini, hora_fin
+    return desde, hasta
 
 
 def _valores_iniciales(prefijo: str, fechas) -> dict:
@@ -222,7 +222,7 @@ def _valores_iniciales(prefijo: str, fechas) -> dict:
         # Como en produccion: la vista inicial se colorea por indice de fluidez
         f"{prefijo}_metrica": "Ratio (Índice de fluidez)",
         f"{prefijo}_franja":  TODO_EL_DIA,
-        f"{prefijo}_horas":   (0, 23),
+        f"{prefijo}_horas":   horario.DIA_COMPLETO,
         f"{prefijo}_nodos":   [],
         f"{prefijo}_dia":     TIPOS_DIA[0],
     }
@@ -279,7 +279,7 @@ def panel_filtros(prefijo: str, nodos: dict, fechas=None) -> dict:
         key=f"{prefijo}_franja", on_change=_al_cambiar_franja,
     )
     # La barra siempre se puede mover; elegir una franja fija la ajusta sola
-    hora_ini, hora_fin = barra_horas(f"{prefijo}_horas", _al_mover_horas)
+    desde, hasta = barra_horas(f"{prefijo}_horas", _al_mover_horas)
     ids = st.multiselect(
         "Punto de monitoreo:", list(nodos), key=f"{prefijo}_nodos",
         format_func=lambda i: nodos.get(i, i), placeholder="Todos los puntos",
@@ -293,8 +293,8 @@ def panel_filtros(prefijo: str, nodos: dict, fechas=None) -> dict:
     consulta = {
         "fecha_ini": fecha_ini,
         "fecha_fin": fecha_fin,
-        "hora_ini": hora_ini,
-        "hora_fin": hora_fin,
+        "desde": desde,
+        "hasta": hasta,
         # Filtro de mes desactivado en el panel: el rango de fechas ya acota
         # el periodo. La consulta lo conserva para reactivarlo sin tocar la BD.
         "mes": None,
@@ -304,7 +304,7 @@ def panel_filtros(prefijo: str, nodos: dict, fechas=None) -> dict:
     }
     filtrando = (
         (fechas is not None and (fecha_ini, fecha_fin) != tuple(fechas))
-        or (hora_ini, hora_fin) != (0, 23)
+        or (desde, hasta) != horario.DIA_COMPLETO
         or consulta["dia_semana"] is not None
         or consulta["quincena"]
     )
@@ -317,8 +317,8 @@ def panel_filtros(prefijo: str, nodos: dict, fechas=None) -> dict:
 
 
 def promedios_por_nodo_df(
-    df: pd.DataFrame, fecha_ini=None, fecha_fin=None, hora_ini: int = 0,
-    hora_fin: int = 23, mes: int = None, dia_semana: int = None,
+    df: pd.DataFrame, fecha_ini=None, fecha_fin=None, desde: str = None,
+    hasta: str = None, mes: int = None, dia_semana: int = None,
     quincena: bool = False, ids: tuple = (),
 ) -> pd.DataFrame:
     """
@@ -334,7 +334,7 @@ def promedios_por_nodo_df(
     mascara = (
         df["ok"].astype(str).str.lower().isin(["true", "1"])
         & ts.notna()
-        & ts.dt.hour.between(hora_ini, hora_fin)
+        & horario.en_horario(ts, desde, hasta)
     )
     if fecha_ini is not None:
         mascara &= ts.dt.date >= fecha_ini

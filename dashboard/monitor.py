@@ -366,19 +366,28 @@ st.markdown(f"""
     }}
     /* Streamlit oculta el control de pantalla completa hasta pasar el cursor.
        Se mantiene visible en las graficas para que la accion sea descubrible. */
-    [data-testid="stElementContainer"]:has([data-testid="stPlotlyChart"])
-    [data-testid="stElementToolbar"] {{
+    [data-testid="stElementToolbar"], .stElementToolbar {{
         opacity: 1 !important;
         top: .35rem !important;
         right: .45rem !important;
         padding: 0 !important;
         z-index: 20 !important;
     }}
-    [data-testid="stElementContainer"]:has([data-testid="stPlotlyChart"])
     [data-testid="stElementToolbarButtonContainer"] {{
         background: rgba(255,255,255,.94) !important;
         border: 1px solid {R_LINEA};
         box-shadow: 0 4px 12px rgba(17,17,19,.12) !important;
+    }}
+    [data-testid="stElementToolbarButton"] button[aria-label="Fullscreen"] {{
+        width: 38px !important;
+        height: 38px !important;
+        border-radius: 12px !important;
+        background: {R_AZUL} !important;
+        color: #ffffff !important;
+    }}
+    [data-testid="stElementToolbarButton"] button[aria-label="Fullscreen"] svg {{
+        fill: currentColor !important;
+        color: #ffffff !important;
     }}
     iframe[title="streamlit_folium.st_folium"] {{
         border: 0 !important;

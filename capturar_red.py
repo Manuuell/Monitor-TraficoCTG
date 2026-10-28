@@ -5,7 +5,9 @@ data/red_nodos.json, para la vista "Red de Nodos" del dashboard.
 De la hoja REDES de nodos.xlsx se toma solo que nodos son vecinos: la matriz
 no representa el sentido de circulacion (comparada con las distancias por
 via, la mayoria de conexiones marcadas en un solo sentido se recorren igual en
-ambos, y varias marcadas en doble sentido no).
+ambos, y varias marcadas en doble sentido no). Tambien son vecinos los nodos
+seguidos de un corredor de la hoja CORREDORES, para que cada corredor se
+dibuje por la via.
 
 La distancia por via en cada sentido y el trazado salen de la Routing API de
 TomTom: es el mismo mapa del que salen las velocidades del ETL, y respeta las
@@ -33,6 +35,9 @@ Uso (en un VPS, o local con un Python que tenga OpenSSL moderno):
         # agrega a un red_nodos.json existente el trazado de vuelta (path_ba)
         # de las conexiones que aun no lo tienen; una consulta por cada una,
         # sin repetir lo ya capturado
+    python3 capturar_red.py --completar-corredores
+        # agrega a un red_nodos.json existente los pares de nodos seguidos de
+        # un corredor que aun no son conexiones (2 consultas por par)
 
 Cada conexion guarda el trazado de ida (path) y el de vuelta (path_ba): en
 calles de un solo sentido el regreso va por otras vias, y dibujarlo
@@ -112,6 +117,17 @@ def trazado_osrm(nodos, i: int, j: int) -> list:
                   "?overview=simplified&geometries=geojson")
     return [[round(lat, 5), round(lon, 5)]
             for lon, lat in datos["routes"][0]["geometry"]["coordinates"]]
+
+
+def distancia_osrm(nodos, i: int, j: int):
+    """Distancia por via (m) de i a j segun OpenStreetMap, o None si OSRM no responde."""
+    try:
+        datos = _osrm(f"route/v1/driving/{_coordenadas(nodos, [i, j])}?overview=false")
+        return round(datos["routes"][0]["distance"])
+    except Exception as e:
+        print(f"  AVISO: OSRM no dio la distancia "
+              f"{nodos.at[i, 'id_nodo']} -> {nodos.at[j, 'id_nodo']}: {e}")
+        return None
 
 
 # ============================================================
@@ -266,6 +282,62 @@ def completar_vuelta(llaves) -> int:
     return 0
 
 
+def completar_corredores(llaves) -> int:
+    """
+    Agrega a la red los pares de nodos seguidos de un corredor (hoja
+    CORREDORES) que todavia no son conexiones, con distancia y trazado en cada
+    sentido. Asi el corredor se dibuja por la via y esos pares tambien entran
+    en las rutas. Con llaves usa TomTom (2 consultas por par); sin ellas, OSRM.
+    """
+    if not OUT.exists():
+        print(f"ERROR: no existe {OUT}; corre primero la captura completa.")
+        return 1
+    with open(OUT, encoding="utf-8") as f:
+        datos = json.load(f)
+
+    nodos = dt.cargar_nodos(config.NODOS_PATH)
+    nodos["id_nodo"] = nodos["id_nodo"].astype(str)
+    indice = {id_nodo: i for i, id_nodo in enumerate(nodos["id_nodo"])}
+    corredores, faltantes = dt.leer_corredores(config.NODOS_PATH, nodos["id_nodo"])
+    if faltantes:
+        print(f"  AVISO: en CORREDORES pero no en NODOS (se ignoran): {', '.join(faltantes)}")
+
+    existentes = {frozenset((c["a"], c["b"])) for c in datos["conexiones"]}
+    pendientes = [par for par in dt.pares_corredores(corredores) if frozenset(par) not in existentes]
+    fuente = "TomTom" if llaves else "OSRM"
+    print(f"Corredores: {len(corredores)}. Pares seguidos sin conexion en la red: "
+          f"{len(pendientes)} ({2 * len(pendientes)} consultas a {fuente})")
+    pausa = PAUSA_TOMTOM if llaves else 1
+    for a, b in pendientes:
+        i, j = indice[a], indice[b]
+        d_ab_osm, d_ba_osm = distancia_osrm(nodos, i, j), distancia_osrm(nodos, j, i)
+        if llaves:
+            d_ab, path = ruta_tomtom(nodos, i, j, llaves, con_trazado=True)
+            time.sleep(pausa)
+            d_ba, path_ba = ruta_tomtom(nodos, j, i, llaves, con_trazado=True)
+        else:
+            d_ab, d_ba = d_ab_osm, d_ba_osm
+            path, path_ba = trazado_osrm(nodos, i, j), trazado_osrm(nodos, j, i)
+        datos["conexiones"].append({"a": a, "b": b, "d_ab_m": d_ab, "d_ba_m": d_ba,
+                                    "d_ab_osm": d_ab_osm, "d_ba_osm": d_ba_osm,
+                                    "path": path, "path_ba": path_ba})
+        print(f"  {a} <-> {b}: {d_ab} / {d_ba} m")
+        time.sleep(pausa)
+
+    revision = lista_revision(datos["conexiones"], nodos, indice) if llaves else None
+    if revision is not None:
+        datos["por_revisar"] = len(revision)
+    datos["corredores_completados"] = datetime.now().strftime("%Y-%m-%d %H:%M")
+    # Se escribe al final: si se corta, el archivo queda como estaba
+    with open(OUT, "w", encoding="utf-8") as f:
+        json.dump(datos, f, ensure_ascii=False, separators=(",", ":"))
+    if revision is not None:
+        escribir_revision(revision)
+    print(f"Listo. Conexiones agregadas: {len(pendientes)}; total: {len(datos['conexiones'])}")
+    print(f"Archivo: {OUT} ({OUT.stat().st_size / 1024:.0f} KB)")
+    return 0
+
+
 def lista_revision(conexiones: list, nodos, indice: dict) -> list:
     """Filas del CSV de revision: conexiones donde TomTom y OSM no coinciden."""
     revision = []
@@ -346,7 +418,9 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Captura la red vial entre nodos vecinos.")
     parser.add_argument("--fuente", choices=["tomtom", "osrm"], default="tomtom")
     parser.add_argument("--completar-vuelta", action="store_true",
-                        help="solo agrega path_ba a las conexiones asimetricas del JSON existente")
+                        help="solo agrega path_ba a las conexiones del JSON existente que no lo tienen")
+    parser.add_argument("--completar-corredores", action="store_true",
+                        help="agrega al JSON existente los pares seguidos de los corredores que no son conexiones")
     parser.add_argument("--resolver", action="store_true",
                         help="repide con la ruta mas corta las conexiones donde TomTom y OSM no coinciden")
     args = parser.parse_args()
@@ -363,6 +437,8 @@ def main() -> int:
 
     if args.completar_vuelta:
         return completar_vuelta(llaves)
+    if args.completar_corredores:
+        return completar_corredores(llaves)
     if args.resolver:
         return resolver_diferencias(llaves)
 
@@ -371,7 +447,9 @@ def main() -> int:
     nodos["id_nodo"] = nodos["id_nodo"].astype(str)
     indice = {id_nodo: i for i, id_nodo in enumerate(nodos["id_nodo"])}
 
-    conexiones = dt.leer_conexiones(config.NODOS_PATH)
+    corredores, _ = dt.leer_corredores(config.NODOS_PATH, nodos["id_nodo"])
+    conexiones = sorted(set(dt.leer_conexiones(config.NODOS_PATH))
+                        | set(dt.pares_corredores(corredores)))
     sin_coords = sorted({x for par in conexiones for x in par if x not in indice})
     conexiones = [(a, b) for a, b in conexiones if a in indice and b in indice]
     print(f"Conexiones: {len(conexiones)} entre {len(nodos)} nodos")

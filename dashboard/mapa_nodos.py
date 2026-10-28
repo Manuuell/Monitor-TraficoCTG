@@ -318,6 +318,12 @@ def panel_filtros(prefijo: str, nodos: dict, fechas=None, ultima_ejecucion=None)
     etiqueta_ultima = _etiqueta_ultima(corrida_ultima)
     opciones_franja = ([etiqueta_ultima] if etiqueta_ultima else []) + list(FRANJAS)
     iniciales = _valores_iniciales(prefijo, fechas, ultima_ejecucion)
+    # Con la pagina abierta entra una corrida nueva: la franja "Ultima
+    # ejecucion" de la anterior ya no es una opcion y pasa a la nueva.
+    clave_franja, clave_horas = f"{prefijo}_franja", f"{prefijo}_horas"
+    if st.session_state.get(clave_franja, opciones_franja[0]) not in opciones_franja:
+        st.session_state[clave_franja] = iniciales[clave_franja]
+        st.session_state[clave_horas] = iniciales[clave_horas]
     for clave, valor in iniciales.items():
         st.session_state.setdefault(clave, valor)
 

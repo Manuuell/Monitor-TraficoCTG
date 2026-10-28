@@ -39,6 +39,69 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
+# Streamlit toma el idioma del calendario de ``navigator.language`` y no
+# permite fijarlo desde ``st.date_input``. Este observador traduce unicamente
+# los textos del calendario y de su lista de meses, incluidos los elementos
+# que BaseWeb crea en portales fuera del widget.
+components.html(
+    """
+    <script>
+    (() => {
+      try {
+        const parentWindow = window.parent;
+        const doc = parentWindow.document;
+        if (parentWindow.__calendarioEspanolObserver) {
+          parentWindow.__calendarioEspanolObserver.disconnect();
+        }
+
+        const traducciones = {
+          January: "Enero", February: "Febrero", March: "Marzo",
+          April: "Abril", May: "Mayo", June: "Junio", July: "Julio",
+          August: "Agosto", September: "Septiembre", October: "Octubre",
+          November: "Noviembre", December: "Diciembre",
+          Mo: "Lu", Tu: "Ma", We: "Mi", Th: "Ju",
+          Fr: "Vi", Sa: "Sá", Su: "Do"
+        };
+        const etiquetas = {
+          "Previous month": "Mes anterior",
+          "Next month": "Mes siguiente",
+          "Select a month": "Seleccionar mes",
+          "Select a year": "Seleccionar año"
+        };
+
+        const traducirTexto = (raiz) => {
+          const walker = doc.createTreeWalker(raiz, NodeFilter.SHOW_TEXT);
+          const nodos = [];
+          while (walker.nextNode()) nodos.push(walker.currentNode);
+          nodos.forEach((nodo) => {
+            const limpio = nodo.nodeValue.trim();
+            if (traducciones[limpio]) {
+              nodo.nodeValue = nodo.nodeValue.replace(limpio, traducciones[limpio]);
+            }
+          });
+        };
+
+        const traducirCalendarios = () => {
+          doc.querySelectorAll('[data-baseweb="calendar"], [role="listbox"]').forEach(traducirTexto);
+          doc.querySelectorAll('[data-baseweb="calendar"] [aria-label]').forEach((elemento) => {
+            const etiqueta = elemento.getAttribute('aria-label');
+            if (etiquetas[etiqueta]) elemento.setAttribute('aria-label', etiquetas[etiqueta]);
+          });
+        };
+
+        const observer = new MutationObserver(traducirCalendarios);
+        observer.observe(doc.body, {childList: true, subtree: true, characterData: true});
+        parentWindow.__calendarioEspanolObserver = observer;
+        traducirCalendarios();
+      } catch (_) {
+        // El calendario sigue siendo util si un navegador restringe el iframe.
+      }
+    })();
+    </script>
+    """,
+    height=0,
+)
+
 # ============================================================
 # PALETA DEL DASHBOARD R (app_prueba.R) — tema claro azul + menta
 # ============================================================

@@ -173,13 +173,13 @@ _CSS_TARJETA = f"""
 }}
 {_T} [data-baseweb="tag"] {{ background: #d9f7f1 !important; border-radius: 6px !important; }}
 {_T} [data-baseweb="tag"] span {{ color: #0b5d57 !important; }}
-/* Restablecer: boton blanco con borde azul (.btn-default del R) */
+/* Restablecer: accion principal en azul institucional. */
 {_T} .stButton button {{
-    background: #111113; color: #ffffff; border: 1px solid #111113;
+    background: {_AZUL}; color: #ffffff; border: 1px solid {_AZUL};
     border-radius: 999px; font-weight: 600;
 }}
 {_T} .stButton button:hover {{
-    background: {_AZUL}; color: #ffffff; border-color: {_AZUL}; box-shadow: none; transform: translateY(-1px);
+    background: {_TINTA}; color: #ffffff; border-color: {_TINTA}; box-shadow: none; transform: translateY(-1px);
 }}
 /* Barra de horas: riel menta, valores en recuadro azul (.irs--shiny del R)
    y escala debajo (la escala de Streamlit se oculta) */

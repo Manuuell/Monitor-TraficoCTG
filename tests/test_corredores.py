@@ -1,6 +1,8 @@
-"""Corredores de la hoja CORREDORES: lectura."""
+"""Corredores de la hoja CORREDORES: lectura, tramos sobre la red y resumen."""
 from __future__ import annotations
 
+import json
+import math
 import sys
 import tempfile
 import unittest
@@ -11,8 +13,11 @@ import pandas as pd
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
+sys.path.insert(0, str(ROOT / "dashboard"))
 
+import config  # noqa: E402
 import descargar_trafico as dt  # noqa: E402
+import red_nodos  # noqa: E402
 
 
 class LeerCorredoresTest(unittest.TestCase):
@@ -51,6 +56,52 @@ class LeerCorredoresTest(unittest.TestCase):
         otro = self.excel.with_name("sin_hoja.xlsx")
         pd.DataFrame({"x": [1]}).to_excel(otro, sheet_name="NODOS", index=False)
         self.assertEqual(dt.leer_corredores(otro, self.catalogo), ({}, []))
+
+
+class ArmarCorredoresTest(unittest.TestCase):
+    def setUp(self):
+        self.red = {"conexiones": [
+            {"a": "A", "b": "B", "d_ab_m": 1000, "d_ba_m": 1200, "path": [[0, 0], [0, 1]],
+             "path_ba": [[0, 1], [0, 0]]},
+            {"a": "C", "b": "B", "d_ab_m": 500, "d_ba_m": 600, "path": [[1, 1], [0, 1]],
+             "path_ba": [[0, 1], [1, 1]]},
+        ]}
+
+    def test_tramos_en_el_sentido_del_corredor_y_color_fijo(self):
+        uno, dos = red_nodos.armar_corredores({"UNO": ["A", "B", "C"], "DOS": ["C", "D"]}, self.red)
+        self.assertEqual([s for _, s in uno["tramos"]], [1, -1])      # B -> C es la vuelta de C-B
+        self.assertEqual(uno["sin_conexion"], 0)
+        self.assertEqual(dos["sin_conexion"], 1)                       # C-D no es conexion
+        self.assertEqual((uno["color"], dos["color"]), tuple(red_nodos.PALETA_CORREDORES[:2]))
+
+    def test_resumen_con_las_distancias_de_cada_sentido(self):
+        uno = red_nodos.armar_corredores({"UNO": ["A", "B", "C"]}, self.red)[0]
+        prom = {n: {"vel_actual": 36.0, "vel_libre": 72.0, "ratio": r}
+                for n, r in (("A", 0.5), ("B", 0.5), ("C", 0.8))}
+        r = red_nodos.resumen_corredor(uno, prom)
+        self.assertEqual(r["dist_m"], 1000 + 600)                      # A->B ida, B->C vuelta
+        self.assertAlmostEqual(r["tiempo_s"], 1600 / 10)               # 36 km/h = 10 m/s
+        self.assertAlmostEqual(r["tiempo_libre_s"], 1600 / 20)
+        self.assertAlmostEqual(r["ratio"], 0.6)
+
+    def test_resumen_sin_datos_o_sin_conexion_queda_vacio(self):
+        uno, dos = red_nodos.armar_corredores({"UNO": ["A", "B"], "DOS": ["C", "D"]}, self.red)
+        self.assertTrue(math.isnan(red_nodos.resumen_corredor(uno, {})["tiempo_s"]))
+        prom = {n: {"vel_actual": 36.0, "vel_libre": 72.0, "ratio": 0.9} for n in "CD"}
+        self.assertTrue(math.isnan(red_nodos.resumen_corredor(dos, prom)["dist_m"]))
+
+
+class CorredoresDelProyectoTest(unittest.TestCase):
+    """La hoja real y data/red_nodos.json: cada corredor se dibuja por la via."""
+
+    def test_todos_los_pares_de_corredores_son_conexiones(self):
+        nodos = dt.cargar_nodos(config.NODOS_PATH)
+        corredores, faltantes = dt.leer_corredores(config.NODOS_PATH, nodos["id_nodo"].astype(str))
+        self.assertTrue(corredores)
+        self.assertEqual(faltantes, [])
+        red = json.loads((ROOT / "data" / "red_nodos.json").read_text(encoding="utf-8"))
+        armados = red_nodos.armar_corredores(corredores, red)
+        self.assertEqual({c["nombre"]: c["sin_conexion"] for c in armados if c["sin_conexion"]}, {})
 
 
 if __name__ == "__main__":

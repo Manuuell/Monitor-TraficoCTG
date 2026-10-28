@@ -23,6 +23,14 @@ COLOR_RUTA = "#2dd4bf"        # --mint del dashboard R
 # Borde oscuro bajo la ruta: hace que el cyan se lea sobre el mapa claro
 # y sobre el oscuro, y sobre conexiones de cualquier color
 COLOR_BORDE_RUTA = "#12307a"  # --ink del dashboard R
+# Un color por corredor en el orden de la hoja CORREDORES (PALETA_AVENIDAS
+# del dashboard R): el color de cada uno no cambia al filtrar
+PALETA_CORREDORES = [
+    "#e6194b", "#3cb44b", "#4363d8", "#f58231", "#911eb4", "#0891b2",
+    "#f032e6", "#9a6324", "#800000", "#808000", "#000075", "#d4a017",
+    "#2dd4bf", "#7c3aed", "#fb7185", "#475569", "#65a30d", "#0ea5e9",
+    "#c026d3", "#b45309",
+]
 
 
 def _recta_m(p: dict, q: dict) -> float:
@@ -141,6 +149,53 @@ def ruta_mas_rapida(origen: str, destino: str, red: dict, promedios: dict):
     }
 
 
+def armar_corredores(corredores: dict, red: dict) -> list:
+    """
+    Cada corredor ({nombre: [id_nodo, ...]}, de la hoja CORREDORES) con su
+    color y sus tramos (conexion, sentido) en el orden de la hoja. Un par
+    seguido que no es conexion de la red queda en linea recta y sin distancia:
+    falta correr capturar_red.py --completar-corredores.
+    """
+    por_par = {}
+    for c in red["conexiones"]:
+        por_par[(c["a"], c["b"])] = (c, 1)
+        por_par[(c["b"], c["a"])] = (c, -1)
+    salida = []
+    for k, (nombre, nodos) in enumerate(corredores.items()):
+        tramos = [por_par.get((x, y), ({"a": x, "b": y, "d_ab_m": None, "d_ba_m": None,
+                                         "path": None}, 1))
+                  for x, y in zip(nodos, nodos[1:])]
+        salida.append({
+            "nombre": nombre, "color": PALETA_CORREDORES[k % len(PALETA_CORREDORES)],
+            "nodos": nodos, "tramos": tramos,
+            "sin_conexion": sum(c["d_ab_m"] is None for c, _ in tramos),
+        })
+    return salida
+
+
+def resumen_corredor(corredor: dict, promedios: dict) -> dict:
+    """
+    Distancia, tiempo y tiempo a flujo libre de recorrer el corredor en el
+    orden de la hoja, con las velocidades promedio del periodo como en
+    ruta_mas_rapida, y la fluidez promedio de sus nodos. Un tramo sin
+    distancia o sin datos deja vacio lo que depende de el.
+    """
+    dist = tiempo = tiempo_libre = 0.0
+    for c, sentido in corredor["tramos"]:
+        d = c["d_ab_m"] if sentido == 1 else c["d_ba_m"]
+        pa, pb = promedios.get(c["a"], {}), promedios.get(c["b"], {})
+        v = _armonica(pa.get("vel_actual"), pb.get("vel_actual"))
+        v_libre = _armonica(pa.get("vel_libre"), pb.get("vel_libre"))
+        d = float("nan") if d is None else d
+        dist += d
+        tiempo += d / (v / 3.6)
+        tiempo_libre += d / (v_libre / 3.6)
+    ratios = pd.Series([promedios.get(n, {}).get("ratio") for n in dict.fromkeys(corredor["nodos"])],
+                       dtype=float)
+    return {"dist_m": dist, "tiempo_s": tiempo, "tiempo_libre_s": tiempo_libre,
+            "ratio": ratios.mean()}
+
+
 def _trazo(conexion: dict, puntos: dict, por_via: bool, sentido: int = 1) -> list:
     """
     Puntos [lat, lon] de una conexion en el sentido pedido (1 = a->b,
@@ -161,7 +216,8 @@ def _trazo(conexion: dict, puntos: dict, por_via: bool, sentido: int = 1) -> lis
 
 def construir_mapa_red(df: pd.DataFrame, red: dict, promedios: dict, metrica: str,
                        metrica_label: str, clasificar_ratio, mostrar_conexiones: bool,
-                       por_via: bool, ruta=None, en_vivo: bool = False) -> folium.Map:
+                       por_via: bool, ruta=None, en_vivo: bool = False,
+                       corredores=None) -> folium.Map:
     """
     Mapa de la red: conexiones coloreadas por la metrica, la ruta elegida
     resaltada encima y los nodos (con su popup) arriba de todo. Con una ruta
@@ -169,11 +225,14 @@ def construir_mapa_red(df: pd.DataFrame, red: dict, promedios: dict, metrica: st
 
     df: nodos a mostrar (catalogo + promedios), como en mapa_nodos.construir_mapa.
     Solo se dibujan las conexiones entre nodos de df.
+    corredores: lista de armar_corredores; se dibujan en vez de la ruta, cada
+    uno con su color, y sus nodos llevan el borde de ese color.
     """
     m = mapa_nodos.mapa_base(df)
     escala = mapa_nodos.escala_metrica(m, metrica, metrica_label)
     puntos = df.set_index("id_nodo")[["lat", "lon"]].to_dict("index")
     nombres = dict(zip(df["id_nodo"], df["nombre_nodo"]))
+    resaltar = bool(ruta or corredores)
 
     if mostrar_conexiones:
         # Fuera del selector de mapa: se prenden con "Mostrar conexiones"
@@ -186,10 +245,36 @@ def construir_mapa_red(df: pd.DataFrame, red: dict, promedios: dict, metrica: st
             dist = min(d for d in (c["d_ab_m"], c["d_ba_m"]) if d is not None) / 1000
             folium.PolyLine(
                 _trazo(c, puntos, por_via), color=color,
-                weight=3 if ruta else 4, opacity=0.18 if ruta else 0.85,
+                weight=3 if resaltar else 4, opacity=0.18 if resaltar else 0.85,
                 tooltip=(f"{mapa_nodos.texto_html(nombres[c['a']])} – "
                          f"{mapa_nodos.texto_html(nombres[c['b']])} · {valor_txt} · {dist:.1f} km"),
             ).add_to(capa)
+
+    if corredores:
+        # Nodos fuera de los corredores atenuados, luego las lineas y arriba
+        # los nodos de los corredores, con el borde del primero que los usa
+        bordes = {}
+        for corredor in corredores:
+            for id_nodo in corredor["nodos"]:
+                bordes.setdefault(id_nodo, corredor["color"])
+        en_corredor = df["id_nodo"].isin(bordes)
+        mapa_nodos.agregar_nodos(m, df[~en_corredor], metrica, escala, clasificar_ratio,
+                                 en_vivo, estilo="atenuado")
+        capa_corredores = folium.FeatureGroup(name="Corredores", control=False).add_to(m)
+        for corredor in corredores:
+            nombre = mapa_nodos.texto_html(corredor["nombre"])
+            for (conexion, sentido), x, y in zip(corredor["tramos"], corredor["nodos"],
+                                                 corredor["nodos"][1:]):
+                folium.PolyLine(
+                    _trazo(conexion, puntos, por_via, sentido),
+                    color=corredor["color"], weight=6, opacity=0.9,
+                    tooltip=(f"<b>{nombre}</b><br>{mapa_nodos.texto_html(nombres[x])} → "
+                             f"{mapa_nodos.texto_html(nombres[y])}"),
+                ).add_to(capa_corredores)
+        mapa_nodos.agregar_nodos(m, df[en_corredor], metrica, escala, clasificar_ratio,
+                                 en_vivo, estilo="corredor", bordes=bordes)
+        return mapa_nodos.terminar_mapa(m, df[en_corredor]["lat"], df[en_corredor]["lon"],
+                                        encuadrar_todos=True)
 
     if not ruta:
         mapa_nodos.agregar_nodos(m, df, metrica, escala, clasificar_ratio, en_vivo)

@@ -1246,16 +1246,39 @@ def cargar_red() -> dict:
 
 
 @st.cache_data(ttl=3600)
-def cargar_corredores() -> pd.DataFrame:
-    """Rutas con nombre de la hoja CORREDORES de nodos.xlsx, que llena el equipo."""
-    columnas = ["corredor", "nodo_inicio", "nodo_fin"]
+def cargar_corredores() -> tuple:
+    """
+    Corredores de la hoja CORREDORES de nodos.xlsx, que llena el equipo:
+    ({corredor: [id_nodo, ...]} en el orden de la hoja, [id_nodo sin catalogo]).
+    """
+    catalogo = cargar_catalogo()
+    if catalogo.empty:
+        return {}, []
     try:
-        df = pd.read_excel(config.NODOS_PATH, sheet_name="CORREDORES", dtype=str)
-    except Exception:
-        return pd.DataFrame(columns=columnas)
-    if not set(columnas) <= set(df.columns):
-        return pd.DataFrame(columns=columnas)
-    return df[columnas].dropna().apply(lambda col: col.str.strip())
+        import descargar_trafico  # import diferido
+        return descargar_trafico.leer_corredores(config.NODOS_PATH, catalogo["id_nodo"])
+    except Exception as e:
+        print(f"  [Dashboard] No se pudo leer la hoja CORREDORES: {e}")
+        return {}, []
+
+
+def leyenda_corredores(corredores: list) -> None:
+    """Nombre y color de cada corredor dibujado, debajo del mapa de la red."""
+    items = "".join(
+        f"<span style='display:inline-flex;align-items:center;gap:8px;'>"
+        f"<span style='width:22px;height:6px;border-radius:3px;background:{c['color']};"
+        f"flex:none;'></span>{html.escape(c['nombre'])}</span>"
+        for c in corredores
+    )
+    st.markdown(
+        f"<div style='margin:10px 0 4px;padding:12px 16px;background:#ffffff;"
+        f"border:1px solid {R_LINEA};border-radius:16px;box-shadow:{R_SOMBRA};'>"
+        f"<div style='color:{R_AZUL_OSC};font-size:11px;font-weight:700;"
+        f"letter-spacing:.7px;text-transform:uppercase;margin-bottom:8px;'>Corredores</div>"
+        f"<div style='display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));"
+        f"gap:6px 18px;color:{UTB_WHITE};font-size:13px;'>{items}</div></div>",
+        unsafe_allow_html=True,
+    )
 
 
 @st.cache_data(ttl=300)
@@ -2395,29 +2418,32 @@ with tab_red:
                 horizontal=True, key="red_tipo_ruta", label_visibility="collapsed",
             )
             origen = destino = None
+            vista_corredores = []
             if tipo_ruta == "Origen–Destino":
                 origen = st.selectbox("Origen", list(nombres), index=None, key="red_origen",
                                       format_func=nombres.get, placeholder="Elegir nodo")
                 destino = st.selectbox("Destino", list(nombres), index=None, key="red_destino",
                                        format_func=nombres.get, placeholder="Elegir nodo")
             else:
-                corredores = cargar_corredores()
-                if corredores.empty:
+                corredores, sin_catalogo = cargar_corredores()
+                if not corredores:
                     st.info(
                         "Todavia no hay corredores. Agregalos en la hoja CORREDORES de "
-                        "nodos.xlsx: nombre del corredor, nodo_inicio y nodo_fin (id_nodo)."
+                        "nodos.xlsx: Corredor, Orden e id_nodo, una fila por nodo."
                     )
                 else:
-                    corredor = st.selectbox("Corredor", corredores["corredor"].tolist(),
-                                            index=None, key="red_corredor",
-                                            placeholder="Elegir corredor")
-                    if corredor:
-                        fila = corredores[corredores["corredor"] == corredor].iloc[0]
-                        faltan = [n for n in (fila["nodo_inicio"], fila["nodo_fin"]) if n not in nombres]
-                        if faltan:
-                            st.warning(f"El corredor usa nodos que no estan en el catalogo: {', '.join(faltan)}")
-                        else:
-                            origen, destino = fila["nodo_inicio"], fila["nodo_fin"]
+                    elegidos = st.multiselect(
+                        "Corredores:", list(corredores), key="red_corredores",
+                        placeholder="Todos los corredores",
+                    )
+                    # Se arman todos para que cada corredor conserve su color
+                    vista_corredores = [
+                        c for c in red_nodos.armar_corredores(corredores, red)
+                        if not elegidos or c["nombre"] in elegidos
+                    ]
+                    if sin_catalogo:
+                        st.caption("Nodos de CORREDORES que no estan en el catalogo: "
+                                   + ", ".join(sin_catalogo))
 
         # La ruta se calcula sobre toda la red: el filtro de punto de
         # monitoreo solo decide que nodos se dibujan.
@@ -2437,6 +2463,7 @@ with tab_red:
         ids_vista = set(filtros_red["consulta"]["ids"])
         if ids_vista:
             ids_vista |= set(ruta["nodos"]) if ruta else set()
+            ids_vista |= {n for c in vista_corredores for n in c["nodos"]}
             nodos_red = nodos_red[nodos_red["id_nodo"].isin(ids_vista)]
 
         with col_mapa:
@@ -2448,11 +2475,48 @@ with tab_red:
             mapa_red = red_nodos.construir_mapa_red(
                 nodos_red, red, prom, filtros_red["metrica"], filtros_red["metrica_label"],
                 clasificar_ratio, mostrar_conexiones, seguir_vias, ruta, en_vivo_red,
+                corredores=vista_corredores,
             )
-            st_folium(mapa_red, height=560, use_container_width=True,
-                      returned_objects=[], key="mapa_red")
+            # Los corredores van de Bayunca a Mamonal: con 560 px la ciudad se
+            # ve un nivel de zoom mas lejos
+            st_folium(mapa_red, height=640 if vista_corredores else 560,
+                      use_container_width=True, returned_objects=[], key="mapa_red")
+            if vista_corredores:
+                leyenda_corredores(vista_corredores)
+                sin_conexion = sum(c["sin_conexion"] for c in vista_corredores)
+                if sin_conexion:
+                    st.caption(f"{sin_conexion} tramo(s) de corredor sin conexion en la red se "
+                               "dibujan en linea recta: falta correr "
+                               "capturar_red.py --completar-corredores.")
             if filtros_red["metrica"] == "ratio":
                 leyenda_ratio("ratio")
+
+        if vista_corredores:
+            st.markdown("### Corredores seleccionados")
+            filas = []
+            for c in vista_corredores:
+                r = red_nodos.resumen_corredor(c, prom)
+                minutos = r["tiempo_s"] / 60
+                filas.append({
+                    "Corredor": c["nombre"],
+                    "Nodos": len(dict.fromkeys(c["nodos"])),
+                    "Distancia (km)": r["dist_m"] / 1000,
+                    "Tiempo (min)": minutos,
+                    "Demora (min)": minutos - r["tiempo_libre_s"] / 60,
+                    "Velocidad (km/h)": r["dist_m"] / 1000 / (minutos / 60),
+                    "Fluidez": r["ratio"],
+                    "Estado": clasificar_ratio(r["ratio"])[1],
+                })
+            st.dataframe(
+                pd.DataFrame(filas).style.format({
+                    "Distancia (km)": "{:.1f}", "Tiempo (min)": "{:.1f}", "Demora (min)": "{:+.1f}",
+                    "Velocidad (km/h)": "{:.1f}", "Fluidez": "{:.2f}",
+                }, na_rep="—"),
+                width="stretch", hide_index=True,
+            )
+            st.caption("Cada corredor se recorre en el orden de la hoja CORREDORES, con las "
+                       "velocidades promedio de sus nodos para los filtros elegidos. Demora: "
+                       "minutos de mas frente al flujo libre. Fluidez: promedio de sus nodos.")
 
         if ruta:
             st.markdown("### Ruta seleccionada")

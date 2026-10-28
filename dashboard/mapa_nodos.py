@@ -691,30 +691,43 @@ def color_y_texto(valor, escala, clasificar_ratio) -> tuple:
 
 
 def agregar_nodos(m: folium.Map, df: pd.DataFrame, metrica: str, escala,
-                  clasificar_ratio, en_vivo: bool = False, estilo: str = "normal") -> None:
+                  clasificar_ratio, en_vivo: bool = False, estilo: str = "normal",
+                  bordes: dict = None) -> None:
     """
     Un circulo por nodo, coloreado segun la metrica, con tooltip y popup.
     estilo: "normal"; "atenuado" (pequeño y casi transparente, para que una
-    ruta elegida se lea encima); o "resaltado" (los nodos de esa ruta).
+    ruta elegida se lea encima); "resaltado" (los nodos de esa ruta); o
+    "corredor" (blanco con borde grueso del color de su corredor, como en el
+    dashboard R: el color de la metrica queda en el tooltip y el popup).
+    bordes: {id_nodo: color} del borde; sin el, el borde es blanco.
     """
     radio, borde, opacidad, relleno = {
         "normal":    (8, 1, 0.6, 0.9),
         "atenuado":  (5, 1, 0.25, 0.25),
         "resaltado": (9, 2, 1.0, 1.0),
+        "corredor":  (7, 3, 1.0, 1.0),
     }[estilo]
+    bordes = bordes or {}
     for fila in df.to_dict("records"):
         color, valor_txt = color_y_texto(fila.get(metrica), escala, clasificar_ratio)
         folium.CircleMarker(
             location=[fila["lat"], fila["lon"]],
-            radius=radio, color="#ffffff", weight=borde, opacity=opacidad,
-            fill=True, fill_color=color, fill_opacity=relleno,
+            radius=radio, color=bordes.get(fila["id_nodo"], "#ffffff"),
+            weight=borde, opacity=opacidad,
+            fill=True, fill_color="#ffffff" if estilo == "corredor" else color,
+            fill_opacity=relleno,
             tooltip=f"{texto_html(fila.get('nombre_nodo'))} · {valor_txt}",
             popup=folium.Popup(popup_html(fila, clasificar_ratio, en_vivo), max_width=340),
         ).add_to(m)
 
 
-def terminar_mapa(m: folium.Map, lat: pd.Series, lon: pd.Series) -> folium.Map:
-    """Selector de mapa, encuadre sobre los puntos dados y estilos del popup."""
+def terminar_mapa(m: folium.Map, lat: pd.Series, lon: pd.Series,
+                  encuadrar_todos: bool = False) -> folium.Map:
+    """
+    Selector de mapa, encuadre sobre los puntos dados y estilos del popup.
+    encuadrar_todos: encuadra todos los puntos aunque sean muchos (corredores
+    que llegan hasta Bayunca o Ramblas).
+    """
     Fullscreen(
         position="topleft",
         title="Expandir mapa",
@@ -727,7 +740,7 @@ def terminar_mapa(m: folium.Map, lat: pd.Series, lon: pd.Series) -> folium.Map:
     # Con muchos puntos se encuadra el 94 % central: los nodos aislados del
     # norte (Bayunca, Ramblas) alejaban el zoom y la ciudad se veia diminuta.
     # Con pocos (una seleccion o una ruta) se encuadran todos.
-    q = (0.03, 0.97) if len(lat) > 20 else (0, 1)
+    q = (0.03, 0.97) if len(lat) > 20 and not encuadrar_todos else (0, 1)
     lat, lon = lat.quantile(q), lon.quantile(q)
     limites = [[float(lat.iloc[0]), float(lon.iloc[0])],
                [float(lat.iloc[1]), float(lon.iloc[1])]]

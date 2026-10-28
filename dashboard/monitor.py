@@ -449,11 +449,11 @@ st.markdown(f"""
         border: 0;
         border-radius: 28px;
         box-shadow: {R_SOMBRA};
-        /* Sin relleno a los lados: Plotly toma el ancho completo del
-           recuadro, y con relleno lo ultimo de la derecha (las 00:00, el
-           titulo del eje derecho) quedaba por fuera. El aire lateral lo dan
-           los margenes de plotly_base. */
-        padding: 14px 0 10px;
+        /* Sin relleno: Plotly toma el ancho y el alto completos del
+           recuadro, y con relleno se salia por la derecha (las 00:00, el
+           titulo del eje derecho) y por abajo ("Hora del dia"). El aire lo
+           dan los margenes de plotly_base. */
+        padding: 0;
     }}
     /* Boton propio: Plotly no recibe el control nativo de pantalla completa
        en esta version de Streamlit. */
@@ -904,7 +904,7 @@ def plotly_base(fig, height: int = 340):
         font_color="#1e3a6e",
         font_family="Inter, Segoe UI, Helvetica, Arial, sans-serif",
         height=height,
-        margin=dict(l=28, r=36, t=30, b=42),
+        margin=dict(l=28, r=36, t=42, b=50),
         legend=dict(
             orientation="h", yanchor="bottom", y=1.02,
             bgcolor="rgba(0,0,0,0)", font=dict(color=R_TENUE),
@@ -1909,7 +1909,7 @@ def render_analisis_temporal():
                 fig_calor.update_layout(xaxis_title="Hora del día", yaxis_title="")
                 fig_calor.update_xaxes(type="category")
                 fig_calor = plotly_base(fig_calor, height=480)
-                fig_calor.update_layout(margin=dict(t=72))
+                fig_calor.update_layout(margin=dict(t=80))
                 mostrar_grafica(fig_calor, "temporal_calor")
                 nota_escala = (
                     f" Velocidad de circulación y flujo libre usan la misma escala de color "
@@ -2805,7 +2805,7 @@ with tab_historia:
                         font_color="#1e3a6e",
                         font_family="Inter, Segoe UI, Helvetica, Arial, sans-serif",
                         height=410,
-                        margin=dict(l=20, r=28, t=72, b=24),
+                        margin=dict(l=20, r=28, t=80, b=34),
                         xaxis=dict(
                             title="Hora del día", gridcolor=REJILLA, type="category",
                             tickfont=dict(color=R_TENUE),

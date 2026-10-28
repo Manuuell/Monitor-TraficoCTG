@@ -2714,7 +2714,7 @@ with tab_historia:
                 leyenda_ratio("ratio")
 
                 # --- Grafica 3: Heatmap hora x dia de semana ---
-                st.markdown("### Heatmap de congestion por hora y dia")
+                st.markdown("### Mapa de calor")
                 dias_disponibles = df_periodo["consultation_time"].dt.date.nunique()
                 if dias_disponibles < 2:
                     st.info("Se necesitan al menos 2 dias de datos para mostrar el heatmap.")

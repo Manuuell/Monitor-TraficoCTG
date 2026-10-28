@@ -6,6 +6,7 @@ Uso:
     TOMTOM_API_KEY=xxx VPS_ID=1 python3 descargar_trafico.py
 """
 import json
+import re
 import sys
 import time
 from datetime import datetime
@@ -104,6 +105,52 @@ def leer_conexiones(path: Path) -> list:
             if a != b and (marcas.at[a, b] or marcas.at[b, a]):
                 pares.add(tuple(sorted((a, b))))
     return sorted(pares)
+
+
+def _clave_nodo(id_nodo) -> str:
+    """'JA _FRANCISCO', 'JA_FRANCISCO' y 'ja francisco' son el mismo nodo."""
+    return re.sub(r"[\s_]+", "", str(id_nodo)).upper()
+
+
+def leer_corredores(path: Path, ids_catalogo) -> tuple:
+    """
+    Corredores de la hoja CORREDORES del Excel (columnas Corredor, Orden e
+    id_nodo): ({corredor: [id_nodo, ...]}, [id_nodo sin nodo en el catalogo]).
+
+    Los corredores quedan en el orden de la hoja y sus nodos en el de la
+    columna Orden, tal como los define el equipo. Los id_nodo se buscan en el
+    catalogo sin distinguir espacios, guiones bajos ni mayusculas.
+    """
+    try:
+        hoja = pd.read_excel(path, sheet_name="CORREDORES", dtype=str)
+    except ValueError:   # el Excel no tiene la hoja
+        return {}, []
+    hoja.columns = [str(c).strip().lower() for c in hoja.columns]
+    if not {"corredor", "orden", "id_nodo"} <= set(hoja.columns):
+        return {}, []
+    hoja = hoja.dropna(subset=["corredor", "id_nodo"])
+    hoja["corredor"] = hoja["corredor"].str.strip()
+    hoja["orden"] = pd.to_numeric(hoja["orden"], errors="coerce")
+
+    por_clave = {_clave_nodo(i): i for i in ids_catalogo}
+    corredores, faltantes = {}, set()
+    for nombre, filas in hoja.groupby("corredor", sort=False):
+        ids = []
+        for crudo in filas.sort_values("orden", kind="stable")["id_nodo"]:
+            id_nodo = por_clave.get(_clave_nodo(crudo))
+            if id_nodo is None:
+                faltantes.add(crudo.strip())
+            elif not ids or ids[-1] != id_nodo:
+                ids.append(id_nodo)
+        if len(ids) >= 2:
+            corredores[nombre] = ids
+    return corredores, sorted(faltantes)
+
+
+def pares_corredores(corredores: dict) -> list:
+    """Pares (a, b), con a < b, de nodos seguidos en algun corredor."""
+    return sorted({tuple(sorted(par)) for ids in corredores.values()
+                   for par in zip(ids, ids[1:])})
 
 
 def consultar_flow(lat: float, lon: float, api_key: str) -> dict:

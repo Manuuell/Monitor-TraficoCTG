@@ -56,7 +56,9 @@ MESES = ["Todos", "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio"
 # indice + 1 = dia ISO (1 = Lunes), igual que EXTRACT(ISODOW) en PostgreSQL
 DIAS = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"]
 QUINCENA = "Quincena"   # dia 15 y ultimo dia de cada mes
-TIPOS_DIA = ["Todos", QUINCENA] + DIAS
+LABORABLES = "Días laborables (L–V)"
+FIN_SEMANA = "Fin de semana"
+TIPOS_DIA = ["Todos", LABORABLES, FIN_SEMANA, QUINCENA] + DIAS
 
 # Dominio fijo de la escala de velocidades: los promedios por nodo van de
 # ~10 a ~75 km/h. Fijo para que cambiar un filtro no recoloree el mapa solo
@@ -383,6 +385,8 @@ def panel_filtros(prefijo: str, nodos: dict, fechas=None, ultima_ejecucion=None)
         # el periodo. La consulta lo conserva para reactivarlo sin tocar la BD.
         "mes": None,
         "dia_semana": DIAS.index(dia) + 1 if dia in DIAS else None,
+        "laborables": dia == LABORABLES,
+        "fin_semana": dia == FIN_SEMANA,
         "quincena": dia == QUINCENA,
         "ids": tuple(ids),
     }
@@ -392,6 +396,8 @@ def panel_filtros(prefijo: str, nodos: dict, fechas=None, ultima_ejecucion=None)
         ) != (_fecha_ultima(fechas, ultima_ejecucion),) * 2)
         or (desde, hasta) != tuple(iniciales[f"{prefijo}_horas"])
         or consulta["dia_semana"] is not None
+        or consulta["laborables"]
+        or consulta["fin_semana"]
         or consulta["quincena"]
     )
     return {
@@ -405,6 +411,7 @@ def panel_filtros(prefijo: str, nodos: dict, fechas=None, ultima_ejecucion=None)
 def promedios_por_nodo_df(
     df: pd.DataFrame, fecha_ini=None, fecha_fin=None, desde: str = None,
     hasta: str = None, mes: int = None, dia_semana: int = None,
+    laborables: bool = False, fin_semana: bool = False,
     quincena: bool = False, ids: tuple = (),
 ) -> pd.DataFrame:
     """
@@ -430,6 +437,10 @@ def promedios_por_nodo_df(
         mascara &= ts.dt.month == mes
     if dia_semana is not None:
         mascara &= ts.dt.weekday + 1 == dia_semana
+    if laborables:
+        mascara &= ts.dt.weekday < 5
+    elif fin_semana:
+        mascara &= ts.dt.weekday >= 5
     if quincena:
         mascara &= (ts.dt.day == 15) | ts.dt.is_month_end
     if ids:

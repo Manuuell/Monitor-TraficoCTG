@@ -1261,7 +1261,7 @@ def cargar_corredores() -> pd.DataFrame:
 
 @st.cache_data(ttl=300)
 def promedios_mapa(fecha_ini, fecha_fin, desde, hasta, mes, dia_semana,
-                   quincena, ids) -> tuple:
+                   laborables, fin_semana, quincena, ids) -> tuple:
     """
     Promedio por nodo con los filtros del mapa, y la fuente usada.
     PostgreSQL agrega en la consulta (113 filas); Sheets descarga el
@@ -1269,6 +1269,7 @@ def promedios_mapa(fecha_ini, fecha_fin, desde, hasta, mes, dia_semana,
     """
     consulta = dict(fecha_ini=fecha_ini, fecha_fin=fecha_fin, desde=desde,
                     hasta=hasta, mes=mes, dia_semana=dia_semana,
+                    laborables=laborables, fin_semana=fin_semana,
                     quincena=quincena, ids=ids)
     if getattr(config, "FUENTE_DASHBOARD", "sheets") == "db":
         try:

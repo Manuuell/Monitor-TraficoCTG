@@ -251,7 +251,8 @@ def leer_resumen_ejecuciones(n_dias: int = 7) -> pd.DataFrame:
 def promedios_por_nodo(
     fecha_ini: date = None, fecha_fin: date = None,
     desde: str = None, hasta: str = None, mes: int = None,
-    dia_semana: int = None, quincena: bool = False, ids: list = None,
+    dia_semana: int = None, laborables: bool = False,
+    fin_semana: bool = False, quincena: bool = False, ids: list = None,
 ) -> pd.DataFrame:
     """
     Promedio por nodo de las lecturas validas que cumplen los filtros del
@@ -263,6 +264,8 @@ def promedios_por_nodo(
                             (04:00 ... 00:00, ver horario.py), o None
         mes                 1-12, o None para todos
         dia_semana          1=Lunes ... 7=Domingo (ISODOW), o None
+        laborables          solo lunes a viernes
+        fin_semana          solo sabado y domingo
         quincena            solo el dia 15 y el ultimo dia de cada mes
         ids                 lista de id_nodo, o None para todos
 
@@ -291,6 +294,10 @@ def promedios_por_nodo(
     if dia_semana is not None:
         condiciones.append(f"EXTRACT(ISODOW FROM {ts}) = :dow")
         params["dow"] = dia_semana
+    if laborables:
+        condiciones.append(f"EXTRACT(ISODOW FROM {ts}) BETWEEN 1 AND 5")
+    elif fin_semana:
+        condiciones.append(f"EXTRACT(ISODOW FROM {ts}) IN (6, 7)")
     if quincena:
         condiciones.append(
             f"(EXTRACT(DAY FROM {ts}) = 15 OR {ts}::date = "

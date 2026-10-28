@@ -207,8 +207,9 @@ Toma de la hoja `REDES` de `nodos.xlsx` qué nodos son vecinos (y también los n
 | `--resolver` | Vuelve a pedir con la ruta más corta las conexiones donde TomTom y OpenStreetMap no coinciden (la más rápida a veces da rodeos entre nodos vecinos) |
 | `--completar-vuelta` | Agrega el trazado de vuelta a las conexiones que no lo tienen, con la distancia de esa misma consulta. Ida y vuelta pueden ir por calzadas distintas aunque midan lo mismo |
 | `--completar-corredores` | Agrega a la red los pares de nodos seguidos de un corredor que todavía no son conexiones |
+| `--capturar-trazados-corredor` | Captura con TomTom pedestrian shortest una geometría sin sentido para los tramos de corredor que dan una vuelta en auto. Guarda `path_corredor` y `d_corredor_m` sin modificar las rutas Origen–Destino |
 
-**Corredores:** se definen en la hoja `CORREDORES` de `nodos.xlsx`, una fila por nodo con las columnas `Corredor`, `Orden` e `id_nodo` (el recorrido sigue la columna `Orden`). Después de agregar o cambiar un corredor, `python3 capturar_red.py --completar-corredores` captura los tramos nuevos.
+**Corredores:** se definen en la hoja `CORREDORES` de `nodos.xlsx`, una fila por nodo con las columnas `Corredor`, `Orden` e `id_nodo` (el recorrido sigue la columna `Orden`). Después de agregar o cambiar un corredor, `python3 capturar_red.py --completar-corredores` captura los tramos nuevos. Los overrides `path_corredor` y `d_corredor_m` solo afectan el dibujo y el resumen del corredor; `path`, `path_ba`, `d_ab_m` y `d_ba_m` siguen siendo la fuente exclusiva de las rutas Origen–Destino.
 
 **Correr las pruebas:**
 ```bash

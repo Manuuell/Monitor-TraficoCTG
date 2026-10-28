@@ -7,6 +7,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import pandas as pd
 
@@ -16,8 +17,36 @@ sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(ROOT / "dashboard"))
 
 import config  # noqa: E402
+import capturar_red  # noqa: E402
 import descargar_trafico as dt  # noqa: E402
 import red_nodos  # noqa: E402
+
+
+class RutaTomTomTest(unittest.TestCase):
+    def test_modo_pedestrian_y_ruta_mas_corta(self):
+        respuesta = mock.Mock(status_code=200)
+        respuesta.json.return_value = {"routes": [{
+            "summary": {"lengthInMeters": 321},
+            "legs": [{"points": [
+                {"latitude": 10.0, "longitude": -75.0},
+                {"latitude": 10.001, "longitude": -75.001},
+            ]}],
+        }]}
+        nodos = pd.DataFrame([
+            {"lat": 10.0, "lon": -75.0},
+            {"lat": 10.001, "lon": -75.001},
+        ])
+        with mock.patch("capturar_red.requests.get", return_value=respuesta) as pedir:
+            distancia, trazado = capturar_red.ruta_tomtom(
+                nodos, 0, 1, capturar_red.Llaves(["llave-prueba"]),
+                con_trazado=True, tipo="shortest", modo="pedestrian",
+            )
+        params = pedir.call_args.kwargs["params"]
+        self.assertEqual(distancia, 321)
+        self.assertEqual(trazado, [[10.0, -75.0], [10.001, -75.001]])
+        self.assertEqual(params["travelMode"], "pedestrian")
+        self.assertEqual(params["routeType"], "shortest")
+        self.assertEqual(params["traffic"], "false")
 
 
 class LeerCorredoresTest(unittest.TestCase):
@@ -97,6 +126,27 @@ class ArmarCorredoresTest(unittest.TestCase):
         prom = {n: {"vel_actual": 36.0, "vel_libre": 72.0, "ratio": 0.9} for n in "CD"}
         self.assertTrue(math.isnan(red_nodos.resumen_corredor(dos, prom)["dist_m"]))
 
+    def test_trazado_sin_sentido_se_usa_solo_en_corredores(self):
+        conexion = dict(self.red["conexiones"][0],
+                        path_corredor=[[0, 0], [0.5, 0.5], [0, 1]])
+        puntos = {"A": {"lat": 0, "lon": 0}, "B": {"lat": 0, "lon": 1}}
+        self.assertEqual(red_nodos._trazo(conexion, puntos, True), conexion["path"])
+        self.assertEqual(red_nodos._trazo_corredor(conexion, puntos, True),
+                         conexion["path_corredor"])
+        self.assertEqual(red_nodos._trazo_corredor(conexion, puntos, True, -1),
+                         conexion["path_corredor"][::-1])
+
+    def test_distancia_visual_no_cambia_la_ruta_origen_destino(self):
+        conexion = dict(self.red["conexiones"][0], d_corredor_m=300)
+        red = {"conexiones": [conexion]}
+        prom = {n: {"vel_actual": 36.0, "vel_libre": 72.0, "ratio": 0.9} for n in "AB"}
+        corredor = red_nodos.armar_corredores({"UNO": ["A", "B"]}, red)[0]
+        resumen = red_nodos.resumen_corredor(corredor, prom)
+        ruta = red_nodos.ruta_mas_rapida("A", "B", red, prom)
+        self.assertEqual(resumen["dist_m"], 300)
+        self.assertEqual(resumen["tiempo_s"], 30)
+        self.assertEqual(ruta["dist_m"], 1000)
+
 
 class CorredoresDelProyectoTest(unittest.TestCase):
     """La hoja real y data/red_nodos.json: cada corredor se dibuja por la via."""
@@ -109,6 +159,26 @@ class CorredoresDelProyectoTest(unittest.TestCase):
         red = json.loads((ROOT / "data" / "red_nodos.json").read_text(encoding="utf-8"))
         armados = red_nodos.armar_corredores(corredores, red)
         self.assertEqual({c["nombre"]: c["sin_conexion"] for c in armados if c["sin_conexion"]}, {})
+
+    def test_tramos_especiales_tienen_geometria_tomtom_sin_sentido(self):
+        esperados = {
+            frozenset(("DES_LAGO", "MAN_ADU")),
+            frozenset(("RET_TRAV57&54", "ROS_ACC")),
+            frozenset(("TIE_ARAPOZO", "ENT_TERMINAL")),
+            frozenset(("BAY_CTG", "RAM_CTG")),
+        }
+        red = json.loads((ROOT / "data" / "red_nodos.json").read_text(encoding="utf-8"))
+        encontrados = {}
+        for conexion in red["conexiones"]:
+            par = frozenset((conexion["a"], conexion["b"]))
+            if par in esperados:
+                encontrados[par] = conexion
+        self.assertEqual(set(encontrados), esperados)
+        for conexion in encontrados.values():
+            self.assertGreater(conexion.get("d_corredor_m", 0), 0)
+            self.assertGreaterEqual(len(conexion.get("path_corredor", [])), 2)
+            self.assertEqual(conexion.get("modo_path_corredor"),
+                             "TomTom pedestrian shortest")
 
 
 if __name__ == "__main__":

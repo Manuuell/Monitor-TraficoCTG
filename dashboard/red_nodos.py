@@ -196,7 +196,9 @@ def resumen_corredor(corredor: dict, promedios: dict) -> dict:
     """
     dist = tiempo = tiempo_libre = 0.0
     for c, sentido in corredor["tramos"]:
-        d = c["d_ab_m"] if sentido == 1 else c["d_ba_m"]
+        d = c.get("d_corredor_m")
+        if d is None:
+            d = c["d_ab_m"] if sentido == 1 else c["d_ba_m"]
         pa, pb = promedios.get(c["a"], {}), promedios.get(c["b"], {})
         v = _armonica(pa.get("vel_actual"), pb.get("vel_actual"))
         v_libre = _armonica(pa.get("vel_libre"), pb.get("vel_libre"))
@@ -226,6 +228,19 @@ def _trazo(conexion: dict, puntos: dict, por_via: bool, sentido: int = 1) -> lis
         a, b = puntos[conexion["a"]], puntos[conexion["b"]]
         path = [[a["lat"], a["lon"]], [b["lat"], b["lon"]]]
     return path if sentido == 1 else path[::-1]
+
+
+def _trazo_corredor(conexion: dict, puntos: dict, por_via: bool,
+                    sentido: int = 1) -> list:
+    """
+    Trazado visual de un corredor. Si la conexion tiene path_corredor, usa
+    esa geometria TomTom sin sentido y deja path/path_ba exclusivamente para
+    las conexiones y las rutas Origen-Destino.
+    """
+    if por_via and conexion.get("path_corredor"):
+        path = conexion["path_corredor"]
+        return path if sentido == 1 else path[::-1]
+    return _trazo(conexion, puntos, por_via, sentido)
 
 
 def construir_mapa_red(df: pd.DataFrame, red: dict, promedios: dict, metrica: str,
@@ -280,7 +295,7 @@ def construir_mapa_red(df: pd.DataFrame, red: dict, promedios: dict, metrica: st
             for (conexion, sentido), x, y in zip(corredor["tramos"], corredor["nodos"],
                                                  corredor["nodos"][1:]):
                 folium.PolyLine(
-                    _trazo(conexion, puntos, por_via, sentido),
+                    _trazo_corredor(conexion, puntos, por_via, sentido),
                     color=corredor["color"], weight=6, opacity=0.9,
                     tooltip=(f"<b>{nombre}</b><br>{mapa_nodos.texto_html(nombres[x])} → "
                              f"{mapa_nodos.texto_html(nombres[y])}"),

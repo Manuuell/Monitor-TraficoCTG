@@ -38,6 +38,9 @@ Uso (en un VPS, o local con un Python que tenga OpenSSL moderno):
     python3 capturar_red.py --completar-corredores
         # agrega a un red_nodos.json existente los pares de nodos seguidos de
         # un corredor que aun no son conexiones (2 consultas por par)
+    python3 capturar_red.py --capturar-trazados-corredor
+        # agrega un trazado TomTom pedestrian sin sentido para los tramos de
+        # corredor especiales (1 consulta por par; no toca Origen-Destino)
 
 Cada conexion guarda el trazado de ida (path) y el de vuelta (path_ba): en
 calles de un solo sentido el regreso va por otras vias, y dibujarlo
@@ -71,6 +74,16 @@ PAUSA_TOMTOM = 0.25
 DIF_MIN_M, DIF_REL = 400, 0.30
 OUT = config.BASE_DIR / "data" / "red_nodos.json"
 OUT_REVISION = config.BASE_DIR / "data" / "red_nodos_revision.csv"
+
+# Estos pares siguen siendo tramos de corredor, pero el trazado en auto da una
+# vuelta por los sentidos viales. Se captura una geometria peatonal sin sentido
+# solo para dibujar y medir el corredor; path/path_ba siguen siendo de automovil.
+TRAMOS_CORREDOR_SIN_SENTIDO = (
+    ("DES_LAGO", "MAN_ADU"),
+    ("RET_TRAV57&54", "ROS_ACC"),
+    ("TIE_ARAPOZO", "ENT_TERMINAL"),
+    ("BAY_CTG", "RAM_CTG"),
+)
 
 
 class SinCreditos(Exception):
@@ -162,16 +175,17 @@ def _adelgazar(puntos: list, min_m: float = 10) -> list:
 
 
 def ruta_tomtom(nodos, i: int, j: int, llaves: Llaves, con_trazado: bool,
-                tipo: str = "fastest") -> tuple:
+                tipo: str = "fastest", modo: str = "car") -> tuple:
     """
-    (distancia_m, trazado [lat, lon] o None) de la ruta en auto de i a j.
-    tipo: "fastest" (mas rapida) o "shortest" (mas corta; ambas respetan
-    los sentidos viales).
+    (distancia_m, trazado [lat, lon] o None) de la ruta de i a j.
+    tipo: "fastest" (mas rapida) o "shortest" (mas corta).
+    modo: "car" para la red Origen-Destino o "pedestrian" para la geometria
+    sin sentido que se usa exclusivamente al dibujar corredores.
     """
     url = (f"{TOMTOM}/{nodos.at[i, 'lat']:.6f},{nodos.at[i, 'lon']:.6f}:"
            f"{nodos.at[j, 'lat']:.6f},{nodos.at[j, 'lon']:.6f}/json")
     params = {
-        "travelMode": "car", "routeType": tipo, "traffic": "false",
+        "travelMode": modo, "routeType": tipo, "traffic": "false",
         "routeRepresentation": "polyline" if con_trazado else "summaryOnly",
     }
     for intento in range(5):
@@ -338,6 +352,64 @@ def completar_corredores(llaves) -> int:
     return 0
 
 
+def capturar_trazados_corredor(llaves) -> int:
+    """
+    Captura con TomTom pedestrian la geometria sin sentido de los tramos de
+    corredor que en auto dan una vuelta. Guarda path_corredor y
+    d_corredor_m aparte de path/path_ba y d_ab_m/d_ba_m, de modo que la ruta
+    Origen-Destino conserve exactamente sus trazados y distancias en auto.
+    """
+    if not llaves:
+        print("ERROR: --capturar-trazados-corredor necesita una llave de TomTom.")
+        return 1
+    if not OUT.exists():
+        print(f"ERROR: no existe {OUT}; corre primero la captura completa.")
+        return 1
+    with open(OUT, encoding="utf-8") as f:
+        datos = json.load(f)
+
+    nodos = dt.cargar_nodos(config.NODOS_PATH)
+    nodos["id_nodo"] = nodos["id_nodo"].astype(str)
+    indice = {id_nodo: i for i, id_nodo in enumerate(nodos["id_nodo"])}
+    por_par = {frozenset((c["a"], c["b"])): c for c in datos["conexiones"]}
+    faltantes = [par for par in TRAMOS_CORREDOR_SIN_SENTIDO
+                 if frozenset(par) not in por_par]
+    if faltantes:
+        print("ERROR: faltan conexiones para estos tramos: "
+              + ", ".join(f"{a}-{b}" for a, b in faltantes))
+        return 1
+
+    pendientes = [par for par in TRAMOS_CORREDOR_SIN_SENTIDO
+                  if not por_par[frozenset(par)].get("path_corredor")]
+    print(f"Trazados de corredor pendientes: {len(pendientes)} "
+          f"({len(pendientes)} consultas a TomTom pedestrian shortest)")
+    if not pendientes:
+        print("Listo. Todos los trazados especiales ya estaban capturados.")
+        return 0
+    for k, par in enumerate(pendientes, 1):
+        c = por_par[frozenset(par)]
+        i, j = indice[c["a"]], indice[c["b"]]
+        distancia, trazado = ruta_tomtom(
+            nodos, i, j, llaves, con_trazado=True,
+            tipo="shortest", modo="pedestrian",
+        )
+        c.update(
+            d_corredor_m=distancia,
+            path_corredor=trazado,
+            modo_path_corredor="TomTom pedestrian shortest",
+        )
+        print(f"  {k}/{len(pendientes)} {c['a']} <-> {c['b']}: {distancia} m")
+        time.sleep(PAUSA_TOMTOM)
+
+    datos["trazados_corredor_capturados"] = datetime.now().strftime("%Y-%m-%d %H:%M")
+    # Se escribe al final: si se corta una consulta, el archivo queda intacto.
+    with open(OUT, "w", encoding="utf-8") as f:
+        json.dump(datos, f, ensure_ascii=False, separators=(",", ":"))
+    print(f"Listo. Trazados de corredor agregados: {len(pendientes)}")
+    print(f"Archivo: {OUT} ({OUT.stat().st_size / 1024:.0f} KB)")
+    return 0
+
+
 def lista_revision(conexiones: list, nodos, indice: dict) -> list:
     """Filas del CSV de revision: conexiones donde TomTom y OSM no coinciden."""
     revision = []
@@ -421,6 +493,8 @@ def main() -> int:
                         help="solo agrega path_ba a las conexiones del JSON existente que no lo tienen")
     parser.add_argument("--completar-corredores", action="store_true",
                         help="agrega al JSON existente los pares seguidos de los corredores que no son conexiones")
+    parser.add_argument("--capturar-trazados-corredor", action="store_true",
+                        help="captura con TomTom pedestrian el trazado sin sentido de corredores especiales")
     parser.add_argument("--resolver", action="store_true",
                         help="repide con la ruta mas corta las conexiones donde TomTom y OSM no coinciden")
     args = parser.parse_args()
@@ -439,6 +513,8 @@ def main() -> int:
         return completar_vuelta(llaves)
     if args.completar_corredores:
         return completar_corredores(llaves)
+    if args.capturar_trazados_corredor:
+        return capturar_trazados_corredor(llaves)
     if args.resolver:
         return resolver_diferencias(llaves)
 

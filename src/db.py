@@ -170,6 +170,9 @@ def leer_rango(fecha_ini: date, fecha_fin: date) -> pd.DataFrame:
     Lee las mediciones con consultation_time entre fecha_ini y fecha_fin
     (ambos dias inclusive). Trae solo el periodo pedido — usa el indice
     idx_mediciones_ct, no recorre la tabla completa.
+
+    Un periodo sin mediciones devuelve un DataFrame vacio; un error de
+    conexion se propaga para que el dashboard decida si usa Sheets.
     """
     engine = get_engine()
     query = text(
@@ -177,15 +180,10 @@ def leer_rango(fecha_ini: date, fecha_fin: date) -> pd.DataFrame:
         f'WHERE "consultation_time" >= :ini AND "consultation_time" < :fin '
         f'ORDER BY "consultation_time";'
     )
-    try:
-        df = pd.read_sql(
-            query, engine,
-            params={"ini": fecha_ini, "fin": fecha_fin + timedelta(days=1)},
-        )
-    except Exception as e:
-        print(f"  [DB] Error leyendo rango: {e}")
-        return pd.DataFrame()
-
+    df = pd.read_sql(
+        query, engine,
+        params={"ini": fecha_ini, "fin": fecha_fin + timedelta(days=1)},
+    )
     return _postprocesar_lectura(df)
 
 

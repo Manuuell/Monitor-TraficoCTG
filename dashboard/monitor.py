@@ -1054,13 +1054,12 @@ def cargar_historico(fecha_ini, fecha_fin) -> tuple:
     Datos del periodo [fecha_ini, fecha_fin] y la fuente usada.
     PostgreSQL consulta solo el rango pedido (rapido); Sheets descarga el
     historico completo y recorta (respaldo si la BD no esta disponible).
+    Un periodo vacio en PostgreSQL es un resultado valido: no descarga Sheets.
     """
     if getattr(config, "FUENTE_DASHBOARD", "sheets") == "db":
         try:
             import db  # import diferido
-            df = db.leer_rango(fecha_ini, fecha_fin)
-            if not df.empty:
-                return df, "PostgreSQL"
+            return db.leer_rango(fecha_ini, fecha_fin), "PostgreSQL"
         except Exception as e:
             print(f"  [Dashboard] PostgreSQL no disponible, usando Sheets: {e}")
 
@@ -1369,6 +1368,12 @@ def render_analisis_nodo():
             key=f"{prefijo}_restablecer",
         )
 
+    if fecha_fin < fecha_ini:
+        # Un rango invertido no tiene datos: no se consulta la base ni Sheets
+        with col_graficos:
+            st.info("Ajusta el rango de fechas para ver el análisis del nodo.")
+        return
+
     with st.spinner("Calculando análisis del nodo..."):
         df_nodo, _ = cargar_historico_nodo(id_nodo, fecha_ini, fecha_fin)
         ejecuciones = analisis_nodo.preparar_mediciones(
@@ -1672,6 +1677,12 @@ def render_analisis_temporal():
             width="stretch",
             key=f"{prefijo}_restablecer",
         )
+
+    if fecha_fin < fecha_ini:
+        # Un rango invertido no tiene datos: no se consulta la base ni Sheets
+        with col_graficos:
+            st.info("Ajusta el rango de fechas para ver el análisis temporal.")
+        return
 
     meta = analisis_temporal.METRICAS[metrica_label]
     columna = meta["columna"]

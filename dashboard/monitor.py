@@ -1977,18 +1977,11 @@ with st.sidebar:
         </div>
         """, unsafe_allow_html=True)
 
-    st.markdown("### Archivo a visualizar")
     archivos = listar_archivos()
     if archivos:
-        opciones = ["Ultimo disponible"] + [f.name for f in reversed(archivos[-50:])]
-        seleccion = st.selectbox(
-            "Archivo de datos",
-            opciones,
-            label_visibility="collapsed",
-        )
-        archivo_actual = archivos[-1] if seleccion == "Ultimo disponible" else next(
-            (f for f in archivos if f.name == seleccion), archivos[-1]
-        )
+        # El dashboard publico siempre muestra el archivo mas reciente. La
+        # seleccion manual de archivos historicos ya no se expone al usuario.
+        archivo_actual = archivos[-1]
     else:
         archivo_actual = None
         st.warning("Sin archivos aun")

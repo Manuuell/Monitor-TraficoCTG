@@ -149,22 +149,35 @@ def ruta_mas_rapida(origen: str, destino: str, red: dict, promedios: dict):
     }
 
 
+def _sentido_corto(conexion: dict) -> int:
+    """
+    Sentido mas corto de una conexion (1 = a->b, -1 = b->a). Un corredor es
+    una via de doble sentido: el sentido mas largo suele dar la vuelta a una
+    manzana o buscar un retorno porque el nodo quedo en la otra calzada
+    (Bazurto -> Uma: 1.502 m; Uma -> Bazurto: 653 m).
+    """
+    d_ab, d_ba = conexion["d_ab_m"], conexion["d_ba_m"]
+    return -1 if d_ba is not None and (d_ab is None or d_ba < d_ab) else 1
+
+
 def armar_corredores(corredores: dict, red: dict) -> list:
     """
     Cada corredor ({nombre: [id_nodo, ...]}, de la hoja CORREDORES) con su
-    color y sus tramos (conexion, sentido) en el orden de la hoja. Un par
-    seguido que no es conexion de la red queda en linea recta y sin distancia:
-    falta correr capturar_red.py --completar-corredores.
+    color y sus tramos (conexion, sentido) en el orden de la hoja. Cada tramo
+    se dibuja y se mide en su sentido mas corto, sin importar el del recorrido.
+    Un par seguido que no es conexion de la red queda en linea recta y sin
+    distancia: falta correr capturar_red.py --completar-corredores.
     """
     por_par = {}
     for c in red["conexiones"]:
-        por_par[(c["a"], c["b"])] = (c, 1)
-        por_par[(c["b"], c["a"])] = (c, -1)
+        por_par[frozenset((c["a"], c["b"]))] = c
     salida = []
     for k, (nombre, nodos) in enumerate(corredores.items()):
-        tramos = [por_par.get((x, y), ({"a": x, "b": y, "d_ab_m": None, "d_ba_m": None,
-                                         "path": None}, 1))
-                  for x, y in zip(nodos, nodos[1:])]
+        tramos = []
+        for x, y in zip(nodos, nodos[1:]):
+            c = por_par.get(frozenset((x, y)))
+            tramos.append((c, _sentido_corto(c)) if c else
+                          ({"a": x, "b": y, "d_ab_m": None, "d_ba_m": None, "path": None}, 1))
         salida.append({
             "nombre": nombre, "color": PALETA_CORREDORES[k % len(PALETA_CORREDORES)],
             "nodos": nodos, "tramos": tramos,
@@ -175,10 +188,11 @@ def armar_corredores(corredores: dict, red: dict) -> list:
 
 def resumen_corredor(corredor: dict, promedios: dict) -> dict:
     """
-    Distancia, tiempo y tiempo a flujo libre de recorrer el corredor en el
-    orden de la hoja, con las velocidades promedio del periodo como en
-    ruta_mas_rapida, y la fluidez promedio de sus nodos. Un tramo sin
-    distancia o sin datos deja vacio lo que depende de el.
+    Distancia, tiempo y tiempo a flujo libre de recorrer el corredor tramo a
+    tramo (cada uno en el sentido que eligio armar_corredores), con las
+    velocidades promedio del periodo como en ruta_mas_rapida, y la fluidez
+    promedio de sus nodos. Un tramo sin distancia o sin datos deja vacio lo
+    que depende de el.
     """
     dist = tiempo = tiempo_libre = 0.0
     for c, sentido in corredor["tramos"]:

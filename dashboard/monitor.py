@@ -2514,9 +2514,11 @@ with tab_red:
                 }, na_rep="—"),
                 width="stretch", hide_index=True,
             )
-            st.caption("Cada corredor se recorre en el orden de la hoja CORREDORES, con las "
-                       "velocidades promedio de sus nodos para los filtros elegidos. Demora: "
-                       "minutos de mas frente al flujo libre. Fluidez: promedio de sus nodos.")
+            st.caption("Cada corredor se recorre tramo a tramo en el orden de la hoja CORREDORES; "
+                       "como son vias de doble sentido, cada tramo se mide en su sentido mas "
+                       "corto. Tiempo con las velocidades promedio de sus nodos para los filtros "
+                       "elegidos. Demora: minutos de mas frente al flujo libre. Fluidez: "
+                       "promedio de sus nodos.")
 
         if ruta:
             st.markdown("### Ruta seleccionada")

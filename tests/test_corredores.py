@@ -67,21 +67,28 @@ class ArmarCorredoresTest(unittest.TestCase):
              "path_ba": [[0, 1], [1, 1]]},
         ]}
 
-    def test_tramos_en_el_sentido_del_corredor_y_color_fijo(self):
+    def test_cada_tramo_en_su_sentido_mas_corto_y_color_fijo(self):
         uno, dos = red_nodos.armar_corredores({"UNO": ["A", "B", "C"], "DOS": ["C", "D"]}, self.red)
-        self.assertEqual([s for _, s in uno["tramos"]], [1, -1])      # B -> C es la vuelta de C-B
+        # A->B: la ida (1000) es mas corta; B->C: C->B (500) es mas corta que B->C (600)
+        self.assertEqual([s for _, s in uno["tramos"]], [1, 1])
         self.assertEqual(uno["sin_conexion"], 0)
         self.assertEqual(dos["sin_conexion"], 1)                       # C-D no es conexion
         self.assertEqual((uno["color"], dos["color"]), tuple(red_nodos.PALETA_CORREDORES[:2]))
 
-    def test_resumen_con_las_distancias_de_cada_sentido(self):
+    def test_el_orden_del_corredor_no_cambia_el_trazado(self):
+        ida = red_nodos.armar_corredores({"UNO": ["A", "B", "C"]}, self.red)[0]
+        vuelta = red_nodos.armar_corredores({"UNO": ["C", "B", "A"]}, self.red)[0]
+        self.assertEqual({(c["a"], c["b"], s) for c, s in ida["tramos"]},
+                         {(c["a"], c["b"], s) for c, s in vuelta["tramos"]})
+
+    def test_resumen_con_la_distancia_mas_corta_de_cada_tramo(self):
         uno = red_nodos.armar_corredores({"UNO": ["A", "B", "C"]}, self.red)[0]
         prom = {n: {"vel_actual": 36.0, "vel_libre": 72.0, "ratio": r}
                 for n, r in (("A", 0.5), ("B", 0.5), ("C", 0.8))}
         r = red_nodos.resumen_corredor(uno, prom)
-        self.assertEqual(r["dist_m"], 1000 + 600)                      # A->B ida, B->C vuelta
-        self.assertAlmostEqual(r["tiempo_s"], 1600 / 10)               # 36 km/h = 10 m/s
-        self.assertAlmostEqual(r["tiempo_libre_s"], 1600 / 20)
+        self.assertEqual(r["dist_m"], 1000 + 500)
+        self.assertAlmostEqual(r["tiempo_s"], 1500 / 10)               # 36 km/h = 10 m/s
+        self.assertAlmostEqual(r["tiempo_libre_s"], 1500 / 20)
         self.assertAlmostEqual(r["ratio"], 0.6)
 
     def test_resumen_sin_datos_o_sin_conexion_queda_vacio(self):

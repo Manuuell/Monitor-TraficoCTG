@@ -31,8 +31,8 @@ Uso (en un VPS, o local con un Python que tenga OpenSSL moderno):
         # coinciden (2 consultas por conexion)
     python3 capturar_red.py --completar-vuelta
         # agrega a un red_nodos.json existente el trazado de vuelta (path_ba)
-        # de las conexiones cuya ida y vuelta difieren; una consulta por cada
-        # una, sin repetir lo ya capturado
+        # de las conexiones que aun no lo tienen; una consulta por cada una,
+        # sin repetir lo ya capturado
 
 Cada conexion guarda el trazado de ida (path) y el de vuelta (path_ba): en
 calles de un solo sentido el regreso va por otras vias, y dibujarlo
@@ -213,10 +213,12 @@ def _enlace_google(nodos, i: int, j: int) -> str:
 
 def completar_vuelta(llaves) -> int:
     """
-    Agrega path_ba (trazado b->a) a las conexiones del JSON existente cuya
-    ida y vuelta difieren y aun no lo tienen. En las demas el regreso va por
-    la misma via y basta con invertir la ida. Con llaves usa TomTom; sin
-    ellas, OSRM.
+    Agrega path_ba (trazado b->a) a las conexiones del JSON existente que aun
+    no lo tienen. Que ida y vuelta midan lo mismo no prueba que vayan por la
+    misma via: en la Via al Mar (Ramblas-Anillo vial) las calzadas van a
+    ~300 m una de otra y miden casi igual. Con llaves usa TomTom, guarda
+    tambien la distancia de vuelta de esa misma consulta y rehace la lista de
+    revision; sin ellas, OSRM (solo el trazado).
     """
     if not OUT.exists():
         print(f"ERROR: no existe {OUT}; corre primero la captura completa.")
@@ -231,26 +233,34 @@ def completar_vuelta(llaves) -> int:
     pendientes = [
         c for c in datos["conexiones"]
         if not c.get("path_ba") and c["a"] in indice and c["b"] in indice
-        and _difieren(c["d_ab_m"], c["d_ba_m"])
     ]
     fuente = "TomTom" if llaves else "OSRM"
-    print(f"Conexiones con ida y vuelta distintas sin trazado de vuelta: "
+    print(f"Conexiones sin trazado de vuelta: "
           f"{len(pendientes)} ({len(pendientes)} consultas a {fuente})")
     pausa = PAUSA_TOMTOM if llaves else 1
     for k, c in enumerate(pendientes, start=1):
         i, j = indice[c["a"]], indice[c["b"]]
         if llaves:
-            _, c["path_ba"] = ruta_tomtom(nodos, j, i, llaves, con_trazado=True)
+            # Distancia y trazado de la misma consulta: la ruta de hoy puede no
+            # ser la de la captura original, y el dashboard usa d_ba_m para el
+            # tiempo y path_ba para dibujarla
+            c["d_ba_m"], c["path_ba"] = ruta_tomtom(
+                nodos, j, i, llaves, con_trazado=True, tipo=c.get("tipo_ruta", "fastest"))
         else:
             c["path_ba"] = trazado_osrm(nodos, j, i)
         if k % 50 == 0:
             print(f"  Progreso: {k}/{len(pendientes)}")
         time.sleep(pausa)
 
+    revision = lista_revision(datos["conexiones"], nodos, indice) if llaves else None
+    if revision is not None:
+        datos["por_revisar"] = len(revision)
     datos["vuelta_completada"] = datetime.now().strftime("%Y-%m-%d %H:%M")
     # Se escribe al final: si se corta, el archivo queda como estaba
     with open(OUT, "w", encoding="utf-8") as f:
         json.dump(datos, f, ensure_ascii=False, separators=(",", ":"))
+    if revision is not None:
+        escribir_revision(revision)
     print(f"Listo. Trazados de vuelta agregados: {len(pendientes)}")
     print(f"Archivo: {OUT} ({OUT.stat().st_size / 1024:.0f} KB)")
     return 0

@@ -449,7 +449,11 @@ st.markdown(f"""
         border: 0;
         border-radius: 28px;
         box-shadow: {R_SOMBRA};
-        padding: 14px 16px 10px;
+        /* Sin relleno a los lados: Plotly toma el ancho completo del
+           recuadro, y con relleno lo ultimo de la derecha (las 00:00, el
+           titulo del eje derecho) quedaba por fuera. El aire lateral lo dan
+           los margenes de plotly_base. */
+        padding: 14px 0 10px;
     }}
     /* Boton propio: Plotly no recibe el control nativo de pantalla completa
        en esta version de Streamlit. */
@@ -900,7 +904,7 @@ def plotly_base(fig, height: int = 340):
         font_color="#1e3a6e",
         font_family="Inter, Segoe UI, Helvetica, Arial, sans-serif",
         height=height,
-        margin=dict(l=12, r=24, t=30, b=42),
+        margin=dict(l=28, r=36, t=30, b=42),
         legend=dict(
             orientation="h", yanchor="bottom", y=1.02,
             bgcolor="rgba(0,0,0,0)", font=dict(color=R_TENUE),
@@ -2801,7 +2805,7 @@ with tab_historia:
                         font_color="#1e3a6e",
                         font_family="Inter, Segoe UI, Helvetica, Arial, sans-serif",
                         height=410,
-                        margin=dict(l=0, r=0, t=72, b=24),
+                        margin=dict(l=20, r=28, t=72, b=24),
                         xaxis=dict(
                             title="Hora del día", gridcolor=REJILLA, type="category",
                             tickfont=dict(color=R_TENUE),

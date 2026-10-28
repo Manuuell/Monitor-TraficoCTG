@@ -831,17 +831,6 @@ st.markdown(f"""
         width: 100%;
         box-sizing: border-box;
     }}
-    /* ...y queda al fondo de la barra: el contenido se estira a todo el alto
-       y el bloque del boton toma el espacio sobrante por arriba */
-    [data-testid="stSidebarContent"] {{ display: flex; flex-direction: column; }}
-    [data-testid="stSidebarUserContent"] {{
-        flex: 1; display: flex; flex-direction: column; padding-bottom: 28px !important;
-    }}
-    [data-testid="stSidebarUserContent"] > div {{ flex: 1; display: flex; flex-direction: column; }}
-    [data-testid="stSidebarUserContent"] > div > [data-testid="stVerticalBlock"] {{ flex: 1; }}
-    [data-testid="stSidebar"] [data-testid="stLayoutWrapper"]:has(> .st-key-sidebar_admin) {{
-        margin-top: auto;
-    }}
     @media (max-width: 800px) {{
         .block-container {{ padding-left: 1rem; padding-right: 1rem; }}
         .utb-header {{ border-radius: 28px; padding: 26px 24px; }}
@@ -2038,18 +2027,16 @@ with st.sidebar:
     # Sin boton "Recargar datos": st.cache_data.clear() vacia la cache de
     # todos los visitantes. Recargar queda en el panel administrativo.
     # Mismo boton que el pie de pagina: abre /admin, donde se pide la clave.
-    # Va al fondo de la barra (CSS de .st-key-sidebar_admin); la linea del logo
-    # ya separa, sin un divisor aparte.
-    with st.container(key="sidebar_admin"):
-        st.markdown(
-            """
-            <a class="footer-admin-link sidebar-admin-link" href="/admin" target="_self">
-                Ingresar al panel administrativo
-                <span class="footer-admin-arrow">→</span>
-            </a>
-            """,
-            unsafe_allow_html=True,
-        )
+    # Va justo bajo el logo; su linea ya separa, sin un divisor aparte.
+    st.markdown(
+        """
+        <a class="footer-admin-link sidebar-admin-link" href="/admin" target="_self">
+            Ingresar al panel administrativo
+            <span class="footer-admin-arrow">→</span>
+        </a>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 # ============================================================

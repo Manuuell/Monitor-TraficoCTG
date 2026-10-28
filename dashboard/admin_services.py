@@ -336,7 +336,7 @@ def cargar_ejecuciones_recientes(n_dias: int = 7) -> tuple[pd.DataFrame, str]:
         logs = logs[logs["timestamp"] >= desde]
 
     resumen_db = ejecuciones_vacias()
-    fuente = "log local"
+    fuente = "registro local"
     intentar_db = bool(
         getattr(config, "DB_PASSWORD", "")
         or getattr(config, "GUARDAR_EN_DB", False)
@@ -347,7 +347,7 @@ def cargar_ejecuciones_recientes(n_dias: int = 7) -> tuple[pd.DataFrame, str]:
             import db
 
             resumen_db = db.leer_resumen_ejecuciones(n_dias=n_dias)
-            fuente = "PostgreSQL + log local"
+            fuente = "PostgreSQL + registro local"
         except Exception as error:
             print(f"  [Admin] PostgreSQL no disponible: {error}")
 
@@ -363,7 +363,7 @@ def cargar_ejecuciones_recientes(n_dias: int = 7) -> tuple[pd.DataFrame, str]:
     combinado = normalizar_ejecuciones(pd.concat(partes, ignore_index=True, sort=False))
     return (
         combinado.drop_duplicates(["timestamp", "vps_id"], keep="last"),
-        "CSV + log local" if not locales.empty else "log local",
+        "CSV + registro local" if not locales.empty else "registro local",
     )
 
 
@@ -450,7 +450,7 @@ def verificar_google() -> dict:
             return {
                 "ok": False,
                 "estado": "No conectado",
-                "detalle": "No se encontró un token OAuth válido.",
+                "detalle": "No se encontró una credencial OAuth válida.",
             }
         if credenciales.valid:
             return {
@@ -682,16 +682,16 @@ def archivos_recientes(limite: int = 8) -> pd.DataFrame:
 def diagnostico_configuracion() -> dict:
     """Estado visible sin revelar claves, tokens ni contraseñas."""
     return {
-        "Fuente del dashboard": getattr(config, "FUENTE_DASHBOARD", "sheets"),
+        "Fuente del tablero": getattr(config, "FUENTE_DASHBOARD", "sheets"),
         "Subida a Google": bool(config.SUBIR_A_GOOGLE),
         "Escritura PostgreSQL": bool(config.GUARDAR_EN_DB),
         "Subida a Firestore": bool(config.SUBIR_A_FIRESTORE),
         "Llaves TomTom activas": len(config.API_KEYS),
         "Llaves TomTom de reserva": len(config.API_KEYS_RESERVA),
-        "Token Google presente": config.OAUTH_TOKEN_FILE.exists(),
+        "Credencial de Google presente": config.OAUTH_TOKEN_FILE.exists(),
         "Archivo de nodos presente": config.NODOS_PATH.exists(),
         "Directorio de resultados": config.RESULTADOS_DIR.exists(),
-        "Log de ejecuciones": config.LOG_FILE.exists(),
+        "Registro de ejecuciones": config.LOG_FILE.exists(),
         "VPS configurado": str(config.VPS_ID),
         "Protección del panel": bool(os.environ.get("ADMIN_PASSWORD", "")),
     }

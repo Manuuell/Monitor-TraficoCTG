@@ -270,7 +270,7 @@ def proteger_panel() -> None:
                     st.rerun()
                 st.error("Contraseña incorrecta.")
             st.markdown(
-                '<a class="login-volver" href="/" target="_self">← Volver al dashboard</a>',
+                '<a class="login-volver" href="/" target="_self">← Volver al tablero</a>',
                 unsafe_allow_html=True,
             )
     st.stop()
@@ -284,7 +284,7 @@ def estado_cuota(usado: int, limite: int) -> tuple[str, str]:
         return NARANJA, "ALTO"
     if porcentaje >= .60:
         return AMBAR, "MODERADO"
-    return VERDE, "OK"
+    return VERDE, "Correcto"
 
 
 def tarjeta_cuota(nombre: str, datos: dict) -> str:
@@ -369,7 +369,7 @@ st.markdown(
             <h1 class="admin-title">Panel administrativo</h1>
             <p class="admin-subtitle">Conexiones, infraestructura, cuotas y salud del sistema.</p>
         </div>
-        <a class="admin-back" href="/" target="_self">← Volver al dashboard</a>
+        <a class="admin-back" href="/" target="_self">← Volver al tablero</a>
     </div>
     """,
     unsafe_allow_html=True,
@@ -553,7 +553,7 @@ with tab_resumen:
         unsafe_allow_html=True,
     )
 
-    st.markdown('<div class="section-title">API keys TomTom por servidor</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-title">Llaves de la API de TomTom por servidor</div>', unsafe_allow_html=True)
     if not api_keys["vps"]:
         st.warning(
             "No hay estado de llaves publicado ni llaves en este servidor"

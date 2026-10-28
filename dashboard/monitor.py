@@ -40,9 +40,10 @@ st.set_page_config(
 )
 
 # Streamlit toma el idioma del calendario de ``navigator.language`` y no
-# permite fijarlo desde ``st.date_input``. Este observador traduce unicamente
-# los textos del calendario y de su lista de meses, incluidos los elementos
-# que BaseWeb crea en portales fuera del widget.
+# permite fijarlo desde ``st.date_input``. Este observador traduce los textos
+# del calendario y de su lista de meses, incluidos los elementos que BaseWeb
+# crea en portales fuera del widget, y los textos fijos en ingles de Streamlit
+# que ve el usuario: barra de las tablas, sus avisos y el indicador de carga.
 components.html(
     """
     <script>
@@ -68,24 +69,47 @@ components.html(
           "Select a month": "Seleccionar mes",
           "Select a year": "Seleccionar año"
         };
+        const textosStreamlit = {
+          "Download as CSV": "Descargar como CSV",
+          "Search": "Buscar",
+          "Fullscreen": "Pantalla completa",
+          "Close fullscreen": "Salir de pantalla completa",
+          "Show/hide columns": "Mostrar u ocultar columnas",
+          "Running...": "Cargando...",
+          "Running…": "Cargando…",
+          "Stop": "Detener",
+          "No results": "Sin resultados",
+          "Clear all": "Borrar todo"
+        };
+        const zonasStreamlit = '[role="tooltip"], [data-baseweb="tooltip"], ' +
+          '[data-testid="stStatusWidget"], [data-testid="stElementToolbar"], [role="listbox"]';
 
-        const traducirTexto = (raiz) => {
+        const traducirTexto = (raiz, diccionario = traducciones) => {
           const walker = doc.createTreeWalker(raiz, NodeFilter.SHOW_TEXT);
           const nodos = [];
           while (walker.nextNode()) nodos.push(walker.currentNode);
           nodos.forEach((nodo) => {
             const limpio = nodo.nodeValue.trim();
-            if (traducciones[limpio]) {
-              nodo.nodeValue = nodo.nodeValue.replace(limpio, traducciones[limpio]);
+            if (diccionario[limpio]) {
+              nodo.nodeValue = nodo.nodeValue.replace(limpio, diccionario[limpio]);
             }
           });
         };
 
         const traducirCalendarios = () => {
-          doc.querySelectorAll('[data-baseweb="calendar"], [role="listbox"]').forEach(traducirTexto);
+          doc.querySelectorAll('[data-baseweb="calendar"], [role="listbox"]').forEach((raiz) => traducirTexto(raiz));
           doc.querySelectorAll('[data-baseweb="calendar"] [aria-label]').forEach((elemento) => {
             const etiqueta = elemento.getAttribute('aria-label');
             if (etiquetas[etiqueta]) elemento.setAttribute('aria-label', etiquetas[etiqueta]);
+          });
+          doc.querySelectorAll(zonasStreamlit).forEach((raiz) => {
+            traducirTexto(raiz, textosStreamlit);
+            raiz.querySelectorAll('[aria-label], [title]').forEach((elemento) => {
+              ['aria-label', 'title'].forEach((atributo) => {
+                const valor = elemento.getAttribute(atributo);
+                if (textosStreamlit[valor]) elemento.setAttribute(atributo, textosStreamlit[valor]);
+              });
+            });
           });
         };
 
@@ -895,7 +919,19 @@ def plotly_base(fig, height: int = 340):
             automargin=True,
         ),
     )
+    # Plotly escribe las fechas en ingles ("Oct 20", "Jul 2026") y Streamlit no
+    # trae su traduccion: en los ejes de fechas se usan solo numeros
+    if any(_x_es_fecha(traza) for traza in fig.data):
+        fig.update_xaxes(tickformat="%d/%m/%Y", hoverformat="%d/%m/%Y %H:%M")
     return fig
+
+
+def _x_es_fecha(traza) -> bool:
+    x = getattr(traza, "x", None)
+    if x is None or len(x) == 0:
+        return False
+    return (pd.api.types.is_datetime64_any_dtype(pd.Series(x))
+            or isinstance(x[0], (datetime, pd.Timestamp)) or hasattr(x[0], "isoformat"))
 
 
 # Las cargas que corren antes de las pestañas van sin show_spinner: el aviso
@@ -1190,7 +1226,7 @@ def leyenda_ratio(modo: str = "ratio"):
             <span style="display:flex;align-items:center;gap:6px;font-size:12px;color:{UTB_WHITE};">
                 <span style="width:12px;height:12px;border-radius:3px;
                              background:{COLOR_FLUIDO};display:inline-block;"></span>
-                <b style="color:{TEXTO_FLUIDO};">Consultas OK</b>&nbsp;— nodos respondidos correctamente por TomTom
+                <b style="color:{TEXTO_FLUIDO};">Consultas correctas</b>&nbsp;— nodos respondidos correctamente por TomTom
             </span>
             <span style="display:flex;align-items:center;gap:6px;font-size:12px;color:{UTB_WHITE};">
                 <span style="width:12px;height:12px;border-radius:3px;
@@ -1461,7 +1497,7 @@ def render_analisis_nodo():
             st.markdown(
                 f"<div style='border-top:4px solid {SERIE_ACTUAL};padding-top:9px;'>"
                 f"<b style='color:{R_AZUL_OSC};'>Serie temporal</b><br>"
-                f"<span style='color:{UTB_GRAY};font-size:12px;'>Fecha vs. índice de fluidez</span></div>",
+                f"<span style='color:{UTB_GRAY};font-size:12px;'>Índice de fluidez por fecha</span></div>",
                 unsafe_allow_html=True,
             )
             fig_serie = go.Figure(go.Scatter(
@@ -1495,7 +1531,7 @@ def render_analisis_nodo():
             st.markdown(
                 f"<div style='border-top:4px solid {R_MENTA_OSC};padding-top:9px;'>"
                 f"<b style='color:{R_AZUL_OSC};'>Patrón horario</b><br>"
-                f"<span style='color:{UTB_GRAY};font-size:12px;'>Hora vs. índice de fluidez</span></div>",
+                f"<span style='color:{UTB_GRAY};font-size:12px;'>Índice de fluidez por hora</span></div>",
                 unsafe_allow_html=True,
             )
             fig_patron = go.Figure(go.Scatter(
@@ -1530,8 +1566,8 @@ def render_analisis_nodo():
         with fila_2a, st.container(border=True):
             st.markdown(
                 f"<div style='border-top:4px solid {COLOR_MODERADO};padding-top:9px;'>"
-                f"<b style='color:{R_AZUL_OSC};'>Velocidad de circulación vs. flujo libre por hora</b><br>"
-                f"<span style='color:{UTB_GRAY};font-size:12px;'>Hora vs. km/h</span></div>",
+                f"<b style='color:{R_AZUL_OSC};'>Velocidad de circulación frente a flujo libre por hora</b><br>"
+                f"<span style='color:{UTB_GRAY};font-size:12px;'>km/h por hora</span></div>",
                 unsafe_allow_html=True,
             )
             fig_velocidad = go.Figure()
@@ -2029,7 +2065,7 @@ st.markdown(f"""
         <div class="utb-status-label">Hora local</div>
         <div class="utb-clock">{ahora.strftime("%H:%M")} · {ahora.strftime("%d/%m/%Y")}</div>
         <div class="utb-next-run">
-            Proxima ejecucion: <span>{proxima_str}</span>
+            Próxima ejecución: <span>{proxima_str}</span>
         </div>
     </div>
 </div>
@@ -2238,12 +2274,12 @@ if snapshot_degradado:
         _antig = f"{int(_dias)} d {_horas:.0f} h" if _dias else f"{_horas:.1f} h"
         _label_valido = html.escape(str(_sd["label_valido"]), quote=True)
         _respaldo = (
-            f"El analisis de nodos muestra el ultimo dato bueno: "
+            f"El análisis de nodos muestra el último dato bueno: "
             f"<b style='color:{UTB_WHITE};'>{_label_valido}</b> "
-            f"(hace {_antig}). No es la situacion actual del trafico."
+            f"(hace {_antig}). No es la situación actual del tráfico."
         )
     else:
-        _respaldo = "No hay ninguna corrida reciente con datos validos para mostrar."
+        _respaldo = "No hay ninguna corrida reciente con datos válidos para mostrar."
 
     st.markdown(f"""
     <div style="background:rgba(239,68,68,0.12);border-left:4px solid {COLOR_CONGESTIONADO};
@@ -2253,7 +2289,7 @@ if snapshot_degradado:
             &#9888; CAPTURA DE DATOS DETENIDA</div>
         <div style="color:{UTB_GRAY};font-size:13px;line-height:1.6;">
             La corrida <b style="color:{UTB_WHITE};">{_label_fallido}</b> devolvio
-            <b style="color:{TEXTO_CONGESTIONADO};">0 de {_sd['nodos']} nodos validos</b>.<br/>
+            <b style="color:{TEXTO_CONGESTIONADO};">0 de {_sd['nodos']} nodos válidos</b>.<br/>
             {_http_txt}Respuesta de la API:
             <code style="background:{UTB_NAVY_LIGHT};color:{TEXTO_LENTO};padding:2px 6px;
              border-radius:4px;font-size:12px;">{_motivo_txt}</code><br/>
@@ -2319,7 +2355,7 @@ tab_mapa, tab_red, tab_datos, tab_temporal, tab_historia = st.tabs(
 with tab_mapa:
     catalogo = cargar_catalogo()
     if catalogo.empty:
-        st.info("No se pudo leer el catalogo de nodos (nodos.xlsx).")
+        st.info("No se pudo leer el catálogo de nodos (nodos.xlsx).")
     else:
         col_filtros, col_mapa = st.columns([1, 3])
         with col_filtros, mapa_nodos.tarjeta_filtros("mapa", "Filtros del Mapa"):
@@ -2346,7 +2382,7 @@ with tab_mapa:
 
         with col_mapa:
             if n_con_datos == 0:
-                st.info("La ultima ejecucion no trajo lecturas validas." if en_vivo else
+                st.info("La última ejecución no trajo lecturas válidas." if en_vivo else
                         "No hay mediciones con estos filtros. Los nodos se muestran en gris.")
 
             mapa = mapa_nodos.construir_mapa(
@@ -2359,7 +2395,7 @@ with tab_mapa:
             if filtros["metrica"] == "ratio":
                 leyenda_ratio("ratio")
 
-        st.markdown("### Distribucion del trafico")
+        st.markdown("### Distribución del tráfico")
         ca, cb, cc, cd = st.columns(4)
         r_ok = nodos_mapa["ratio"].dropna()
         n_fluido   = (r_ok > UMBRAL_FLUIDO).sum()
@@ -2386,7 +2422,7 @@ with tab_mapa:
 with tab_red:
     catalogo = cargar_catalogo()
     if catalogo.empty:
-        st.info("No se pudo leer el catalogo de nodos (nodos.xlsx).")
+        st.info("No se pudo leer el catálogo de nodos (nodos.xlsx).")
     else:
         red = cargar_red()
         nombres = dict(zip(catalogo["id_nodo"], catalogo["nombre_nodo"]))
@@ -2401,8 +2437,8 @@ with tab_red:
             seguir_vias = st.checkbox(
                 "Seguir las carreteras", value=red["por_via"],
                 key=f"red_vias_{red['por_via']}", disabled=not red["por_via"],
-                help="Dibuja cada conexion por las vias reales (OpenStreetMap). "
-                     "Si esta deshabilitado, falta ejecutar capturar_red.py.",
+                help="Dibuja cada conexión por las vías reales (OpenStreetMap). "
+                     "Si está deshabilitado, falta ejecutar capturar_red.py.",
             )
 
             st.markdown("#### Ruta")
@@ -2421,7 +2457,7 @@ with tab_red:
                 corredores, sin_catalogo = cargar_corredores()
                 if not corredores:
                     st.info(
-                        "Todavia no hay corredores. Agregalos en la hoja CORREDORES de "
+                        "Todavía no hay corredores. Agrégalos en la hoja CORREDORES de "
                         "nodos.xlsx: Corredor, Orden e id_nodo, una fila por nodo."
                     )
                 else:
@@ -2435,7 +2471,7 @@ with tab_red:
                         if not elegidos or c["nombre"] in elegidos
                     ]
                     if sin_catalogo:
-                        st.caption("Nodos de CORREDORES que no estan en el catalogo: "
+                        st.caption("Nodos de CORREDORES que no están en el catálogo: "
                                    + ", ".join(sin_catalogo))
 
         # La ruta se calcula sobre toda la red: el filtro de punto de
@@ -2478,8 +2514,8 @@ with tab_red:
                 leyenda_corredores(vista_corredores)
                 sin_conexion = sum(c["sin_conexion"] for c in vista_corredores)
                 if sin_conexion:
-                    st.caption(f"{sin_conexion} tramo(s) de corredor sin conexion en la red se "
-                               "dibujan en linea recta: falta correr "
+                    st.caption(f"{sin_conexion} tramo(s) de corredor sin conexión en la red se "
+                               "dibujan en línea recta: falta correr "
                                "capturar_red.py --completar-corredores.")
             if filtros_red["metrica"] == "ratio":
                 leyenda_ratio("ratio")
@@ -2508,9 +2544,9 @@ with tab_red:
                 width="stretch", hide_index=True,
             )
             st.caption("Cada corredor se recorre tramo a tramo en el orden de la hoja CORREDORES; "
-                       "como son vias de doble sentido, cada tramo se mide en su sentido mas "
+                       "como son vías de doble sentido, cada tramo se mide en su sentido más "
                        "corto. Tiempo con las velocidades promedio de sus nodos para los filtros "
-                       "elegidos. Demora: minutos de mas frente al flujo libre. Fluidez: "
+                       "elegidos. Demora: minutos de más frente al flujo libre. Fluidez: "
                        "promedio de sus nodos.")
 
         if ruta:
@@ -2521,7 +2557,7 @@ with tab_red:
             rc1, rc2, rc3, rc4 = st.columns(4)
             with rc1: st.metric("Distancia total", f"{km:.1f} km")
             with rc2: st.metric("Tiempo promedio de viaje", f"{minutos:.1f} min",
-                                f"+{extra:.1f} min vs. flujo libre", delta_color="inverse")
+                                f"+{extra:.1f} min frente al flujo libre", delta_color="inverse")
             with rc3: st.metric("Velocidad promedio", f"{km / (minutos / 60):.1f} km/h")
             with rc4: st.metric("Nodos en la ruta", len(ruta["nodos"]))
 
@@ -2529,20 +2565,20 @@ with tab_red:
                 "#": i + 1,
                 "Nodo": nombres[n],
                 "Velocidad (km/h)": prom.get(n, {}).get("vel_actual"),
-                "Indice de fluidez": prom.get(n, {}).get("ratio"),
+                "Índice de fluidez": prom.get(n, {}).get("ratio"),
                 "Estado": clasificar_ratio(prom.get(n, {}).get("ratio"))[1],
             } for i, n in enumerate(ruta["nodos"])])
             # En rutas cortas la tabla ya muestra todos los nodos
             if len(tabla_ruta) > 3:
-                criticos = tabla_ruta.nsmallest(3, "Indice de fluidez")
+                criticos = tabla_ruta.nsmallest(3, "Índice de fluidez")
                 st.markdown(
-                    "**Mayor congestion en la ruta:** " + " · ".join(
-                        f"{r['Nodo']} ({r['Indice de fluidez']:.2f}, {r['Estado'].lower()})"
+                    "**Mayor congestión en la ruta:** " + " · ".join(
+                        f"{r['Nodo']} ({r['Índice de fluidez']:.2f}, {r['Estado'].lower()})"
                         for _, r in criticos.iterrows()
                     )
                 )
             st.dataframe(
-                tabla_ruta.style.format({"Velocidad (km/h)": "{:.1f}", "Indice de fluidez": "{:.2f}"}),
+                tabla_ruta.style.format({"Velocidad (km/h)": "{:.1f}", "Índice de fluidez": "{:.2f}"}),
                 width="stretch", hide_index=True,
             )
 
@@ -2562,7 +2598,7 @@ with tab_temporal:
 # TAB HISTORICO
 # ----------------------------------------------------------------
 with tab_historia:
-    st.markdown("### Datos historicos")
+    st.markdown("### Datos históricos")
     st.caption("Incluye datos de VPS 1 (Turnos 1-2) y VPS 2 (Turnos 3-4)")
 
     # Rango de fechas disponible (consulta ligera; los datos del periodo se
@@ -2571,7 +2607,7 @@ with tab_historia:
         min_fecha, max_fecha, fuente_rango = rango_fechas_historico()
 
     if min_fecha is None:
-        st.warning("No hay datos historicos o no hay conexion con la fuente.")
+        st.warning("No hay datos históricos o no hay conexión con la fuente.")
     else:
         # Valor por defecto: ultimos 7 dias, recortado al rango disponible
         ini_default = max(min_fecha, max_fecha - timedelta(days=7))
@@ -2580,18 +2616,18 @@ with tab_historia:
         with hf1:
             fecha_ini = st.date_input(
                 "Desde", value=ini_default,
-                min_value=min_fecha, max_value=max_fecha,
+                min_value=min_fecha, max_value=max_fecha, format="DD/MM/YYYY",
             )
         with hf2:
             fecha_fin = st.date_input(
                 "Hasta", value=max_fecha,
-                min_value=min_fecha, max_value=max_fecha,
+                min_value=min_fecha, max_value=max_fecha, format="DD/MM/YYYY",
             )
         with hf3:
             tipo_dia = st.selectbox(
-                "Tipo de dia",
+                "Tipo de día",
                 ["Todos", "Solo laborables (L-V)", "Solo fin de semana",
-                 "Lunes", "Martes", "Miercoles", "Jueves", "Viernes", "Sabado", "Domingo"],
+                 "Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"],
             )
 
         st.caption(
@@ -2614,8 +2650,8 @@ with tab_historia:
             # Filtro por tipo de dia (cambio 7)
             if not df_periodo.empty and tipo_dia != "Todos":
                 wd = df_periodo["consultation_time"].dt.weekday  # 0=Lunes
-                dias_idx = {"Lunes": 0, "Martes": 1, "Miercoles": 2, "Jueves": 3,
-                            "Viernes": 4, "Sabado": 5, "Domingo": 6}
+                dias_idx = {"Lunes": 0, "Martes": 1, "Miércoles": 2, "Jueves": 3,
+                            "Viernes": 4, "Sábado": 5, "Domingo": 6}
                 if tipo_dia == "Solo laborables (L-V)":
                     df_periodo = df_periodo[wd < 5]
                 elif tipo_dia == "Solo fin de semana":
@@ -2639,11 +2675,11 @@ with tab_historia:
                 mc1, mc2, mc3, mc4 = st.columns(4)
                 with mc1: st.metric("Ejecuciones", n_ejec)
                 with mc2: st.metric("Vel. promedio", f"{vel_prom:.1f} km/h" if pd.notna(vel_prom) else "—")
-                with mc3: st.metric("Ratio promedio", f"{ratio_prom:.2f}" if pd.notna(ratio_prom) else "—")
+                with mc3: st.metric("Índice de fluidez promedio", f"{ratio_prom:.2f}" if pd.notna(ratio_prom) else "—")
                 with mc4: st.metric("Registros totales", f"{n_reg:,}")
 
                 # --- Grafica 1: Evolucion velocidad promedio ---
-                st.markdown("### Evolucion de velocidad promedio")
+                st.markdown("### Evolución de la velocidad promedio")
                 evo = (
                     df_periodo.groupby("consultation_time")
                     .agg(vel_actual=("currentSpeed", "mean"), vel_libre=("freeFlowSpeed", "mean"))
@@ -2687,7 +2723,7 @@ with tab_historia:
                 leyenda_ratio("velocidad")
 
                 # --- Grafica 2: Top nodos mas congestionados en el periodo ---
-                st.markdown("### Nodos mas congestionados en el periodo")
+                st.markdown("### Nodos más congestionados en el periodo")
                 por_nodo = (
                     df_periodo[df_periodo["ok"].astype(str).str.lower() == "true"]
                     .groupby("nombre_nodo")
@@ -2704,7 +2740,7 @@ with tab_historia:
                     orientation="h",
                     color="color",
                     color_discrete_map="identity",
-                    labels={"ratio_prom": "Ratio promedio", "nombre_nodo": ""},
+                    labels={"ratio_prom": "Índice de fluidez promedio", "nombre_nodo": ""},
                     text=por_nodo["ratio_prom"].apply(lambda x: f"{x:.2f}" if pd.notna(x) else ""),
                 )
                 fig_nodos.update_traces(textposition="outside")
@@ -2717,7 +2753,7 @@ with tab_historia:
                 st.markdown("### Mapa de calor")
                 dias_disponibles = df_periodo["consultation_time"].dt.date.nunique()
                 if dias_disponibles < 2:
-                    st.info("Se necesitan al menos 2 dias de datos para mostrar el heatmap.")
+                    st.info("Se necesitan al menos 2 días de datos para mostrar el mapa de calor.")
                 else:
                     df_heat = df_periodo.copy()
                     df_heat["hora"]    = df_heat["consultation_time"].dt.hour
@@ -2730,7 +2766,7 @@ with tab_historia:
                     )
                     # Horas del cron en orden de dia operativo: 04:00 ... 23:00, 00:00
                     pivot = pivot.reindex(columns=[h for h in horario.HORAS if h in pivot.columns])
-                    dias_es = ["Lunes", "Martes", "Miercoles", "Jueves", "Viernes", "Sabado", "Domingo"]
+                    dias_es = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"]
                     y_labels = [dias_es[i] for i in pivot.index if i < 7]
                     x_labels = [f"{h:02d}:00" for h in pivot.columns]
 
@@ -2746,7 +2782,7 @@ with tab_historia:
                         ],
                         zmin=0, zmax=1,
                         colorbar=dict(
-                            title=dict(text="Ratio", font=dict(color=R_AZUL_OSC)),
+                            title=dict(text="Índice", font=dict(color=R_AZUL_OSC)),
                             tickfont=dict(color=R_TENUE),
                             orientation="h",
                             x=0.5, xanchor="center",
@@ -2754,7 +2790,7 @@ with tab_historia:
                             len=0.70,
                             thickness=14,
                         ),
-                        hovertemplate="Hora: %{x}<br>Dia: %{y}<br>Ratio: %{z:.2f}<extra></extra>",
+                        hovertemplate="Hora: %{x}<br>Día: %{y}<br>Índice de fluidez: %{z:.2f}<extra></extra>",
                     ))
                     fig_heat.update_layout(
                         paper_bgcolor="rgba(0,0,0,0)",
@@ -2764,7 +2800,7 @@ with tab_historia:
                         height=390,
                         margin=dict(l=0, r=0, t=10, b=105),
                         xaxis=dict(
-                            title="Hora del dia", gridcolor=REJILLA, type="category",
+                            title="Hora del día", gridcolor=REJILLA, type="category",
                             tickfont=dict(color=R_TENUE),
                             title_font=dict(color=R_AZUL_OSC), automargin=True,
                         ),
@@ -2778,7 +2814,7 @@ with tab_historia:
                 # ------------------------------------------------
                 # Grafica 4: Hora pico vs hora valle
                 # ------------------------------------------------
-                st.markdown("### Hora pico vs hora valle")
+                st.markdown("### Hora pico frente a hora valle")
                 st.caption("Velocidad promedio por franja horaria — identifica cuando fluye mejor la ciudad")
 
                 # Las mismas franjas que los filtros (horas pico de 5:30-7:30,
@@ -2824,7 +2860,7 @@ with tab_historia:
                     ))
                     # Linea de ratio superpuesta (eje Y secundario)
                     fig_franjas.add_trace(go.Scatter(
-                        name="Ratio (eje →)",
+                        name="Índice de fluidez (eje →)",
                         x=x_franjas,
                         y=df_f["ratio"],
                         mode="lines+markers",
@@ -2838,7 +2874,7 @@ with tab_historia:
                         xaxis=dict(title="", tickangle=0, tickfont=dict(size=10)),
                         yaxis=dict(title="km/h", gridcolor=REJILLA),
                         yaxis2=dict(
-                            title=dict(text="Ratio (0–1)", font=dict(color=TEXTO_MENTA)),
+                            title=dict(text="Índice de fluidez (0–1)", font=dict(color=TEXTO_MENTA)),
                             overlaying="y",
                             side="right",
                             range=[0, 1.2],
@@ -2857,7 +2893,7 @@ with tab_historia:
                     df_f_disp["ratio"]       = df_f_disp["ratio"].apply(lambda x: f"{x:.2f}" if pd.notna(x) else "—")
                     df_f_disp = df_f_disp.rename(columns={
                         "franja": "Franja", "vel_actual": "Vel. actual",
-                        "vel_libre": "Vel. libre", "ratio": "Ratio", "n_muestras": "Muestras",
+                        "vel_libre": "Vel. libre", "ratio": "Índice de fluidez", "n_muestras": "Muestras",
                     })
                     st.dataframe(df_f_disp, width="stretch", hide_index=True)
                     st.markdown(
@@ -2880,7 +2916,7 @@ with tab_historia:
                 # Grafica 5: Vista de un solo nodo
                 # ------------------------------------------------
                 st.markdown("### Vista de un solo nodo")
-                st.caption("Selecciona un punto de monitoreo para ver su evolucion historica completa")
+                st.caption("Selecciona un punto de monitoreo para ver su evolución histórica completa")
 
                 nodos_disponibles = sorted(
                     df_periodo["nombre_nodo"].dropna().unique().tolist()
@@ -2908,7 +2944,7 @@ with tab_historia:
 
                         nc1, nc2, nc3, nc4 = st.columns(4)
                         with nc1: st.metric("Vel. promedio", f"{vel_n:.1f} km/h" if pd.notna(vel_n) else "—")
-                        with nc2: st.metric("Ratio promedio", f"{ratio_n:.2f}" if pd.notna(ratio_n) else "—")
+                        with nc2: st.metric("Índice de fluidez promedio", f"{ratio_n:.2f}" if pd.notna(ratio_n) else "—")
                         with nc3: st.metric("Demora prom.", f"{delay_n:.0f} s" if pd.notna(delay_n) else "—")
                         with nc4: st.metric("Observaciones", n_obs)
 
@@ -2953,12 +2989,12 @@ with tab_historia:
                             y=por_hora_n["ratio_h"],
                             # Mismo nivel que la leyenda que va debajo
                             marker_color=[clasificar_ratio(r)[0] for r in por_hora_n["ratio_h"]],
-                            name="Ratio por hora",
+                            name="Índice de fluidez por hora",
                             text=por_hora_n["ratio_h"].apply(lambda x: f"{x:.2f}" if pd.notna(x) else ""),
                             textposition="outside",
                         ))
                         fig_hora_n.update_layout(
-                            xaxis_title="Hora del dia",
+                            xaxis_title="Hora del día",
                             xaxis_type="category",
                             yaxis_title="Índice de fluidez",
                             yaxis=dict(range=[0, 1.2]),
@@ -2978,7 +3014,7 @@ with tab_historia:
                                     f"padding:12px 16px;border-radius:6px;'>"
                                     f"<div style='color:{TEXTO_CONGESTIONADO};font-size:11px;font-weight:700;'>⚠ PEOR HORA</div>"
                                     f"<div style='color:{UTB_WHITE};font-size:22px;font-weight:700;'>{int(peor['hora_num']):02d}:00</div>"
-                                    f"<div style='color:{UTB_GRAY};font-size:12px;'>Ratio {peor['ratio_h']:.2f} · "
+                                    f"<div style='color:{UTB_GRAY};font-size:12px;'>Índice {peor['ratio_h']:.2f} · "
                                     f"Vel. {peor['vel_h']:.1f} km/h</div></div>",
                                     unsafe_allow_html=True,
                                 )
@@ -2988,7 +3024,7 @@ with tab_historia:
                                     f"padding:12px 16px;border-radius:6px;'>"
                                     f"<div style='color:{TEXTO_FLUIDO};font-size:11px;font-weight:700;'>✓ MEJOR HORA</div>"
                                     f"<div style='color:{UTB_WHITE};font-size:22px;font-weight:700;'>{int(mejor['hora_num']):02d}:00</div>"
-                                    f"<div style='color:{UTB_GRAY};font-size:12px;'>Ratio {mejor['ratio_h']:.2f} · "
+                                    f"<div style='color:{UTB_GRAY};font-size:12px;'>Índice {mejor['ratio_h']:.2f} · "
                                     f"Vel. {mejor['vel_h']:.1f} km/h</div></div>",
                                     unsafe_allow_html=True,
                                 )
@@ -2999,7 +3035,7 @@ with tab_historia:
                 # Exportar reporte HTML
                 # ------------------------------------------------
                 st.markdown("### Exportar reporte")
-                st.caption("Descarga un reporte HTML con todos los graficos — abre en tu navegador y usa Ctrl+P para exportar a PDF")
+                st.caption("Descarga un reporte HTML con todos los gráficos — abre en tu navegador y usa Ctrl+P para exportar a PDF")
 
                 if st.button("📥 Generar reporte HTML", width="content"):
                     with st.spinner("Generando reporte..."):
@@ -3019,7 +3055,8 @@ with tab_historia:
                         fig_r1.add_trace(go.Scatter(x=evo2["consultation_time"], y=evo2["vel_actual"],
                             name="Velocidad de circulación", line=dict(color="#00D4D4", width=2),
                             fill="tonexty", fillcolor="rgba(94,234,212,0.12)"))
-                        fig_r1.update_layout(title="Evolucion de velocidad promedio",
+                        fig_r1.update_xaxes(tickformat="%d/%m/%Y", hoverformat="%d/%m/%Y %H:%M")
+                        fig_r1.update_layout(title="Evolución de la velocidad promedio",
                             xaxis_title="Fecha/Hora", yaxis_title="km/h",
                             paper_bgcolor="#FFFFFF", plot_bgcolor="#FFFFFF",
                             font_color="#12307A", height=350,
@@ -3037,8 +3074,8 @@ with tab_historia:
                         por_nodo2["color"] = por_nodo2["ratio_prom"].apply(lambda r: clasificar_ratio(r)[0])
                         fig_r2 = px.bar(por_nodo2, x="ratio_prom", y="nombre_nodo", orientation="h",
                             color="color", color_discrete_map="identity",
-                            labels={"ratio_prom": "Ratio promedio", "nombre_nodo": ""},
-                            title="Nodos mas congestionados")
+                            labels={"ratio_prom": "Índice de fluidez promedio", "nombre_nodo": ""},
+                            title="Nodos más congestionados")
                         fig_r2.update_layout(showlegend=False)
                         fig_r2.update_layout(paper_bgcolor="#FFFFFF", plot_bgcolor="#FFFFFF",
                             font_color="#12307A", height=420,
@@ -3049,7 +3086,7 @@ with tab_historia:
 <html lang="es">
 <head>
 <meta charset="UTF-8">
-<title>Reporte Trafico Cartagena · {periodo_label}</title>
+<title>Reporte de tráfico de Cartagena · {periodo_label}</title>
 <style>
   body {{ background:#FCFCFD; color:#111113; font-family:Inter,system-ui,sans-serif; margin:0; padding:24px; }}
   h1 {{ color:#12307A; border-bottom:3px solid #2DD4BF; padding-bottom:12px; }}
@@ -3065,7 +3102,7 @@ with tab_historia:
 </style>
 </head>
 <body>
-<h1>Monitor de Trafico · Cartagena</h1>
+<h1>Monitor de Tráfico · Cartagena</h1>
 <p class="meta">Periodo: <b>{periodo_label}</b> &nbsp;|&nbsp; Generado: {ts_gen} &nbsp;|&nbsp;
 Fuente: TomTom Traffic Flow · VPS 1 + VPS 2</p>
 
@@ -3074,18 +3111,18 @@ Fuente: TomTom Traffic Flow · VPS 1 + VPS 2</p>
     <div class="metric-value">{n_ejec}</div></div>
   <div class="metric-box"><div class="metric-label">Vel. promedio</div>
     <div class="metric-value">{f"{vel_prom:.1f} km/h" if pd.notna(vel_prom) else "—"}</div></div>
-  <div class="metric-box"><div class="metric-label">Ratio promedio</div>
+  <div class="metric-box"><div class="metric-label">Índice de fluidez promedio</div>
     <div class="metric-value">{f"{ratio_prom:.2f}" if pd.notna(ratio_prom) else "—"}</div></div>
   <div class="metric-box"><div class="metric-label">Registros</div>
     <div class="metric-value">{n_reg:,}</div></div>
 </div>
 
-<h2>Evolucion de velocidad promedio</h2>
+<h2>Evolución de la velocidad promedio</h2>
 <div class="chart-wrap">
 {fig_r1.to_html(full_html=False, include_plotlyjs="cdn")}
 </div>
 
-<h2>Nodos mas congestionados</h2>
+<h2>Nodos más congestionados</h2>
 <div class="chart-wrap">
 {fig_r2.to_html(full_html=False, include_plotlyjs=False)}
 </div>
@@ -3103,14 +3140,14 @@ Fuente: TomTom Traffic Flow · VPS 1 + VPS 2</p>
 <table style="width:100%;border-collapse:collapse;color:#111113;">
   <thead><tr style="border-bottom:1px solid #2DD4BF;color:#58585D;font-size:12px;">
     <th style="text-align:left;padding:8px;">Franja</th>
-    <th>Vel. actual</th><th>Vel. libre</th><th>Ratio</th><th>Muestras</th>
+    <th>Vel. actual</th><th>Vel. libre</th><th>Índice de fluidez</th><th>Muestras</th>
   </tr></thead>
   <tbody>{tabla_rows}</tbody>
 </table>""")
 
                         html_parts.append(f"""
 <p style="color:#58585D;font-size:11px;margin-top:40px;border-top:1px solid #ECECF0;padding-top:12px;">
-  Universidad Tecnológica de Bolívar · Monitor de Trafico Cartagena ·
+  Universidad Tecnológica de Bolívar · Monitor de Tráfico Cartagena ·
   Generado el {ts_gen}
 </p>
 </body></html>""")

@@ -29,7 +29,7 @@ import horario
 METRICAS = {
     "Velocidad de circulación (km/h)": "vel_actual",
     "Velocidad de flujo libre (km/h)": "vel_libre",
-    "Ratio (Índice de fluidez)": "ratio",
+    "Índice de fluidez": "ratio",
 }
 
 TODO_EL_DIA = "Todo el día (4:00 – 0:00)"
@@ -285,7 +285,7 @@ def _valores_iniciales(prefijo: str, fechas, ultima_ejecucion=None) -> dict:
     etiqueta_ultima = _etiqueta_ultima(corrida_ultima)
     iniciales = {
         # Como en produccion: la vista inicial se colorea por indice de fluidez
-        f"{prefijo}_metrica": "Ratio (Índice de fluidez)",
+        f"{prefijo}_metrica": "Índice de fluidez",
         f"{prefijo}_franja":  etiqueta_ultima or TODO_EL_DIA,
         f"{prefijo}_horas":   (
             (corrida_ultima, corrida_ultima) if corrida_ultima else horario.DIA_COMPLETO
@@ -512,7 +512,7 @@ def popup_html(fila: dict, clasificar_ratio, en_vivo: bool = False) -> str:
         if not en_vivo:
             filas.append(("Mediciones", f"{int(fila['n']):,}"))
     else:
-        filas.append(("Datos", "Sin lectura en la ultima ejecucion" if en_vivo
+        filas.append(("Datos", "Sin lectura en la última ejecución" if en_vivo
                       else "Sin mediciones con estos filtros"))
 
     tabla = "".join(f"<tr><td>{k}</td><td>{v}</td></tr>" for k, v in filas)
@@ -577,7 +577,7 @@ class _CapaOscura(JSCSSMixin, MacroElement):
         {% macro script(this, kwargs) %}
         var {{ this.get_name() }} = L.maplibreGL({
             style: {{ this.estilo|tojson }},
-            attribution: "&copy; CARTO &copy; OpenStreetMap contributors"
+            attribution: "&copy; CARTO &copy; colaboradores de OpenStreetMap"
         });
         {{ this.control }}.addBaseLayer({{ this.get_name() }}, "Oscuro");
         {{ this.mapa }}.on("baselayerchange", function (e) {
@@ -611,6 +611,30 @@ class _SinPrefijoLeaflet(MacroElement):
     _template = Template("""
         {% macro script(this, kwargs) %}
         {{ this._parent.get_name() }}.attributionControl.setPrefix(false);
+        {% endmacro %}
+    """)
+
+
+class _ControlesEnEspanol(MacroElement):
+    """Leaflet trae en ingles los botones de zoom ("Zoom in"), el de capas
+    ("Layers") y la escala en millas: se dejan en espanol y solo en km."""
+    _template = Template("""
+        {% macro script(this, kwargs) %}
+        (function (mapa) {
+            var zoom = mapa.zoomControl;
+            if (zoom) {
+                [[zoom._zoomInButton, "Acercar"], [zoom._zoomOutButton, "Alejar"]].forEach(function (par) {
+                    par[0].title = par[1];
+                    par[0].setAttribute("aria-label", par[1]);
+                });
+            }
+            var capas = mapa.getContainer().querySelector(".leaflet-control-layers-toggle");
+            if (capas) {
+                capas.title = "Capas";
+                capas.setAttribute("aria-label", "Capas");
+            }
+            L.control.scale({imperial: false}).addTo(mapa);
+        })({{ this._parent.get_name() }});
         {% endmacro %}
     """)
 
@@ -656,12 +680,16 @@ class _Reencuadre(MacroElement):
 
 def mapa_base(df: pd.DataFrame) -> folium.Map:
     """Mapa centrado en los nodos, con Calles (OpenStreetMap) de fondo por defecto."""
+    # La escala la agrega _ControlesEnEspanol, solo en metros y kilometros
     m = folium.Map(
         location=[df["lat"].mean(), df["lon"].mean()],
-        zoom_start=12, tiles=None, control_scale=True,
+        zoom_start=12, tiles=None, control_scale=False,
     )
     # terminar_mapa agrega el modo oscuro y necesita esta capa para alternar
-    m.capa_calles = folium.TileLayer("OpenStreetMap", name="Calles (OSM)").add_to(m)
+    m.capa_calles = folium.TileLayer(
+        "OpenStreetMap", name="Calles (OSM)",
+        attr='&copy; colaboradores de <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+    ).add_to(m)
     return m
 
 
@@ -748,6 +776,7 @@ def terminar_mapa(m: folium.Map, lat: pd.Series, lon: pd.Series,
     m.get_root().header.add_child(folium.Element(_CSS_POPUP))
     _Reencuadre(limites).add_to(m)
     _SinPrefijoLeaflet().add_to(m)
+    _ControlesEnEspanol().add_to(m)
     return m
 
 

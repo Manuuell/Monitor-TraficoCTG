@@ -1896,11 +1896,13 @@ def render_analisis_temporal():
                     colorscale=escala,
                     zmin=zmin,
                     zmax=zmax,
+                    # Barra al pie de la figura (yref container) y no bajo el
+                    # area del grafico: asi no se sale del recuadro
                     colorbar=dict(
                         title=dict(text=unidad, side="top"),
                         orientation="h",
                         x=0.5, xanchor="center",
-                        y=-0.30, yanchor="top",
+                        yref="container", y=0, yanchor="bottom", ypad=12,
                         len=0.70,
                         thickness=14,
                     ),
@@ -1913,8 +1915,8 @@ def render_analisis_temporal():
                 ))
                 fig_calor.update_layout(xaxis_title="Hora del día", yaxis_title="")
                 fig_calor.update_xaxes(type="category")
-                fig_calor = plotly_base(fig_calor, height=480)
-                fig_calor.update_layout(margin=dict(b=110))
+                fig_calor = plotly_base(fig_calor, height=500)
+                fig_calor.update_layout(margin=dict(b=130))
                 mostrar_grafica(fig_calor, "temporal_calor")
                 nota_escala = (
                     f" Velocidad de circulación y flujo libre usan la misma escala de color "
@@ -2799,7 +2801,8 @@ with tab_historia:
                             tickfont=dict(color=R_TENUE),
                             orientation="h",
                             x=0.5, xanchor="center",
-                            y=-0.34, yanchor="top",
+                            # Al pie de la figura, dentro de su recuadro
+                            yref="container", y=0, yanchor="bottom", ypad=12,
                             len=0.70,
                             thickness=14,
                         ),
@@ -2810,8 +2813,8 @@ with tab_historia:
                         plot_bgcolor="rgba(0,0,0,0)",
                         font_color="#1e3a6e",
                         font_family="Inter, Segoe UI, Helvetica, Arial, sans-serif",
-                        height=390,
-                        margin=dict(l=0, r=0, t=10, b=105),
+                        height=410,
+                        margin=dict(l=0, r=0, t=10, b=125),
                         xaxis=dict(
                             title="Hora del día", gridcolor=REJILLA, type="category",
                             tickfont=dict(color=R_TENUE),

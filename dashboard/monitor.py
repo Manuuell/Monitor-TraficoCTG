@@ -680,6 +680,31 @@ st.markdown(f"""
         color: #ffffff;
         transform: translateY(-1px);
     }}
+    /* Boton compacto para quitar un cierre sin desalinear su fila. */
+    [class*="st-key-sim_quitar_cierre_"] {{
+        display: flex;
+        align-items: center;
+        justify-content: flex-end;
+        min-height: 36px;
+    }}
+    [class*="st-key-sim_quitar_cierre_"] button {{
+        width: 32px !important;
+        height: 32px !important;
+        min-height: 32px !important;
+        padding: 0 !important;
+        border-radius: 50% !important;
+        display: inline-flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        flex: 0 0 32px;
+    }}
+    [class*="st-key-sim_quitar_cierre_"] button p {{
+        margin: 0 !important;
+        padding: 0 !important;
+        line-height: 1 !important;
+        font-size: 17px !important;
+        text-align: center !important;
+    }}
 
     /* ── Titulos de seccion (.sec-head del R): tinta, mayusculas, filete menta ── */
     hr {{ border-color: {R_LINEA} !important; }}
@@ -2671,7 +2696,6 @@ with tab_simulacion:
                     st.warning("Ese cierre ya está en la lista.")
                 else:
                     st.session_state["sim_cierres"] = [*cierres_sim, nuevo_cierre]
-                    st.session_state["sim_calculo"] = None
                     st.rerun()
 
             st.markdown("#### Cierres agregados")
@@ -2687,21 +2711,19 @@ with tab_simulacion:
                 else:
                     descripcion = (f"{nombres_sim[cierre['fin']]} → "
                                    f"{nombres_sim[cierre['inicio']]}")
-                texto_cierre, boton_cierre = st.columns([5, 1])
+                texto_cierre, boton_cierre = st.columns([6, 0.8])
                 with texto_cierre:
                     st.caption(descripcion)
                 with boton_cierre:
-                    if st.button("✕", key=f"sim_eliminar_{indice}", help="Eliminar cierre"):
+                    if st.button("×", key=f"sim_quitar_cierre_{indice}", help="Eliminar cierre"):
                         st.session_state["sim_cierres"] = [
                             c for i, c in enumerate(cierres_sim) if i != indice
                         ]
-                        st.session_state["sim_calculo"] = None
                         st.rerun()
             if cierres_sim and st.button(
                     "Eliminar todos los cierres", key="sim_eliminar_todos",
                     use_container_width=True):
                 st.session_state["sim_cierres"] = []
-                st.session_state["sim_calculo"] = None
                 st.rerun()
 
             st.markdown("#### Origen y destino del viaje")
@@ -2735,6 +2757,18 @@ with tab_simulacion:
         prom_sim = promedios_sim.set_index("id_nodo").to_dict("index")
 
         calculo_sim = st.session_state.get("sim_calculo")
+        # Despues del primer calculo, cualquier cambio de origen, destino o
+        # cierres actualiza la simulacion en el mismo rerun de Streamlit.
+        if calculo_sim is not None:
+            if origen_sim and destino_sim and origen_sim != destino_sim:
+                calculo_sim = {
+                    "origen": origen_sim,
+                    "destino": destino_sim,
+                    "cierres": [dict(c) for c in cierres_sim],
+                }
+                st.session_state["sim_calculo"] = calculo_sim
+            else:
+                calculo_sim = None
         ruta_normal_sim = ruta_alternativa_sim = None
         origen_calculado = destino_calculado = None
         cierres_calculados = cierres_sim
@@ -2799,6 +2833,35 @@ with tab_simulacion:
                 "**Secuencia de nodos:** " + " → ".join(
                     nombres_sim.get(n, n) for n in ruta_alternativa_sim["nodos"]
                 )
+            )
+
+            # Misma estructura, clasificacion y criterio usados por la ruta
+            # Origen-Destino de Red de Nodos. Se conserva el orden real del
+            # recorrido, incluso si una ruta llegara a repetir un nodo.
+            tabla_ruta_sim = pd.DataFrame([{
+                "#": i + 1,
+                "Nodo": nombres_sim.get(n, n),
+                "Velocidad (km/h)": prom_sim.get(n, {}).get("vel_actual"),
+                "Índice de fluidez": prom_sim.get(n, {}).get("ratio"),
+                "Estado": clasificar_ratio(prom_sim.get(n, {}).get("ratio"))[1],
+            } for i, n in enumerate(ruta_alternativa_sim["nodos"])])
+            criticos_sim = tabla_ruta_sim.dropna(
+                subset=["Índice de fluidez"]
+            ).nsmallest(3, "Índice de fluidez")
+            if criticos_sim.empty:
+                st.markdown("**Mayor congestión en la ruta:** Sin datos para estos filtros.")
+            else:
+                st.markdown(
+                    "**Mayor congestión en la ruta:** " + " · ".join(
+                        f"{r['Nodo']} ({r['Índice de fluidez']:.2f}, {r['Estado'].lower()})"
+                        for _, r in criticos_sim.iterrows()
+                    )
+                )
+            st.dataframe(
+                tabla_ruta_sim.style.format({
+                    "Velocidad (km/h)": "{:.1f}", "Índice de fluidez": "{:.2f}",
+                }, na_rep="—"),
+                width="stretch", hide_index=True,
             )
 
             if ruta_normal_sim:

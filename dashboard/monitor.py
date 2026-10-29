@@ -2345,10 +2345,11 @@ if MOSTRAR_FOOTER:
 # ============================================================
 # TABS
 # ============================================================
-tab_mapa, tab_red, tab_datos, tab_temporal, tab_historia = st.tabs(
+tab_mapa, tab_red, tab_simulacion, tab_datos, tab_temporal, tab_historia = st.tabs(
     [
         "Mapa de Tráfico",
         "Red de Nodos",
+        "Simulaciones",
         "Análisis por Nodo",
         "Análisis Temporal",
         "Histórico",
@@ -2587,6 +2588,257 @@ with tab_red:
                 tabla_ruta.style.format({"Velocidad (km/h)": "{:.1f}", "Índice de fluidez": "{:.2f}"}),
                 width="stretch", hide_index=True,
             )
+
+# ----------------------------------------------------------------
+# TAB SIMULACION DE CIERRES
+# ----------------------------------------------------------------
+with tab_simulacion:
+    catalogo = cargar_catalogo()
+    if catalogo.empty:
+        st.info("No se pudo leer el catálogo de nodos (nodos.xlsx).")
+    else:
+        st.markdown("### Simulación de cierres de vías")
+        st.caption(
+            "Selecciona dos nodos conectados directamente para cerrar temporalmente ese tramo. "
+            "Puedes agregar varios cierres y definir el sentido afectado. Después, selecciona "
+            "el origen y el destino de tu viaje para calcular la alternativa con menor tiempo estimado."
+        )
+        red_sim = cargar_red()
+        nombres_sim = dict(zip(catalogo["id_nodo"], catalogo["nombre_nodo"]))
+        cierres_sim = st.session_state.setdefault("sim_cierres", [])
+        col_filtros_sim, col_mapa_sim = st.columns([1, 3])
+
+        with col_filtros_sim, mapa_nodos.tarjeta_filtros("sim", "Simulación de cierres"):
+            filtros_sim = mapa_nodos.panel_filtros(
+                "sim", nombres_sim, fechas_disponibles(), _hora_snapshot
+            )
+            mostrar_conexiones_sim = st.checkbox(
+                "Mostrar conexiones", value=True, key="sim_conexiones"
+            )
+            seguir_vias_sim = st.checkbox(
+                "Seguir las carreteras", value=red_sim["por_via"],
+                key=f"sim_vias_{red_sim['por_via']}", disabled=not red_sim["por_via"],
+                help="Dibuja cada conexión usando la geometría real disponible.",
+            )
+
+            st.markdown("#### Agregar cierre")
+            inicio_cierre = st.selectbox(
+                "Nodo inicial del cierre", list(nombres_sim), index=None,
+                key="sim_inicio_cierre", format_func=nombres_sim.get,
+                placeholder="Elegir nodo",
+            )
+            vecinos = red_nodos.nodos_conectados(red_sim, inicio_cierre) if inicio_cierre else []
+            fin_cierre = st.selectbox(
+                "Nodo final del cierre", vecinos, index=None, key="sim_fin_cierre",
+                format_func=nombres_sim.get, placeholder="Elegir nodo conectado",
+                disabled=not inicio_cierre,
+            )
+            conexion_cierre = (red_nodos.buscar_conexion(red_sim, inicio_cierre, fin_cierre)
+                               if inicio_cierre and fin_cierre else None)
+            opciones_sentido = []
+            if conexion_cierre:
+                ida_es_ab = (inicio_cierre, fin_cierre) == (
+                    conexion_cierre["a"], conexion_cierre["b"]
+                )
+                distancia_ida = conexion_cierre["d_ab_m" if ida_es_ab else "d_ba_m"]
+                distancia_vuelta = conexion_cierre["d_ba_m" if ida_es_ab else "d_ab_m"]
+                if distancia_ida is not None and distancia_vuelta is not None:
+                    opciones_sentido.append(("Ambos sentidos", "ambos"))
+                if distancia_ida is not None:
+                    opciones_sentido.append(("Solo nodo inicial → nodo final", "ida"))
+                if distancia_vuelta is not None:
+                    opciones_sentido.append(("Solo nodo final → nodo inicial", "vuelta"))
+            if not opciones_sentido:
+                opciones_sentido = [("Ambos sentidos", "ambos")]
+            etiqueta_sentido = st.selectbox(
+                "Sentido afectado", [x[0] for x in opciones_sentido],
+                key="sim_sentido_cierre", disabled=conexion_cierre is None,
+            )
+            codigo_sentido = dict(opciones_sentido)[etiqueta_sentido]
+
+            if st.button(
+                    "Agregar cierre", key="sim_agregar_cierre", use_container_width=True,
+                    disabled=conexion_cierre is None):
+                nuevo_cierre = {
+                    "inicio": inicio_cierre, "fin": fin_cierre, "sentido": codigo_sentido,
+                }
+                nuevas_aristas = red_nodos.aristas_cerradas([nuevo_cierre])
+                duplicado = any(
+                    red_nodos.aristas_cerradas([existente]) == nuevas_aristas
+                    for existente in cierres_sim
+                )
+                if duplicado:
+                    st.warning("Ese cierre ya está en la lista.")
+                else:
+                    st.session_state["sim_cierres"] = [*cierres_sim, nuevo_cierre]
+                    st.session_state["sim_calculo"] = None
+                    st.rerun()
+
+            st.markdown("#### Cierres agregados")
+            if not cierres_sim:
+                st.caption("Todavía no has agregado cierres.")
+            for indice, cierre in enumerate(cierres_sim):
+                if cierre["sentido"] == "ambos":
+                    descripcion = (f"{nombres_sim[cierre['inicio']]} ↔ "
+                                   f"{nombres_sim[cierre['fin']]} · Ambos sentidos")
+                elif cierre["sentido"] == "ida":
+                    descripcion = (f"{nombres_sim[cierre['inicio']]} → "
+                                   f"{nombres_sim[cierre['fin']]}")
+                else:
+                    descripcion = (f"{nombres_sim[cierre['fin']]} → "
+                                   f"{nombres_sim[cierre['inicio']]}")
+                texto_cierre, boton_cierre = st.columns([5, 1])
+                with texto_cierre:
+                    st.caption(descripcion)
+                with boton_cierre:
+                    if st.button("✕", key=f"sim_eliminar_{indice}", help="Eliminar cierre"):
+                        st.session_state["sim_cierres"] = [
+                            c for i, c in enumerate(cierres_sim) if i != indice
+                        ]
+                        st.session_state["sim_calculo"] = None
+                        st.rerun()
+            if cierres_sim and st.button(
+                    "Eliminar todos los cierres", key="sim_eliminar_todos",
+                    use_container_width=True):
+                st.session_state["sim_cierres"] = []
+                st.session_state["sim_calculo"] = None
+                st.rerun()
+
+            st.markdown("#### Origen y destino del viaje")
+            origen_sim = st.selectbox(
+                "Origen del viaje", list(nombres_sim), index=None, key="sim_origen",
+                format_func=nombres_sim.get, placeholder="Elegir nodo",
+            )
+            destinos_sim = [n for n in nombres_sim if n != origen_sim]
+            destino_sim = st.selectbox(
+                "Destino del viaje", destinos_sim, index=None, key="sim_destino",
+                format_func=nombres_sim.get, placeholder="Elegir nodo",
+            )
+            seleccion_invalida = not origen_sim or not destino_sim or origen_sim == destino_sim
+            if st.button(
+                    "Calcular ruta alternativa", key="sim_calcular", type="primary",
+                    use_container_width=True, disabled=seleccion_invalida):
+                st.session_state["sim_calculo"] = {
+                    "origen": origen_sim,
+                    "destino": destino_sim,
+                    "cierres": [dict(c) for c in cierres_sim],
+                }
+                st.rerun()
+
+        consulta_sim = {**filtros_sim["consulta"], "ids": ()}
+        en_vivo_sim = filtros_sim["en_vivo"]
+        if en_vivo_sim:
+            promedios_sim = lecturas_ultima_ejecucion(df_snapshot)
+        else:
+            with st.spinner("Calculando promedios..."):
+                promedios_sim, _ = promedios_mapa(**consulta_sim)
+        prom_sim = promedios_sim.set_index("id_nodo").to_dict("index")
+
+        calculo_sim = st.session_state.get("sim_calculo")
+        ruta_normal_sim = ruta_alternativa_sim = None
+        origen_calculado = destino_calculado = None
+        cierres_calculados = cierres_sim
+        if calculo_sim:
+            origen_calculado = calculo_sim["origen"]
+            destino_calculado = calculo_sim["destino"]
+            cierres_calculados = calculo_sim["cierres"]
+            ruta_normal_sim = red_nodos.ruta_mas_rapida(
+                origen_calculado, destino_calculado, red_sim, prom_sim
+            )
+            ruta_alternativa_sim = red_nodos.ruta_mas_rapida(
+                origen_calculado, destino_calculado, red_sim, prom_sim,
+                cierres=cierres_calculados,
+            )
+
+        nodos_sim = catalogo.merge(promedios_sim, on="id_nodo", how="left")
+        ids_vista_sim = set(filtros_sim["consulta"]["ids"])
+        if ids_vista_sim:
+            ids_vista_sim.update(n for c in cierres_sim for n in (c["inicio"], c["fin"]))
+            for ruta_sim in (ruta_normal_sim, ruta_alternativa_sim):
+                if ruta_sim:
+                    ids_vista_sim.update(ruta_sim["nodos"])
+            nodos_sim = nodos_sim[nodos_sim["id_nodo"].isin(ids_vista_sim)]
+
+        with col_mapa_sim:
+            if calculo_sim and ruta_normal_sim is None:
+                st.warning("No hay un camino normal entre esos nodos con datos para estos filtros.")
+            elif calculo_sim and ruta_alternativa_sim is None:
+                st.warning("No existe una ruta alternativa disponible con los cierres seleccionados.")
+
+            mapa_sim = red_nodos.construir_mapa_simulacion(
+                nodos_sim, red_sim, prom_sim, filtros_sim["metrica"],
+                filtros_sim["metrica_label"], clasificar_ratio,
+                mostrar_conexiones_sim, seguir_vias_sim, cierres_sim,
+                ruta_normal_sim, ruta_alternativa_sim,
+                origen_calculado or origen_sim, destino_calculado or destino_sim,
+                en_vivo_sim,
+            )
+            st_folium(
+                mapa_sim, height=620, use_container_width=True,
+                returned_objects=[], key="mapa_simulacion_cierres",
+            )
+            st.caption(
+                "Rojo: tramos cerrados · Gris discontinuo: ruta sin cierres · "
+                "Turquesa: ruta alternativa"
+            )
+            if filtros_sim["metrica"] == "ratio":
+                leyenda_ratio("ratio")
+
+        if ruta_alternativa_sim:
+            st.markdown("### Ruta alternativa")
+            km_alt = ruta_alternativa_sim["dist_m"] / 1000
+            min_alt = ruta_alternativa_sim["tiempo_s"] / 60
+            vel_alt = km_alt / (min_alt / 60)
+            m1, m2, m3, m4, m5 = st.columns(5)
+            with m1: st.metric("Distancia total", f"{km_alt:.1f} km")
+            with m2: st.metric("Tiempo estimado", f"{min_alt:.1f} min")
+            with m3: st.metric("Velocidad promedio", f"{vel_alt:.1f} km/h")
+            with m4: st.metric("Nodos recorridos", len(ruta_alternativa_sim["nodos"]))
+            with m5: st.metric("Tramos utilizados", len(ruta_alternativa_sim["tramos"]))
+            st.markdown(
+                "**Secuencia de nodos:** " + " → ".join(
+                    nombres_sim.get(n, n) for n in ruta_alternativa_sim["nodos"]
+                )
+            )
+
+            if ruta_normal_sim:
+                st.markdown("### Impacto de los cierres")
+                km_normal = ruta_normal_sim["dist_m"] / 1000
+                min_normal = ruta_normal_sim["tiempo_s"] / 60
+                vel_normal = km_normal / (min_normal / 60)
+                misma_ruta = ruta_normal_sim["nodos"] == ruta_alternativa_sim["nodos"]
+                if misma_ruta:
+                    st.info("Los cierres seleccionados no afectan el recorrido entre el origen y el destino.")
+                i1, i2, i3, i4 = st.columns(4)
+                with i1: st.metric("Distancia adicional", f"{km_alt - km_normal:+.1f} km")
+                with i2: st.metric("Aumento del tiempo", f"{min_alt - min_normal:+.1f} min")
+                with i3: st.metric("Cambio de velocidad", f"{vel_alt - vel_normal:+.1f} km/h")
+                with i4:
+                    st.metric(
+                        "Cambio de tramos",
+                        f"{len(ruta_alternativa_sim['tramos']) - len(ruta_normal_sim['tramos']):+d}",
+                    )
+                comparacion = pd.DataFrame([
+                    {
+                        "Ruta": "Ruta sin cierres", "Distancia (km)": km_normal,
+                        "Tiempo (min)": min_normal, "Velocidad (km/h)": vel_normal,
+                        "Nodos": len(ruta_normal_sim["nodos"]),
+                        "Tramos": len(ruta_normal_sim["tramos"]),
+                    },
+                    {
+                        "Ruta": "Ruta alternativa", "Distancia (km)": km_alt,
+                        "Tiempo (min)": min_alt, "Velocidad (km/h)": vel_alt,
+                        "Nodos": len(ruta_alternativa_sim["nodos"]),
+                        "Tramos": len(ruta_alternativa_sim["tramos"]),
+                    },
+                ])
+                st.dataframe(
+                    comparacion.style.format({
+                        "Distancia (km)": "{:.1f}", "Tiempo (min)": "{:.1f}",
+                        "Velocidad (km/h)": "{:.1f}",
+                    }),
+                    width="stretch", hide_index=True,
+                )
 
 # ----------------------------------------------------------------
 # TAB ANALISIS DE NODOS

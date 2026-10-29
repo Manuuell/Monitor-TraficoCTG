@@ -13,6 +13,7 @@ import math
 
 import folium
 import pandas as pd
+from folium.plugins import PolyLineTextPath
 
 import mapa_nodos
 
@@ -23,6 +24,8 @@ COLOR_RUTA = "#2dd4bf"        # --mint del dashboard R
 # Borde oscuro bajo la ruta: hace que el cyan se lea sobre el mapa claro
 # y sobre el oscuro, y sobre conexiones de cualquier color
 COLOR_BORDE_RUTA = "#12307a"  # --ink del dashboard R
+COLOR_CIERRE = "#ef4444"
+COLOR_RUTA_NORMAL = "#64748b"
 # Un color por corredor en el orden de la hoja CORREDORES (PALETA_AVENIDAS
 # del dashboard R): el color de cada uno no cambia al filtrar
 PALETA_CORREDORES = [
@@ -56,7 +59,15 @@ def cargar_red(path_json, catalogo: pd.DataFrame, pares_excel: list) -> dict:
             datos = json.load(f)
         conexiones = [c for c in datos["conexiones"] if c["a"] in puntos and c["b"] in puntos]
         fuente = f"{datos.get('fuente', 'OSRM')} · {datos.get('capturado', '')}"
-        return {"conexiones": conexiones, "por_via": True, "fuente": fuente}
+        return {
+            "conexiones": conexiones,
+            "por_via": True,
+            "fuente": fuente,
+            # La red actual no trae restricciones de giro, pero se conserva el
+            # campo si se agrega en una captura futura. Cada restriccion puede
+            # ser [anterior, intermedio, siguiente] o un dict equivalente.
+            "restricciones_giro": datos.get("restricciones_giro", []),
+        }
 
     conexiones = []
     for a, b in pares_excel:
@@ -64,7 +75,8 @@ def cargar_red(path_json, catalogo: pd.DataFrame, pares_excel: list) -> dict:
             d = round(_recta_m(puntos[a], puntos[b]) * RODEO_MEDIANO)
             conexiones.append({"a": a, "b": b, "d_ab_m": d, "d_ba_m": d, "path": None})
     return {"conexiones": conexiones, "por_via": False,
-            "fuente": "hoja REDES en línea recta (falta data/red_nodos.json)"}
+            "fuente": "hoja REDES en línea recta (falta data/red_nodos.json)",
+            "restricciones_giro": []}
 
 
 def _armonica(va, vb) -> float:
@@ -89,16 +101,67 @@ def metrica_conexion(promedios: dict, a: str, b: str, metrica: str) -> float:
     return actual / libre if libre and not pd.isna(libre) else float("nan")
 
 
-def ruta_mas_rapida(origen: str, destino: str, red: dict, promedios: dict):
+def aristas_cerradas(cierres: list | tuple | None) -> set:
+    """Convierte los cierres de la interfaz en pares dirigidos (origen, destino)."""
+    bloqueadas = set()
+    for cierre in cierres or ():
+        inicio, fin = cierre["inicio"], cierre["fin"]
+        sentido = cierre.get("sentido", "ambos")
+        if sentido in ("ambos", "ida"):
+            bloqueadas.add((inicio, fin))
+        if sentido in ("ambos", "vuelta"):
+            bloqueadas.add((fin, inicio))
+    return bloqueadas
+
+
+def nodos_conectados(red: dict, id_nodo: str) -> list:
+    """Nodos unidos directamente a ``id_nodo`` por al menos un sentido valido."""
+    vecinos = set()
+    for c in red["conexiones"]:
+        if c["a"] == id_nodo and (c.get("d_ab_m") is not None or c.get("d_ba_m") is not None):
+            vecinos.add(c["b"])
+        elif c["b"] == id_nodo and (c.get("d_ab_m") is not None or c.get("d_ba_m") is not None):
+            vecinos.add(c["a"])
+    return sorted(vecinos)
+
+
+def _giros_restringidos(red: dict) -> set:
+    """Normaliza restricciones de giro opcionales como (anterior, via, siguiente)."""
+    salida = set()
+    for giro in red.get("restricciones_giro", []):
+        if isinstance(giro, dict):
+            trio = (
+                giro.get("anterior", giro.get("desde", giro.get("origen"))),
+                giro.get("intermedio", giro.get("via")),
+                giro.get("siguiente", giro.get("hacia", giro.get("destino"))),
+            )
+        else:
+            trio = tuple(giro) if len(giro) == 3 else (None, None, None)
+        if all(trio):
+            salida.add(trio)
+    return salida
+
+
+def ruta_mas_rapida(origen: str, destino: str, red: dict, promedios: dict,
+                    cierres: list | tuple | None = None):
     """
     Camino de menor tiempo de origen a destino con las velocidades promedio
     del periodo filtrado (Dijkstra). Cada conexion da dos aristas, una por
     sentido, con su propia distancia por via. Las conexiones con un nodo sin
     datos se descartan.
 
+    ``cierres`` no altera la red: solo excluye temporalmente los sentidos
+    seleccionados. Si la red incluye ``restricciones_giro``, tambien se
+    descartan esos movimientos.
+
     Devuelve None si no hay camino, o un dict con nodos (en orden), tramos
     (conexion y sentido de cada paso), dist_m, tiempo_s y tiempo_libre_s.
     """
+    if not origen or not destino or origen == destino:
+        return None
+
+    bloqueadas = aristas_cerradas(cierres)
+    giros_restringidos = _giros_restringidos(red)
     aristas = {}
     for c in red["conexiones"]:
         v = _armonica(promedios.get(c["a"], {}).get("vel_actual"),
@@ -109,7 +172,7 @@ def ruta_mas_rapida(origen: str, destino: str, red: dict, promedios: dict):
                             promedios.get(c["b"], {}).get("vel_libre"))
         for u, w, d, sentido in ((c["a"], c["b"], c["d_ab_m"], 1),
                                  (c["b"], c["a"], c["d_ba_m"], -1)):
-            if d is None:
+            if d is None or (u, w) in bloqueadas:
                 continue
             aristas.setdefault(u, []).append({
                 "hacia": w, "d": d, "t": d / (v / 3.6),
@@ -117,27 +180,37 @@ def ruta_mas_rapida(origen: str, destino: str, red: dict, promedios: dict):
                 "conexion": c, "sentido": sentido,
             })
 
-    tiempos, previo = {origen: 0.0}, {}
-    cola = [(0.0, origen)]
+    # El estado conserva el nodo anterior para poder validar el giro al tomar
+    # la siguiente arista. En el primer paso es None.
+    inicio = (None, origen)
+    tiempos, previo = {inicio: 0.0}, {}
+    cola = [(0.0, "", origen)]
+    estado_final = None
     while cola:
-        t, u = heapq.heappop(cola)
+        t, anterior_orden, u = heapq.heappop(cola)
+        anterior = anterior_orden or None
+        estado = (anterior, u)
         if u == destino:
+            estado_final = estado
             break
-        if t > tiempos.get(u, float("inf")):
+        if t > tiempos.get(estado, float("inf")):
             continue
         for a in aristas.get(u, []):
+            if anterior is not None and (anterior, u, a["hacia"]) in giros_restringidos:
+                continue
+            siguiente = (u, a["hacia"])
             nuevo = t + a["t"]
-            if nuevo < tiempos.get(a["hacia"], float("inf")):
-                tiempos[a["hacia"]] = nuevo
-                previo[a["hacia"]] = (u, a)
-                heapq.heappush(cola, (nuevo, a["hacia"]))
+            if nuevo < tiempos.get(siguiente, float("inf")):
+                tiempos[siguiente] = nuevo
+                previo[siguiente] = (estado, a)
+                heapq.heappush(cola, (nuevo, u, a["hacia"]))
 
-    if destino not in tiempos or origen == destino:
+    if estado_final is None:
         return None
 
-    pasos, nodo = [], destino
-    while nodo != origen:
-        nodo, arista = previo[nodo]
+    pasos, estado = [], estado_final
+    while estado != inicio:
+        estado, arista = previo[estado]
         pasos.append(arista)
     pasos.reverse()
     return {
@@ -147,6 +220,12 @@ def ruta_mas_rapida(origen: str, destino: str, red: dict, promedios: dict):
         "tiempo_s": sum(p["t"] for p in pasos),
         "tiempo_libre_s": sum(p["t_libre"] for p in pasos),
     }
+
+
+def buscar_conexion(red: dict, inicio: str, fin: str):
+    """Devuelve la conexion fisica entre dos nodos, sin importar su orden."""
+    return next((c for c in red["conexiones"]
+                 if {c["a"], c["b"]} == {inicio, fin}), None)
 
 
 def _sentido_corto(conexion: dict) -> int:
@@ -332,4 +411,96 @@ def construir_mapa_red(df: pd.DataFrame, red: dict, promedios: dict, metrica: st
             ).add_to(m)
         en_ruta = df[df["id_nodo"].isin(ruta["nodos"])]
         return mapa_nodos.terminar_mapa(m, en_ruta["lat"], en_ruta["lon"])
+    return mapa_nodos.terminar_mapa(m, df["lat"], df["lon"])
+
+
+def construir_mapa_simulacion(
+        df: pd.DataFrame, red: dict, promedios: dict, metrica: str,
+        metrica_label: str, clasificar_ratio, mostrar_conexiones: bool,
+        por_via: bool, cierres: list | tuple, ruta_normal=None,
+        ruta_alternativa=None, origen: str | None = None,
+        destino: str | None = None, en_vivo: bool = False) -> folium.Map:
+    """Mapa independiente para comparar la ruta normal y la alternativa."""
+    m = mapa_nodos.mapa_base(df)
+    escala = mapa_nodos.escala_metrica(m, metrica, metrica_label)
+    puntos = df.set_index("id_nodo")[["lat", "lon"]].to_dict("index")
+    nombres = dict(zip(df["id_nodo"], df["nombre_nodo"]))
+
+    if mostrar_conexiones:
+        capa = folium.FeatureGroup(name="Conexiones disponibles", control=False).add_to(m)
+        for c in red["conexiones"]:
+            if c["a"] not in puntos or c["b"] not in puntos:
+                continue
+            valor = metrica_conexion(promedios, c["a"], c["b"], metrica)
+            color, valor_txt = mapa_nodos.color_y_texto(valor, escala, clasificar_ratio)
+            distancias = [d for d in (c.get("d_ab_m"), c.get("d_ba_m")) if d is not None]
+            if not distancias:
+                continue
+            folium.PolyLine(
+                _trazo(c, puntos, por_via), color=color, weight=3, opacity=0.28,
+                tooltip=(f"{mapa_nodos.texto_html(nombres[c['a']])} – "
+                         f"{mapa_nodos.texto_html(nombres[c['b']])} · {valor_txt} · "
+                         f"{min(distancias) / 1000:.1f} km"),
+            ).add_to(capa)
+
+    ids_destacados = {n for cierre in cierres for n in (cierre["inicio"], cierre["fin"])}
+    for ruta in (ruta_normal, ruta_alternativa):
+        if ruta:
+            ids_destacados.update(ruta["nodos"])
+    en_destacado = df["id_nodo"].isin(ids_destacados)
+    if ids_destacados:
+        mapa_nodos.agregar_nodos(m, df[~en_destacado], metrica, escala, clasificar_ratio,
+                                 en_vivo, estilo="atenuado")
+        mapa_nodos.agregar_nodos(m, df[en_destacado], metrica, escala, clasificar_ratio,
+                                 en_vivo, estilo="resaltado")
+    else:
+        mapa_nodos.agregar_nodos(m, df, metrica, escala, clasificar_ratio, en_vivo)
+
+    if ruta_normal:
+        capa_normal = folium.FeatureGroup(name="Ruta sin cierres", control=False).add_to(m)
+        for conexion, sentido in ruta_normal["tramos"]:
+            folium.PolyLine(
+                _trazo(conexion, puntos, por_via, sentido), color=COLOR_RUTA_NORMAL,
+                weight=6, opacity=0.75, dash_array="10 8", tooltip="Ruta sin cierres",
+            ).add_to(capa_normal)
+
+    if ruta_alternativa:
+        capa_alt = folium.FeatureGroup(name="Ruta alternativa", control=False).add_to(m)
+        for color, grosor in ((COLOR_BORDE_RUTA, 13), (COLOR_RUTA, 7)):
+            for conexion, sentido in ruta_alternativa["tramos"]:
+                folium.PolyLine(
+                    _trazo(conexion, puntos, por_via, sentido), color=color,
+                    weight=grosor, opacity=1, tooltip="Ruta alternativa",
+                ).add_to(capa_alt)
+
+    capa_cierres = folium.FeatureGroup(name="Cierres", control=False).add_to(m)
+    for cierre in cierres:
+        conexion = buscar_conexion(red, cierre["inicio"], cierre["fin"])
+        if not conexion or conexion["a"] not in puntos or conexion["b"] not in puntos:
+            continue
+        for u, w in sorted(aristas_cerradas([cierre])):
+            sentido = 1 if (u, w) == (conexion["a"], conexion["b"]) else -1
+            linea = folium.PolyLine(
+                _trazo(conexion, puntos, por_via, sentido), color=COLOR_CIERRE,
+                weight=8, opacity=0.95,
+                tooltip=(f"Cierre: {mapa_nodos.texto_html(nombres.get(u, u))} → "
+                         f"{mapa_nodos.texto_html(nombres.get(w, w))}"),
+            ).add_to(capa_cierres)
+            PolyLineTextPath(
+                linea, "  →  ", repeat=True, offset=7,
+                attributes={"fill": COLOR_CIERRE, "font-weight": "bold", "font-size": "16"},
+            ).add_to(m)
+
+    for id_nodo, etiqueta, color in (
+            (origen, "Origen", "#22c55e"), (destino, "Destino", "#f59e0b")):
+        if id_nodo in puntos:
+            p = puntos[id_nodo]
+            folium.CircleMarker(
+                location=[p["lat"], p["lon"]], radius=14, color=color, weight=5,
+                fill=False, tooltip=folium.Tooltip(etiqueta, permanent=True),
+            ).add_to(m)
+
+    foco = df[df["id_nodo"].isin(ids_destacados)]
+    if not foco.empty:
+        return mapa_nodos.terminar_mapa(m, foco["lat"], foco["lon"], encuadrar_todos=True)
     return mapa_nodos.terminar_mapa(m, df["lat"], df["lon"])

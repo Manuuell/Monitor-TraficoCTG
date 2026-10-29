@@ -1,0 +1,81 @@
+# Despliega la app en los dos VPS en cada push a main que la toque: corre
+# los tests, arma un paquete con los archivos de la app y lo manda por SSH a
+# deploy/desplegar.sh (instalado en ~/desplegar/ de cada VPS). Primero VPS2:
+# si falla, VPS1 (el del dominio) no se toca.
+#
+# Secretos del repo: DEPLOY_SSH_KEY (llave privada solo para esto),
+# VPS_KNOWN_HOSTS, VPS1_HOST y VPS2_HOST. Ver DEPLOY.md, "Despliegue automatico".
+name: Desplegar
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "src/**"
+      - "dashboard/**"
+      - ".streamlit/**"
+      - "requirements.txt"
+      - "nodos.xlsx"
+      - "data/red_nodos.json"
+      - "data/red_nodos_revision.csv"
+      - ".github/workflows/desplegar.yml"
+  workflow_dispatch:
+
+# Un despliegue a la vez; uno nuevo espera al que esta en curso
+concurrency:
+  group: desplegar
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.10"   # la de VPS1; VPS2 tiene 3.12
+          cache: pip
+      - run: pip install -r requirements.txt
+      - run: python -m unittest discover -s tests
+
+  desplegar:
+    needs: tests
+    runs-on: ubuntu-latest
+    # desplegar.sh espera hasta 15 min si el ETL esta corriendo
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Preparar SSH
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          VPS_KNOWN_HOSTS: ${{ secrets.VPS_KNOWN_HOSTS }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/despliegue
+          chmod 600 ~/.ssh/despliegue
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > ~/.ssh/known_hosts
+
+      - name: Armar paquete
+        run: |
+          git rev-parse --short HEAD > .commit
+          tar czf "$RUNNER_TEMP/paquete.tgz" .commit src dashboard .streamlit \
+            requirements.txt nodos.xlsx data/red_nodos.json data/red_nodos_revision.csv
+
+      - name: Desplegar en VPS2
+        env:
+          HOST: ${{ secrets.VPS2_HOST }}
+        run: |
+          ssh -i ~/.ssh/despliegue -o BatchMode=yes -o StrictHostKeyChecking=yes \
+            -o ConnectTimeout=20 -o ServerAliveInterval=30 "ubuntu@$HOST" < "$RUNNER_TEMP/paquete.tgz"
+
+      - name: Desplegar en VPS1
+        env:
+          HOST: ${{ secrets.VPS1_HOST }}
+        run: |
+          ssh -i ~/.ssh/despliegue -o BatchMode=yes -o StrictHostKeyChecking=yes \
+            -o ConnectTimeout=20 -o ServerAliveInterval=30 "ubuntu@$HOST" < "$RUNNER_TEMP/paquete.tgz"

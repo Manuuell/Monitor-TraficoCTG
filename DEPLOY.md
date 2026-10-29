@@ -186,6 +186,35 @@ Acceder al dashboard:
 https://tomtom-utb.duckdns.org/
 ```
 
+## Despliegue automatico (GitHub Actions)
+
+Cada push a `main` que toque `src/`, `dashboard/`, `.streamlit/`,
+`requirements.txt`, `nodos.xlsx` o `data/red_nodos*` corre los tests y, si
+pasan, despliega en VPS2 y despues en VPS1
+(`.github/workflows/desplegar.yml`). En cada VPS, `deploy/desplegar.sh`
+espera a que no corra el ETL, respalda en `.respaldos/despliegue_<fecha>`,
+instala dependencias si cambio `requirements.txt`, reemplaza solo los
+archivos que cambiaron, reinicia `dashboard` y revisa `/_stcore/health`; si
+no responde, restaura el respaldo. No toca `.env`, `data/estado_llaves.json`,
+`data/sheet_activo.json`, `credenciales/` ni el crontab. El commit instalado
+queda en `~/proyect_r/.desplegado` y el historial en `logs/despliegues.log`.
+Tambien se puede lanzar a mano desde la pestana Actions ("Run workflow").
+
+**Instalacion (una vez por VPS):** el script vive fuera del proyecto, para que
+un despliegue no lo reemplace a medias, y la llave de GitHub solo puede
+ejecutarlo:
+```bash
+mkdir -p ~/desplegar && install -m 700 deploy/desplegar.sh ~/desplegar/
+# en ~/.ssh/authorized_keys, una linea:
+# command="/home/ubuntu/desplegar/desplegar.sh",no-port-forwarding,no-agent-forwarding,no-X11-forwarding,no-pty ssh-ed25519 AAAA... github-actions-desplegar
+```
+Si cambia `deploy/desplegar.sh`, se vuelve a copiar a mano.
+
+**Secretos del repo** (Settings → Secrets and variables → Actions):
+`DEPLOY_SSH_KEY` (llave privada de despliegue), `VPS_KNOWN_HOSTS` (llaves de
+host de los dos VPS), `VPS1_HOST` y `VPS2_HOST`. Las variables de la app se
+quedan en el `.env` de cada VPS: GitHub no las necesita.
+
 ## Verificacion y troubleshooting
 
 **Ver logs en vivo:**

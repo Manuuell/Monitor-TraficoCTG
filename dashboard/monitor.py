@@ -2054,7 +2054,7 @@ st.markdown(f"""
 <div class="utb-header">
     <div class="utb-header-content">
         <div class="utb-eyebrow"><span class="utb-live-dot"></span> Plataforma de movilidad inteligente</div>
-        <h1 class="utb-brand">Hola <span class="utb-brand-accent">prueba</span></h1>
+        <h1 class="utb-brand">Smart City <span class="utb-brand-accent">Cartagena</span></h1>
         <div class="utb-header-chips">
             <span class="utb-header-chip">113 nodos conectados</span>
             <span class="utb-header-chip">Monitoreo en vivo</span>

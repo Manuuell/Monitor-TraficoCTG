@@ -187,6 +187,23 @@ def leer_rango(fecha_ini: date, fecha_fin: date) -> pd.DataFrame:
     return _postprocesar_lectura(df)
 
 
+def leer_corridas_disponibles(fecha_ini: date, fecha_fin: date) -> list:
+    """Devuelve solo las corridas con mediciones validas dentro del rango."""
+    ts = '"consultation_time"'
+    query = text(
+        f"SELECT DISTINCT TO_CHAR({ts}, 'HH24:') || "
+        f"CASE WHEN EXTRACT(MINUTE FROM {ts}) < 30 THEN '00' ELSE '30' END "
+        f"AS corrida FROM {TABLA} "
+        f"WHERE ok AND {ts} >= :ini AND {ts} < :fin;"
+    )
+    df = pd.read_sql(
+        query, get_engine(),
+        params={"ini": fecha_ini, "fin": fecha_fin + timedelta(days=1)},
+    )
+    presentes = set(df.get("corrida", pd.Series(dtype=str)).dropna().astype(str))
+    return [corrida for corrida in horario.CORRIDAS if corrida in presentes]
+
+
 def leer_nodo_rango(id_nodo: str, fecha_ini: date, fecha_fin: date) -> pd.DataFrame:
     """Lee solo las columnas analiticas de un nodo dentro del rango pedido.
 

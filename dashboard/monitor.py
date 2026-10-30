@@ -1177,6 +1177,22 @@ def cargar_historico(fecha_ini, fecha_fin) -> tuple:
 
 
 @st.cache_data(ttl=300, show_spinner=False)
+def corridas_disponibles(fecha_ini, fecha_fin) -> list:
+    """Horarios con mediciones reales en el rango, priorizando PostgreSQL."""
+    if fecha_ini is None or fecha_fin is None or fecha_fin < fecha_ini:
+        return []
+    if getattr(config, "FUENTE_DASHBOARD", "sheets") == "db":
+        try:
+            import db  # import diferido
+
+            return db.leer_corridas_disponibles(fecha_ini, fecha_fin)
+        except Exception as error:
+            print(f"  [Dashboard] PostgreSQL no disponible para horarios: {error}")
+    datos, _ = cargar_historico(fecha_ini, fecha_fin)
+    return mapa_nodos.corridas_en_datos(datos)
+
+
+@st.cache_data(ttl=300, show_spinner=False)
 def cargar_historico_nodo(id_nodo, fecha_ini, fecha_fin) -> tuple:
     """Carga solo un nodo para mantener ligera la vista de analisis.
 
@@ -1892,13 +1908,26 @@ def render_analisis_temporal():
         )
         if fecha_fin < fecha_ini:
             st.error("La fecha final debe ser igual o posterior a la fecha inicial.")
+        opciones_horas = corridas_disponibles(fecha_ini, fecha_fin)
+        rango_ajustado = mapa_nodos.ajustar_rango_horas(
+            st.session_state[f"{prefijo}_horas"], opciones_horas
+        )
+        if tuple(st.session_state[f"{prefijo}_horas"]) != rango_ajustado:
+            st.session_state[f"{prefijo}_horas"] = rango_ajustado
+            st.session_state[f"{prefijo}_franja"] = next(
+                (nombre for nombre, horas in mapa_nodos.FRANJAS.items()
+                 if horas == rango_ajustado),
+                mapa_nodos.PERSONALIZADO,
+            )
         st.selectbox(
             "Franja horaria:",
             list(mapa_nodos.FRANJAS),
             key=f"{prefijo}_franja",
             on_change=_al_cambiar_franja,
         )
-        desde, hasta = mapa_nodos.barra_horas(f"{prefijo}_horas", _al_mover_horas)
+        desde, hasta = mapa_nodos.selector_horas(
+            f"{prefijo}_horas", _al_mover_horas, opciones_horas
+        )
         ids = st.multiselect(
             "Punto de monitoreo:",
             list(nombres),
@@ -1922,6 +1951,10 @@ def render_analisis_temporal():
         # Un rango invertido no tiene datos: no se consulta la base ni Sheets
         with col_graficos:
             st.info("Ajusta el rango de fechas para ver el análisis temporal.")
+        return
+    if desde is None or hasta is None:
+        with col_graficos:
+            st.info("No hay horarios disponibles para las fechas seleccionadas.")
         return
 
     meta = analisis_temporal.METRICAS[metrica_label]
@@ -2524,14 +2557,14 @@ if MOSTRAR_FOOTER:
 # ============================================================
 # TABS
 # ============================================================
-tab_mapa, tab_red, tab_simulacion, tab_datos, tab_temporal, tab_historia = st.tabs(
+tab_mapa, tab_red, tab_historia, tab_temporal, tab_datos, tab_simulacion = st.tabs(
     [
         "Mapa de Tráfico",
         "Red de Nodos",
-        "Simulaciones",
-        "Análisis por Nodo",
-        "Análisis Temporal",
         "Histórico",
+        "Análisis Temporal",
+        "Análisis por Nodo",
+        "Simulaciones",
     ]
 )
 
@@ -2547,14 +2580,18 @@ with tab_mapa:
         with col_filtros, mapa_nodos.tarjeta_filtros("mapa", "Filtros del Mapa"):
             filtros = mapa_nodos.panel_filtros(
                 "mapa", dict(zip(catalogo["id_nodo"], catalogo["nombre_nodo"])),
-                fechas_disponibles(), _hora_snapshot,
+                fechas_disponibles(), _hora_snapshot, corridas_disponibles,
             )
         consulta = filtros["consulta"]
         en_vivo = filtros["en_vivo"]
 
         # Sin filtros de datos: la ultima ejecucion, como en produccion.
         # Al tocar fechas, horas o tipo de dia: promedios del periodo.
-        if en_vivo:
+        if filtros["sin_horarios"]:
+            promedios = pd.DataFrame(
+                columns=["id_nodo", "vel_actual", "vel_libre", "ratio", "n"]
+            )
+        elif en_vivo:
             promedios = lecturas_ultima_ejecucion(df_snapshot)
         else:
             with st.spinner("Calculando promedios..."):
@@ -2615,7 +2652,8 @@ with tab_red:
         col_filtros, col_mapa = st.columns([1, 3])
         with col_filtros, mapa_nodos.tarjeta_filtros("red", "Filtros del Mapa de Red"):
             filtros_red = mapa_nodos.panel_filtros(
-                "red", nombres, fechas_disponibles(), _hora_snapshot
+                "red", nombres, fechas_disponibles(), _hora_snapshot,
+                corridas_disponibles,
             )
             mostrar_conexiones = st.checkbox("Mostrar conexiones", value=True, key="red_conexiones")
             # La clave cambia con la disponibilidad del trazado: si el JSON
@@ -2665,7 +2703,11 @@ with tab_red:
         consulta_red = {**filtros_red["consulta"], "ids": ()}
         en_vivo_red = filtros_red["en_vivo"]
         # Igual que el mapa de nodos: ultima ejecucion hasta que se toque un filtro
-        if en_vivo_red:
+        if filtros_red["sin_horarios"]:
+            promedios_red = pd.DataFrame(
+                columns=["id_nodo", "vel_actual", "vel_libre", "ratio", "n"]
+            )
+        elif en_vivo_red:
             promedios_red = lecturas_ultima_ejecucion(df_snapshot)
         else:
             with st.spinner("Calculando promedios..."):

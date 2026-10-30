@@ -7,6 +7,7 @@ from datetime import date
 from pathlib import Path
 from unittest.mock import patch
 
+import pandas as pd
 from streamlit import __version__ as st_version
 from streamlit.testing.v1 import AppTest
 
@@ -31,6 +32,17 @@ def _pagina_mapa():
     )
 
 
+def _pagina_selector_horas():
+    import streamlit as st
+
+    import mapa_nodos
+
+    st.session_state.setdefault("prueba_horas", ("05:30", "00:00"))
+    mapa_nodos.selector_horas(
+        "prueba_horas", lambda: None, ["05:30", "07:00", "00:00"]
+    )
+
+
 class UltimaCorridaTest(unittest.TestCase):
     def setUp(self):
         self.app = AppTest.from_function(_pagina_mapa)
@@ -40,6 +52,12 @@ class UltimaCorridaTest(unittest.TestCase):
         self.assertEqual(self.app.session_state["mapa_franja"], "Última ejecución (7:00)")
         self.assertEqual(tuple(self.app.session_state["mapa_horas"]), ("07:00", "07:00"))
         self.assertTrue(self.app.session_state["prueba_filtros"]["en_vivo"])
+        self.assertEqual(
+            self.app.selectbox(key="mapa_horas_inicio").label, "Hora inicial"
+        )
+        self.assertEqual(
+            self.app.selectbox(key="mapa_horas_fin").label, "Hora final"
+        )
 
     def test_corrida_nueva_con_la_pagina_abierta_sigue_en_vivo(self):
         self.app.session_state["prueba_ultima"] = "2026-10-27 07:31:00"
@@ -70,6 +88,35 @@ class LeerRangoTest(unittest.TestCase):
         # El dashboard distingue asi una BD caida de un periodo sin datos
         with self.assertRaises(RuntimeError):
             db.leer_rango(date(2026, 10, 27), date(2026, 10, 27))
+
+    @patch("db.get_engine", return_value=object())
+    @patch("db.pd.read_sql", return_value=pd.DataFrame({
+        "corrida": ["00:00", "05:30", "04:00"],
+    }))
+    def test_corridas_sql_quedan_en_orden_operativo(self, read_sql, _engine):
+        corridas = db.leer_corridas_disponibles(
+            date(2026, 10, 27), date(2026, 10, 27)
+        )
+        self.assertEqual(corridas, ["04:00", "05:30", "00:00"])
+        self.assertIn("SELECT DISTINCT", str(read_sql.call_args.args[0]))
+
+
+class SelectorHorasTest(unittest.TestCase):
+    def test_hora_final_no_ofrece_horas_anteriores(self):
+        app = AppTest.from_function(_pagina_selector_horas)
+        app.run()
+        self.assertEqual(
+            app.selectbox(key="prueba_horas_inicio").options,
+            ["05:30", "07:00", "00:00"],
+        )
+        app.selectbox(key="prueba_horas_inicio").select("07:00").run()
+        self.assertEqual(
+            app.selectbox(key="prueba_horas_fin").options,
+            ["07:00", "00:00"],
+        )
+        self.assertEqual(
+            tuple(app.session_state["prueba_horas"]), ("07:00", "00:00")
+        )
 
 
 if __name__ == "__main__":

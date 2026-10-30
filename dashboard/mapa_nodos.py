@@ -183,31 +183,6 @@ _CSS_TARJETA = f"""
 {_T} .stButton button:hover {{
     background: {_TINTA}; color: #ffffff; border-color: {_TINTA}; box-shadow: none; transform: translateY(-1px);
 }}
-/* Barra de horas: riel menta, valores en recuadro azul (.irs--shiny del R)
-   y escala debajo (la escala de Streamlit se oculta) */
-{_T} [data-testid="stSliderThumbValue"] {{
-    background: {_AZUL}; color: #ffffff !important; padding: 1px 5px;
-    border-radius: 4px; font-size: 11px; font-weight: 700;
-}}
-{_T} [data-baseweb="slider"] [role="slider"] {{
-    width: 20px; height: 20px; background: #ffffff;
-    border: 2px solid {_AZUL}; box-shadow: 0 0 0 3px rgba(31,72,184,0.15);
-}}
-{_T} [data-baseweb="slider"] > div > div {{ height: 6px !important; border-radius: 3px; }}
-{_T} [data-testid="stSliderTickBar"] {{ display: none; }}
-/* Escala legible: numeros mas grandes y oscuros, separados del filtro de abajo */
-.escala-horas {{ position: relative; height: 30px; margin: -8px 0 10px; }}
-.escala-horas .marca {{
-    position: absolute; top: 0; width: 1px; height: 5px; background: #b8c6e3;
-}}
-.escala-horas .marca.mayor {{ width: 2px; height: 9px; background: #6f84ad; }}
-.escala-horas .num {{
-    position: absolute; top: 12px; transform: translateX(-50%);
-    font-size: 11px; font-weight: 600; color: #3d4f73;
-}}
-/* Los extremos no se salen de la tarjeta */
-.escala-horas .num.inicio {{ transform: none; }}
-.escala-horas .num.fin {{ transform: translateX(-100%); }}
 </style>
 """
 
@@ -220,38 +195,92 @@ def tarjeta_filtros(clave: str, titulo: str):
     return tarjeta
 
 
-def _escala_horas() -> str:
-    """Una marca por corrida bajo la barra; numero cada 4 horas: 4, 8 ... 20, 0."""
-    corridas = horario.CORRIDAS
-    partes = []
-    for i, corrida in enumerate(corridas):
-        hora, minutos = int(corrida[:2]), corrida[3:]
-        mayor = minutos == "00" and horario.orden_hora(hora) % 240 == 0
-        izq = f"{i / (len(corridas) - 1) * 100:.2f}%"
-        partes.append(f'<span class="marca{" mayor" if mayor else ""}" style="left:{izq}"></span>')
-        if mayor:
-            extremo = " inicio" if i == 0 else " fin" if i == len(corridas) - 1 else ""
-            partes.append(f'<span class="num{extremo}" style="left:{izq}">{hora}</span>')
-    return f'<div class="escala-horas">{"".join(partes)}</div>'
+def corridas_en_datos(datos: pd.DataFrame) -> list:
+    """Corridas del cron realmente presentes, en orden de dia operativo."""
+    if datos.empty or "consultation_time" not in datos.columns:
+        return []
+    if "ok" in datos.columns:
+        validas = datos["ok"].astype(str).str.strip().str.lower().isin(["true", "1"])
+        datos = datos.loc[validas]
+    tiempos = pd.to_datetime(datos["consultation_time"], errors="coerce").dropna()
+    presentes = set(horario.corrida_de(tiempos))
+    return [corrida for corrida in horario.CORRIDAS if corrida in presentes]
 
 
-def barra_horas(clave: str, on_change) -> tuple:
-    """Barra de rango sobre las corridas del cron, de 4:00 a 0:00.
+def ajustar_rango_horas(rango, opciones: list | tuple) -> tuple:
+    """Ajusta un rango a corridas disponibles sin permitir un final anterior."""
+    disponibles = [c for c in horario.CORRIDAS if c in set(opciones)]
+    if not disponibles:
+        return None, None
+    if not rango or len(rango) != 2 or None in rango:
+        return disponibles[0], disponibles[-1]
 
-    Devuelve (desde, hasta) como "HH:MM". Ofrece cada corrida (tambien las de
-    5:30, 6:30...) y no tiene la franja vacia de 01 a 03.
-
-    A diferencia de st.slider, select_slider solo sabe que es de rango por
-    `value`: sin el, al mover la barra devuelve una sola corrida. El valor real
-    sigue saliendo de session_state (franjas y Restablecer lo escriben); el
-    aviso de Streamlit por usar ambos se apaga en .streamlit/config.toml.
-    """
-    desde, hasta = st.select_slider(
-        "Rango de horas:", options=horario.CORRIDAS, key=clave,
-        value=horario.DIA_COMPLETO, on_change=on_change,
-        format_func=horario.etiqueta,
+    desde_deseado, hasta_deseado = rango
+    orden = {corrida: indice for indice, corrida in enumerate(horario.CORRIDAS)}
+    indice_desde = orden.get(desde_deseado, 0)
+    indice_hasta = orden.get(hasta_deseado, len(horario.CORRIDAS) - 1)
+    desde = next(
+        (c for c in disponibles if orden[c] >= indice_desde), disponibles[0]
     )
-    st.markdown(_escala_horas(), unsafe_allow_html=True)
+    candidatos_hasta = [
+        c for c in disponibles
+        if orden[desde] <= orden[c] <= indice_hasta
+    ]
+    hasta = candidatos_hasta[-1] if candidatos_hasta else desde
+    return desde, hasta
+
+
+def selector_horas(clave: str, on_change, opciones=None) -> tuple:
+    """Dos desplegables HH:mm reutilizables, limitados a corridas disponibles."""
+    disponibles = (
+        list(horario.CORRIDAS)
+        if opciones is None
+        else [c for c in horario.CORRIDAS if c in set(opciones)]
+    )
+    if not disponibles:
+        st.session_state[clave] = (None, None)
+        st.info("No hay horarios disponibles para la fecha seleccionada.")
+        return None, None
+
+    rango = ajustar_rango_horas(
+        st.session_state.get(clave, horario.DIA_COMPLETO), disponibles
+    )
+    st.session_state[clave] = rango
+    clave_inicio, clave_fin = f"{clave}_inicio", f"{clave}_fin"
+    if st.session_state.get(clave_inicio) != rango[0]:
+        st.session_state[clave_inicio] = rango[0]
+    if st.session_state.get(clave_fin) != rango[1]:
+        st.session_state[clave_fin] = rango[1]
+
+    def _guardar_inicio():
+        st.session_state[clave] = ajustar_rango_horas(
+            (st.session_state[clave_inicio], st.session_state.get(clave_fin)),
+            disponibles,
+        )
+        on_change()
+
+    def _guardar_fin():
+        st.session_state[clave] = (
+            st.session_state[clave_inicio], st.session_state[clave_fin]
+        )
+        on_change()
+
+    col_inicio, col_fin = st.columns(2)
+    with col_inicio:
+        desde = st.selectbox(
+            "Hora inicial", disponibles, key=clave_inicio,
+            on_change=_guardar_inicio,
+        )
+    finales = disponibles[disponibles.index(desde):]
+    if st.session_state.get(clave_fin) not in finales:
+        st.session_state[clave_fin] = finales[0]
+        st.session_state[clave] = (desde, finales[0])
+    with col_fin:
+        hasta = st.selectbox(
+            "Hora final", finales, key=clave_fin,
+            on_change=_guardar_fin,
+        )
+    st.session_state[clave] = (desde, hasta)
     return desde, hasta
 
 
@@ -298,7 +327,8 @@ def _valores_iniciales(prefijo: str, fechas, ultima_ejecucion=None) -> dict:
     return iniciales
 
 
-def panel_filtros(prefijo: str, nodos: dict, fechas=None, ultima_ejecucion=None) -> dict:
+def panel_filtros(prefijo: str, nodos: dict, fechas=None, ultima_ejecucion=None,
+                  obtener_corridas=None) -> dict:
     """
     Dibuja los filtros y devuelve la seleccion.
 
@@ -366,12 +396,30 @@ def panel_filtros(prefijo: str, nodos: dict, fechas=None, ultima_ejecucion=None)
             fecha_ini, fecha_fin = rango
         else:
             fecha_ini = fecha_fin = fecha_default
+    opciones_horas = (
+        obtener_corridas(fecha_ini, fecha_fin)
+        if obtener_corridas and fecha_ini is not None and fecha_fin is not None
+        else horario.CORRIDAS
+    )
+    rango_ajustado = ajustar_rango_horas(
+        st.session_state[f"{prefijo}_horas"], opciones_horas
+    )
+    if tuple(st.session_state[f"{prefijo}_horas"]) != rango_ajustado:
+        st.session_state[f"{prefijo}_horas"] = rango_ajustado
+        if rango_ajustado == (corrida_ultima, corrida_ultima) and etiqueta_ultima:
+            st.session_state[f"{prefijo}_franja"] = etiqueta_ultima
+        else:
+            st.session_state[f"{prefijo}_franja"] = next(
+                (nombre for nombre, horas in FRANJAS.items() if horas == rango_ajustado),
+                PERSONALIZADO,
+            )
     st.selectbox(
         "Franja horaria:", opciones_franja,
         key=f"{prefijo}_franja", on_change=_al_cambiar_franja,
     )
-    # La barra siempre se puede mover; elegir una franja fija la ajusta sola
-    desde, hasta = barra_horas(f"{prefijo}_horas", _al_mover_horas)
+    desde, hasta = selector_horas(
+        f"{prefijo}_horas", _al_mover_horas, opciones_horas
+    )
     ids = st.multiselect(
         "Punto de monitoreo:", list(nodos), key=f"{prefijo}_nodos",
         format_func=lambda i: nodos.get(i, i), placeholder="Todos los puntos",
@@ -411,6 +459,7 @@ def panel_filtros(prefijo: str, nodos: dict, fechas=None, ultima_ejecucion=None)
         "metrica_label": metrica,
         "consulta": consulta,
         "en_vivo": not filtrando,
+        "sin_horarios": desde is None or hasta is None,
     }
 
 
@@ -701,12 +750,12 @@ def escala_metrica(m: folium.Map, metrica: str, metrica_label: str):
     """Escala de color de las velocidades (con su leyenda), o None para el ratio."""
     if metrica == "ratio":
         return None
-    # Azul de claro (lento) a oscuro (rapido): rojo y verde quedan solo para el
+    # Azul de oscuro (lento) a claro (rapido): rojo y verde quedan solo para el
     # indice de fluidez. Con rojo-verde, una calle del centro despejada a
     # 30 km/h salia roja y se leia como trancon. Parte de un azul medio para
     # que los puntos lentos se vean sobre el mapa claro.
     escala = LinearColormap(
-        ["#93c5fd", "#3b82f6", "#1e3a8a"],
+        ["#1e3a8a", "#3b82f6", "#93c5fd"],
         vmin=VEL_MIN, vmax=VEL_MAX, caption=metrica_label,
     )
     escala.add_to(m)

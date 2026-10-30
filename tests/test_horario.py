@@ -29,7 +29,7 @@ class HorarioTest(unittest.TestCase):
         for nombre, rango in mapa_nodos.FRANJAS.items():
             if nombre in (mapa_nodos.TODO_EL_DIA, mapa_nodos.PERSONALIZADO):
                 continue
-            # La barra (select_slider) falla si la franja fija un valor fuera de sus opciones
+            # El selector solo puede usar corridas existentes en sus opciones.
             self.assertIn(rango[0], horario.CORRIDAS, nombre)
             self.assertIn(rango[1], horario.CORRIDAS, nombre)
             ini, fin = (horario.CORRIDAS.index(c) for c in rango)
@@ -62,14 +62,42 @@ class HorarioTest(unittest.TestCase):
         # 05:00 y 05:30 son corridas distintas
         self.assertFalse(horario.en_horario(ts, "05:00", "05:00").iloc[0])
 
-    def test_escala_marca_cada_corrida_y_numera_cada_4_horas(self):
-        escala = mapa_nodos._escala_horas()
-        self.assertEqual(escala.count('class="marca'), len(horario.CORRIDAS))
-        numeros = [n.split("<")[0].split(">")[-1] for n in escala.split('class="num')[1:]]
-        self.assertEqual(numeros, ["4", "8", "12", "16", "20", "0"])
-        # Los extremos se alinean hacia dentro para no salirse de la tarjeta
-        self.assertIn('class="num inicio"', escala)
-        self.assertIn('class="num fin"', escala)
+    def test_selector_ajusta_el_rango_a_horarios_disponibles(self):
+        disponibles = ["05:00", "06:00", "07:00"]
+        self.assertEqual(
+            mapa_nodos.ajustar_rango_horas(horario.DIA_COMPLETO, disponibles),
+            ("05:00", "07:00"),
+        )
+        self.assertEqual(
+            mapa_nodos.ajustar_rango_horas(("05:30", "07:30"), disponibles),
+            ("06:00", "07:00"),
+        )
+        self.assertEqual(
+            mapa_nodos.ajustar_rango_horas(("07:00", "05:00"), disponibles),
+            ("07:00", "07:00"),
+        )
+
+    def test_corridas_disponibles_salen_de_mediciones_validas(self):
+        datos = pd.DataFrame({
+            "consultation_time": pd.to_datetime([
+                "2026-10-05 07:01", "2026-10-05 05:31", "2026-10-05 06:00",
+            ]),
+            "ok": [True, True, False],
+        })
+        self.assertEqual(mapa_nodos.corridas_en_datos(datos), ["05:30", "07:00"])
+
+    def test_velocidad_baja_es_oscura_y_alta_es_clara(self):
+        import folium
+
+        escala_actual = mapa_nodos.escala_metrica(
+            folium.Map(), "vel_actual", "Velocidad de circulación (km/h)"
+        )
+        escala_libre = mapa_nodos.escala_metrica(
+            folium.Map(), "vel_libre", "Velocidad de flujo libre (km/h)"
+        )
+        self.assertEqual(escala_actual.colors, escala_libre.colors)
+        self.assertEqual(escala_actual(mapa_nodos.VEL_MIN), "#1e3a8aff")
+        self.assertEqual(escala_actual(mapa_nodos.VEL_MAX), "#93c5fdff")
 
 
 if __name__ == "__main__":

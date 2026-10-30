@@ -32,6 +32,16 @@ METRICAS = {
 }
 # Las dos velocidades comparten escala de color para poder compararlas
 VELOCIDADES = ("currentSpeed", "freeFlowSpeed")
+# Misma gama azul de Plotly, invertida: lento oscuro y rapido claro.
+ESCALA_VELOCIDAD = "Blues_r"
+# Luminosidad creciente: congestion intensa en 0 y fluidez suave en 1.
+ESCALA_FLUIDEZ = [
+    [0.00, "#7F1D1D"],
+    [0.25, "#B45309"],
+    [0.50, "#C7A83F"],
+    [0.75, "#9CCAA5"],
+    [1.00, "#DCFCE7"],
+]
 
 DIAS = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"]
 TIPOS_DIA = ["Todos", "Días laborables (L–V)", "Fin de semana", "Quincena"] + DIAS

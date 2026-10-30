@@ -2035,20 +2035,20 @@ def render_analisis_temporal():
                 st.info("No hay suficientes datos para construir el mapa de calor.")
             else:
                 if columna == "velocidad_ratio":
-                    escala = [
-                        [0.0, COLOR_CONGESTIONADO],
-                        [0.60, COLOR_LENTO],
-                        [0.75, COLOR_MODERADO],
-                        [0.90, COLOR_FLUIDO],
-                        [1.0, "#047857"],
-                    ]
+                    escala = analisis_temporal.ESCALA_FLUIDEZ
                     zmin, zmax = 0, 1
+                    marcas_barra = dict(
+                        tickmode="array",
+                        tickvals=[0, 0.25, 0.50, 0.75, 1],
+                        ticktext=["0 · Congestión", "0.25", "0.50", "0.75", "1 · Fluidez"],
+                    )
                 else:
                     # Velocidad de circulación y flujo libre con la misma escala: el minimo
                     # y el maximo de ambas con estos filtros. Con escalas propias,
                     # el flujo libre (casi constante) parecia variar tanto como el
                     # trafico real.
-                    escala = "Blues"
+                    escala = analisis_temporal.ESCALA_VELOCIDAD
+                    marcas_barra = {}
                     otra = next(c for c in analisis_temporal.VELOCIDADES if c != columna)
                     calor_otra, _ = analisis_temporal.mapa_calor(
                         analisis_temporal.serie_por_ejecucion(
@@ -2075,6 +2075,7 @@ def render_analisis_temporal():
                         yref="container", y=1, yanchor="top", ypad=10,
                         len=0.60,
                         thickness=12,
+                        **marcas_barra,
                     ),
                     hoverongaps=False,
                     hovertemplate=(
@@ -2090,8 +2091,11 @@ def render_analisis_temporal():
                 mostrar_grafica(fig_calor, "temporal_calor")
                 nota_escala = (
                     f" Velocidad de circulación y flujo libre usan la misma escala de color "
-                    f"({zmin:.0f}–{zmax:.0f} km/h) para poder compararlas."
-                    if columna in analisis_temporal.VELOCIDADES else ""
+                    f"({zmin:.0f}–{zmax:.0f} km/h) para poder compararlas: azul oscuro "
+                    f"indica menor velocidad y azul claro, mayor velocidad."
+                    if columna in analisis_temporal.VELOCIDADES
+                    else " Los tonos oscuros indican mayor congestión; el verde claro y "
+                    "suave indica mayor fluidez."
                 )
                 st.caption(
                     "Cada celda es el promedio de las ejecuciones observadas en esa "

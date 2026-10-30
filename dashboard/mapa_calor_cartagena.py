@@ -1,4 +1,4 @@
-"""Mapa geografico de calor para el analisis temporal de Cartagena.
+"""Mapa geografico de calor para la vista Mapa de Trafico de Cartagena.
 
 La superficie usa interpolacion IDW solo cerca de nodos con datos reales y
 de la red vial observada. La transparencia fuera de esa cobertura evita
@@ -13,9 +13,10 @@ import folium
 import numpy as np
 import pandas as pd
 from branca.colormap import LinearColormap
+from branca.element import MacroElement
 from folium.raster_layers import ImageOverlay
+from jinja2 import Template
 
-import analisis_temporal
 import mapa_nodos
 
 
@@ -56,10 +57,93 @@ CONFIG_INDICADORES = {
         "unidad": "índice",
         "vmin": 0.0,
         "vmax": 1.0,
-        "paradas": analisis_temporal.ESCALA_FLUIDEZ,
+        # Misma paleta y mismos umbrales de Mapa de Trafico: congestionado,
+        # lento, moderado y fluido. Entre cortes se interpola para obtener una
+        # superficie continua, sin cambiar la clasificacion de los nodos.
+        "paradas": [
+            (0.00, "#ef4444"),
+            (0.60, "#ef4444"),
+            (0.75, "#f97316"),
+            (0.90, "#f59e0b"),
+            (1.00, "#10b981"),
+        ],
         "ticks": ["0", "0,60", "0,75", "0,90", "1"],
     },
 }
+
+COLUMNAS_MAPA = {
+    "vel_actual": "currentSpeed",
+    "vel_libre": "freeFlowSpeed",
+    "ratio": "velocidad_ratio",
+}
+
+
+class _LeyendaFluidezMapa(MacroElement):
+    """Barra continua con los cortes exactos del Mapa de Trafico."""
+    _template = Template("""
+        {% macro header(this, kwargs) %}
+        <style>
+          .leyenda-fluidez-mapa {
+            background: rgba(255,255,255,.96); border: 1px solid #e2e8f0;
+            border-radius: 12px; box-shadow: 0 4px 14px rgba(15,23,42,.18);
+            padding: 10px 12px 9px; width: min(360px, 58vw);
+            font: 11px/1.2 Inter, Arial, sans-serif; color: #12307a;
+          }
+          .leyenda-fluidez-mapa .titulo { font-weight: 700; margin-bottom: 7px; }
+          .leyenda-fluidez-mapa .barra {
+            height: 12px; border-radius: 6px;
+            background: linear-gradient(90deg,
+              #ef4444 0%, #ef4444 60%, #f97316 75%,
+              #f59e0b 90%, #10b981 100%);
+          }
+          .leyenda-fluidez-mapa .marcas { position: relative; height: 17px; margin-top: 3px; }
+          .leyenda-fluidez-mapa .marca { position: absolute; transform: translateX(-50%); }
+          .leyenda-fluidez-mapa .marca:first-child { transform: none; }
+          .leyenda-fluidez-mapa .marca:last-child { transform: translateX(-100%); }
+        </style>
+        {% endmacro %}
+        {% macro script(this, kwargs) %}
+        (function () {
+          var control = L.control({position: "topright"});
+          control.onAdd = function () {
+            var div = L.DomUtil.create("div", "leyenda-fluidez-mapa");
+            div.innerHTML = '<div class="titulo">Índice de fluidez</div>' +
+              '<div class="barra"></div><div class="marcas">' +
+              '<span class="marca" style="left:0%">0</span>' +
+              '<span class="marca" style="left:60%">0,60</span>' +
+              '<span class="marca" style="left:75%">0,75</span>' +
+              '<span class="marca" style="left:90%">0,90</span>' +
+              '<span class="marca" style="left:100%">1</span></div>';
+            L.DomEvent.disableClickPropagation(div);
+            return div;
+          };
+          control.addTo({{ this._parent.get_name() }});
+        })();
+        {% endmacro %}
+    """)
+
+    def __init__(self):
+        super().__init__()
+        self._name = "LeyendaFluidezMapa"
+
+
+def preparar_promedios(nodos: pd.DataFrame, metrica: str) -> pd.DataFrame:
+    """Adapta los promedios ya usados por Mapa de Trafico al mapa continuo."""
+    columnas = [
+        "id_nodo", "nombre_nodo", "punto_referencia", "barrio", "lat", "lon",
+        "vel_actual", "vel_libre", "ratio", "valor", "n_mediciones",
+    ]
+    if nodos.empty or metrica not in COLUMNAS_MAPA or metrica not in nodos.columns:
+        return pd.DataFrame(columns=columnas)
+    salida = nodos.copy()
+    for columna in ("vel_actual", "vel_libre", "ratio", "n"):
+        if columna not in salida.columns:
+            salida[columna] = np.nan
+        salida[columna] = pd.to_numeric(salida[columna], errors="coerce")
+    salida["valor"] = salida[metrica]
+    salida["n_mediciones"] = salida["n"]
+    salida = salida.dropna(subset=["lat", "lon", "valor", "n_mediciones"])
+    return salida.reindex(columns=columnas).reset_index(drop=True)
 
 
 def resumir_nodos(datos: pd.DataFrame, catalogo: pd.DataFrame,
@@ -116,7 +200,9 @@ def _rgba_valores(valores: np.ndarray, paradas: list[tuple[float, str]],
     """Convierte valores a la escala fija mediante interpolacion RGB lineal."""
     posiciones = np.asarray([p for p, _ in paradas], dtype=float)
     rgb = np.asarray([_hex_rgb(c) for _, c in paradas], dtype=float)
-    planos = np.clip(valores.ravel(), vmin, vmax)
+    planos = np.nan_to_num(
+        np.clip(valores.ravel(), vmin, vmax), nan=vmin, posinf=vmax, neginf=vmin
+    )
     salida = np.zeros((planos.size, 4), dtype=np.uint8)
     for canal in range(3):
         salida[:, canal] = np.interp(planos, posiciones, rgb[:, canal]).round().astype(np.uint8)
@@ -202,9 +288,11 @@ def interpolar_superficie(nodos: pd.DataFrame, columna_metrica: str,
     distancia_nodo = np.sqrt(dist2_nodos.min(axis=1))
     # El radio de influencia es mayor que el de cobertura para suavizar la
     # transicion, pero nunca hace visible una celda fuera de la cobertura.
+    # Una potencia menor que 2 y un radio suave de 120 m evitan circulos
+    # duros alrededor de cada nodo y producen una transicion meteorologica.
     pesos = np.where(
         dist2_nodos <= (COBERTURA_NODO_M * 2.2) ** 2,
-        1.0 / np.maximum(dist2_nodos, 25.0 ** 2),
+        1.0 / np.power(dist2_nodos + 120.0 ** 2, 0.75),
         0.0,
     )
     suma_pesos = pesos.sum(axis=1)
@@ -305,7 +393,11 @@ def construir_mapa(nodos: pd.DataFrame, catalogo: pd.DataFrame, red: dict,
                 tooltip="Conexión de la red monitoreada",
             ).add_to(capa_red)
 
-    capa_nodos = folium.FeatureGroup(name="Nodos utilizados", show=True).add_to(mapa)
+    # Ocultos al abrir: la lectura principal es la superficie continua. Se
+    # pueden activar desde Capas para consultar el detalle de cada nodo.
+    capa_nodos = folium.FeatureGroup(
+        name="Nodos utilizados (consulta)", show=False
+    ).add_to(mapa)
     escala_puntos = LinearColormap(
         [color for _, color in config_ind["paradas"]],
         index=[valor for valor, _ in config_ind["paradas"]],
@@ -322,14 +414,17 @@ def construir_mapa(nodos: pd.DataFrame, catalogo: pd.DataFrame, red: dict,
             popup=folium.Popup(_popup_nodo(fila, clasificar_ratio), max_width=360),
         ).add_to(capa_nodos)
 
-    leyenda = LinearColormap(
-        [color for _, color in config_ind["paradas"]],
-        index=[valor for valor, _ in config_ind["paradas"]],
-        vmin=config_ind["vmin"], vmax=config_ind["vmax"],
-        caption=f"{config_ind['titulo']} ({config_ind['unidad']})",
-        tick_labels=config_ind["ticks"],
-    )
-    leyenda.add_to(mapa)
+    if columna_metrica == "velocidad_ratio":
+        _LeyendaFluidezMapa().add_to(mapa)
+    else:
+        leyenda = LinearColormap(
+            [color for _, color in config_ind["paradas"]],
+            index=[valor for valor, _ in config_ind["paradas"]],
+            vmin=config_ind["vmin"], vmax=config_ind["vmax"],
+            caption=f"{config_ind['titulo']} ({config_ind['unidad']})",
+            tick_labels=config_ind["ticks"],
+        )
+        leyenda.add_to(mapa)
     return mapa_nodos.terminar_mapa(
         mapa, nodos["lat"], nodos["lon"], encuadrar_todos=True
     ), superficie

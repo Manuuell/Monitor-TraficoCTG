@@ -46,6 +46,15 @@ class MapaCalorCartagenaTest(unittest.TestCase):
         self.assertEqual(libre.set_index("id_nodo").loc["A", "valor"], 70.0)
         self.assertEqual(fluidez.set_index("id_nodo").loc["A", "valor"], 0.40)
 
+    def test_reutiliza_los_promedios_del_mapa_de_trafico(self):
+        promedios = self.catalogo.assign(
+            vel_actual=[25.0, 55.0], vel_libre=[70.0, 75.0],
+            ratio=[0.35, 0.80], n=[12, 10],
+        )
+        salida = mapa_geo.preparar_promedios(promedios, "vel_actual")
+        self.assertEqual(salida["valor"].tolist(), [25.0, 55.0])
+        self.assertEqual(salida["n_mediciones"].tolist(), [12, 10])
+
     def test_superficie_deja_transparente_lo_que_no_tiene_cobertura(self):
         nodos = mapa_geo.resumir_nodos(self.datos, self.catalogo, "currentSpeed")
         puntos_red = nodos[["lat", "lon"]].to_numpy()
@@ -55,17 +64,33 @@ class MapaCalorCartagenaTest(unittest.TestCase):
         self.assertGreater((alpha == 0).sum(), 0)
         self.assertLess(superficie["celdas_cubiertas"], superficie["celdas_totales"])
 
-    def test_escalas_son_fijas_y_fluidez_no_tiene_verde(self):
+    def test_escalas_son_fijas_y_fluidez_coincide_con_mapa_trafico(self):
         actual = mapa_geo.CONFIG_INDICADORES["currentSpeed"]
         libre = mapa_geo.CONFIG_INDICADORES["freeFlowSpeed"]
         self.assertEqual(actual["paradas"], libre["paradas"])
         self.assertEqual((actual["vmin"], actual["vmax"]), (10, 75))
         ratio = mapa_geo.CONFIG_INDICADORES["velocidad_ratio"]
         self.assertEqual(ratio["ticks"], ["0", "0,60", "0,75", "0,90", "1"])
-        for _, color in ratio["paradas"]:
-            rojo, verde, azul = (int(color[i:i + 2], 16) for i in (1, 3, 5))
-            self.assertGreater(rojo, verde)
-            self.assertGreaterEqual(verde, azul)
+        self.assertEqual(
+            ratio["paradas"],
+            [(0.00, "#ef4444"), (0.60, "#ef4444"), (0.75, "#f97316"),
+             (0.90, "#f59e0b"), (1.00, "#10b981")],
+        )
+
+    def test_leyenda_fluidez_no_genera_nan(self):
+        nodos = mapa_geo.resumir_nodos(self.datos, self.catalogo, "velocidad_ratio")
+        red = {"conexiones": [{
+            "a": "A", "b": "B",
+            "path": [[10.400, -75.500], [10.410, -75.490]],
+        }]}
+        mapa, _ = mapa_geo.construir_mapa(
+            nodos, self.catalogo, red, "velocidad_ratio", lambda valor: ("#000", "Prueba")
+        )
+        contenido = mapa.get_root().render()
+        self.assertNotIn(">NaN<", contenido)
+        self.assertIn("0,60", contenido)
+        self.assertIn("0,75", contenido)
+        self.assertIn("0,90", contenido)
 
 
 if __name__ == "__main__":

@@ -1992,7 +1992,7 @@ def render_analisis_temporal():
         with s4:
             st.metric("Nodos por ejecución", f"{nodos_promedio:.1f}")
 
-        vista_tendencia, vista_hora, vista_calor, vista_box, vista_cartagena = st.tabs(
+        vista_tendencia, vista_hora, vista_calor, vista_box = st.tabs(
             analisis_temporal.VISTAS
         )
 
@@ -2211,40 +2211,6 @@ def render_analisis_temporal():
                 "La caja contiene el 50% central de las ejecuciones; la línea sólida es la "
                 "mediana, la línea discontinua marca el promedio y los puntos son valores atípicos."
             )
-
-        with vista_cartagena:
-            nodos_geograficos = mapa_calor_cartagena.resumir_nodos(
-                filtrado, catalogo, columna
-            )
-            if nodos_geograficos.empty:
-                st.info("No hay nodos con ubicación y mediciones reales para construir el mapa.")
-            else:
-                config_geo = mapa_calor_cartagena.CONFIG_INDICADORES[columna]
-                st.markdown(f"#### {config_geo['titulo']} · Mapa de calor Cartagena")
-                st.caption(
-                    f"Datos reales de {fuente} · {fecha_ini.strftime('%d/%m/%Y')} a "
-                    f"{fecha_fin.strftime('%d/%m/%Y')} · {desde} a {hasta} · "
-                    f"{tipo_dia} · {len(nodos_geograficos)} nodos · "
-                    f"{int(nodos_geograficos['n_mediciones'].sum()):,} mediciones"
-                )
-                with st.spinner("Construyendo superficie geográfica..."):
-                    mapa_geo, cobertura_geo = mapa_calor_cartagena.construir_mapa(
-                        nodos_geograficos, catalogo, cargar_red(), columna,
-                        clasificar_ratio,
-                    )
-                st_folium(
-                    mapa_geo, height=620, use_container_width=True,
-                    returned_objects=[], key="temporal_mapa_calor_cartagena",
-                )
-                st.caption(
-                    "Los colores corresponden al valor del indicador, no a la cantidad de "
-                    "registros. La superficie entre nodos es una estimación espacial IDW "
-                    f"limitada a {mapa_calor_cartagena.COBERTURA_NODO_M / 1000:.1f} km de un "
-                    "nodo con datos y a sectores cercanos a la red vial observada. Las zonas "
-                    "transparentes no tienen cobertura suficiente y no se estiman. Usa el "
-                    "control «Capas» del mapa para mostrar u ocultar nodos y conexiones."
-                )
-
 
 # ============================================================
 # SIDEBAR
@@ -2642,15 +2608,55 @@ with tab_mapa:
                 st.info("La última ejecución no trajo lecturas válidas." if en_vivo else
                         "No hay mediciones con estos filtros. Los nodos se muestran en gris.")
 
-            mapa = mapa_nodos.construir_mapa(
-                nodos_mapa, filtros["metrica"], filtros["metrica_label"], clasificar_ratio,
-                en_vivo,
+            vista_nodos_mapa, vista_calor_mapa = st.tabs(
+                ["Red vial / Nodos", "Mapa de calor"]
             )
-            st_folium(mapa, height=560, use_container_width=True,
-                      returned_objects=[], key="mapa_nodos")
-            st.caption("Haz clic en un nodo para ver su detalle.")
-            if filtros["metrica"] == "ratio":
-                leyenda_ratio("ratio")
+            with vista_nodos_mapa:
+                mapa = mapa_nodos.construir_mapa(
+                    nodos_mapa, filtros["metrica"], filtros["metrica_label"],
+                    clasificar_ratio, en_vivo,
+                )
+                st_folium(mapa, height=560, use_container_width=True,
+                          returned_objects=[], key="mapa_nodos")
+                st.caption("Haz clic en un nodo para ver su detalle.")
+                if filtros["metrica"] == "ratio":
+                    leyenda_ratio("ratio")
+
+            with vista_calor_mapa:
+                nodos_calor = mapa_calor_cartagena.preparar_promedios(
+                    nodos_mapa, filtros["metrica"]
+                )
+                if nodos_calor.empty:
+                    st.info("No hay mediciones reales para construir el mapa de calor.")
+                else:
+                    columna_calor = mapa_calor_cartagena.COLUMNAS_MAPA[filtros["metrica"]]
+                    config_calor = mapa_calor_cartagena.CONFIG_INDICADORES[columna_calor]
+                    periodo = (
+                        f"Última ejecución · {snapshot_label}" if en_vivo else
+                        f"{consulta['fecha_ini'].strftime('%d/%m/%Y')} a "
+                        f"{consulta['fecha_fin'].strftime('%d/%m/%Y')} · "
+                        f"{consulta['desde']} a {consulta['hasta']}"
+                    )
+                    st.markdown(f"#### {config_calor['titulo']} · Mapa de calor")
+                    st.caption(
+                        f"{periodo} · {len(nodos_calor)} nodos · "
+                        f"{int(nodos_calor['n_mediciones'].sum()):,} mediciones"
+                    )
+                    with st.spinner("Construyendo superficie continua..."):
+                        mapa_calor, _ = mapa_calor_cartagena.construir_mapa(
+                            nodos_calor, catalogo, cargar_red(), columna_calor,
+                            clasificar_ratio,
+                        )
+                    st_folium(
+                        mapa_calor, height=620, use_container_width=True,
+                        returned_objects=[], key="mapa_trafico_calor",
+                    )
+                    st.caption(
+                        "La superficie difuminada interpola los valores reales cercanos y "
+                        "usa la misma escala del Mapa de Tráfico. Las zonas transparentes no "
+                        "tienen cobertura suficiente. En «Capas» puedes mostrar u ocultar la "
+                        "red vial y activar los nodos para consultar sus detalles."
+                    )
 
         st.markdown("### Distribución del tráfico")
         ca, cb, cc, cd = st.columns(4)

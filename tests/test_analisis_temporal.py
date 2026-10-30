@@ -129,7 +129,6 @@ class AnalisisTemporalTest(unittest.TestCase):
                 "▥ Comportamiento horario",
                 "▦ Mapa de calor",
                 "▭ Distribución horaria",
-                "⌖ Mapa de calor Cartagena",
             ),
         )
 

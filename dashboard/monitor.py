@@ -27,6 +27,7 @@ import horario       # noqa: E402
 import analisis_nodo  # noqa: E402
 import analisis_temporal  # noqa: E402
 import mapa_nodos     # noqa: E402
+import mapa_calor_cartagena  # noqa: E402
 import prediccion_trafico  # noqa: E402
 import red_nodos      # noqa: E402
 from security_utils import sanitizar_error  # noqa: E402
@@ -1991,7 +1992,7 @@ def render_analisis_temporal():
         with s4:
             st.metric("Nodos por ejecución", f"{nodos_promedio:.1f}")
 
-        vista_tendencia, vista_hora, vista_calor, vista_box = st.tabs(
+        vista_tendencia, vista_hora, vista_calor, vista_box, vista_cartagena = st.tabs(
             analisis_temporal.VISTAS
         )
 
@@ -2210,6 +2211,39 @@ def render_analisis_temporal():
                 "La caja contiene el 50% central de las ejecuciones; la línea sólida es la "
                 "mediana, la línea discontinua marca el promedio y los puntos son valores atípicos."
             )
+
+        with vista_cartagena:
+            nodos_geograficos = mapa_calor_cartagena.resumir_nodos(
+                filtrado, catalogo, columna
+            )
+            if nodos_geograficos.empty:
+                st.info("No hay nodos con ubicación y mediciones reales para construir el mapa.")
+            else:
+                config_geo = mapa_calor_cartagena.CONFIG_INDICADORES[columna]
+                st.markdown(f"#### {config_geo['titulo']} · Mapa de calor Cartagena")
+                st.caption(
+                    f"Datos reales de {fuente} · {fecha_ini.strftime('%d/%m/%Y')} a "
+                    f"{fecha_fin.strftime('%d/%m/%Y')} · {desde} a {hasta} · "
+                    f"{tipo_dia} · {len(nodos_geograficos)} nodos · "
+                    f"{int(nodos_geograficos['n_mediciones'].sum()):,} mediciones"
+                )
+                with st.spinner("Construyendo superficie geográfica..."):
+                    mapa_geo, cobertura_geo = mapa_calor_cartagena.construir_mapa(
+                        nodos_geograficos, catalogo, cargar_red(), columna,
+                        clasificar_ratio,
+                    )
+                st_folium(
+                    mapa_geo, height=620, use_container_width=True,
+                    returned_objects=[], key="temporal_mapa_calor_cartagena",
+                )
+                st.caption(
+                    "Los colores corresponden al valor del indicador, no a la cantidad de "
+                    "registros. La superficie entre nodos es una estimación espacial IDW "
+                    f"limitada a {mapa_calor_cartagena.COBERTURA_NODO_M / 1000:.1f} km de un "
+                    "nodo con datos y a sectores cercanos a la red vial observada. Las zonas "
+                    "transparentes no tienen cobertura suficiente y no se estiman. Usa el "
+                    "control «Capas» del mapa para mostrar u ocultar nodos y conexiones."
+                )
 
 
 # ============================================================

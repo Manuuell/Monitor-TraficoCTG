@@ -692,18 +692,50 @@ st.markdown(f"""
         height: 32px !important;
         min-height: 32px !important;
         padding: 0 !important;
-        border-radius: 50% !important;
+        background: transparent !important;
+        border: 0 !important;
+        box-shadow: none !important;
         display: inline-flex !important;
         align-items: center !important;
         justify-content: center !important;
         flex: 0 0 32px;
     }}
+    [class*="st-key-sim_quitar_cierre_"] button:hover {{
+        background: rgba(100, 105, 112, 0.08) !important;
+        border: 0 !important;
+        transform: none !important;
+    }}
     [class*="st-key-sim_quitar_cierre_"] button p {{
         margin: 0 !important;
         padding: 0 !important;
         line-height: 1 !important;
-        font-size: 17px !important;
+        width: 16px !important;
+        height: 16px !important;
+        border-radius: 50% !important;
+        background: #74777c !important;
+        color: #ffffff !important;
+        display: inline-flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        font-size: 12px !important;
+        font-weight: 700 !important;
         text-align: center !important;
+    }}
+    [class*="st-key-sim_fila_cierre_"] [data-testid="stHorizontalBlock"] {{
+        display: flex !important;
+        flex-wrap: nowrap !important;
+        align-items: center !important;
+        gap: 8px !important;
+    }}
+    [class*="st-key-sim_fila_cierre_"] [data-testid="stColumn"]:first-child {{
+        flex: 1 1 auto !important;
+        width: auto !important;
+        min-width: 0 !important;
+    }}
+    [class*="st-key-sim_fila_cierre_"] [data-testid="stColumn"]:last-child {{
+        flex: 0 0 32px !important;
+        width: 32px !important;
+        min-width: 32px !important;
     }}
 
     /* ── Titulos de seccion (.sec-head del R): tinta, mayusculas, filete menta ── */
@@ -2711,15 +2743,17 @@ with tab_simulacion:
                 else:
                     descripcion = (f"{nombres_sim[cierre['fin']]} → "
                                    f"{nombres_sim[cierre['inicio']]}")
-                texto_cierre, boton_cierre = st.columns([6, 0.8])
-                with texto_cierre:
-                    st.caption(descripcion)
-                with boton_cierre:
-                    if st.button("×", key=f"sim_quitar_cierre_{indice}", help="Eliminar cierre"):
-                        st.session_state["sim_cierres"] = [
-                            c for i, c in enumerate(cierres_sim) if i != indice
-                        ]
-                        st.rerun()
+                with st.container(key=f"sim_fila_cierre_{indice}"):
+                    texto_cierre, boton_cierre = st.columns([6, 0.8])
+                    with texto_cierre:
+                        st.caption(descripcion)
+                    with boton_cierre:
+                        if st.button("×", key=f"sim_quitar_cierre_{indice}",
+                                     help="Eliminar cierre"):
+                            st.session_state["sim_cierres"] = [
+                                c for i, c in enumerate(cierres_sim) if i != indice
+                            ]
+                            st.rerun()
             if cierres_sim and st.button(
                     "Eliminar todos los cierres", key="sim_eliminar_todos",
                     use_container_width=True):

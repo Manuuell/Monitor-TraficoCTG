@@ -16,11 +16,17 @@ import red_nodos  # noqa: E402
 
 class SimulacionCierresTest(unittest.TestCase):
     def setUp(self):
+        puntos = {
+            "A": [10.0000, -75.0000], "B": [10.0000, -74.9990],
+            "C": [10.0010, -75.0000], "D": [10.0010, -74.9990],
+        }
+
         def conexion(a, b, ida, vuelta=None):
+            path = [puntos[a], puntos[b]]
             return {
                 "a": a, "b": b, "d_ab_m": ida,
                 "d_ba_m": ida if vuelta is None else vuelta,
-                "path": [[0, 0], [1, 1]], "path_ba": [[1, 1], [0, 0]],
+                "path": path, "path_ba": path[::-1],
             }
 
         self.red = {
@@ -81,6 +87,35 @@ class SimulacionCierresTest(unittest.TestCase):
         red = copy.deepcopy(self.red)
         red["restricciones_giro"] = [["A", "B", "D"]]
         self.assertEqual(self.ruta(red=red)["nodos"], ["A", "C", "D"])
+
+    def test_respeta_un_sentido_vial_explicito(self):
+        red = copy.deepcopy(self.red)
+        red["conexiones"][0]["permitir_ab"] = False
+        self.assertEqual(self.ruta(red=red)["nodos"], ["A", "C", "D"])
+
+    def test_un_retardo_de_infraestructura_cambia_la_ruta_optima(self):
+        red = copy.deepcopy(self.red)
+        red["conexiones"][0]["retardo_ab_s"] = 30
+        ruta = self.ruta(red=red)
+        self.assertEqual(ruta["nodos"], ["A", "C", "D"])
+        self.assertEqual(ruta["retardo_s"], 0)
+
+    def test_una_penalizacion_de_giro_cambia_la_ruta_optima(self):
+        red = copy.deepcopy(self.red)
+        red["penalizaciones_giro"] = [{
+            "anterior": "A", "intermedio": "B", "siguiente": "D", "retardo_s": 30,
+        }]
+        self.assertEqual(self.ruta(red=red)["nodos"], ["A", "C", "D"])
+
+    def test_bloquea_otra_arista_que_reutiliza_la_geometria_roja(self):
+        red = copy.deepcopy(self.red)
+        # A->C comparte primero mas de 24 m con el trazado cerrado A->B y
+        # luego se desvia al norte. No puede usarse como subruta alternativa.
+        red["conexiones"][2]["path"] = [
+            [10.0000, -75.0000], [10.0000, -74.9996], [10.0010, -75.0000],
+        ]
+        cierre = [{"inicio": "A", "fin": "B", "sentido": "ida"}]
+        self.assertIsNone(self.ruta(cierre, red=red))
 
 
 if __name__ == "__main__":

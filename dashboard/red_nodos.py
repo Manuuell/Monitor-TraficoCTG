@@ -67,6 +67,9 @@ def cargar_red(path_json, catalogo: pd.DataFrame, pares_excel: list) -> dict:
             # campo si se agrega en una captura futura. Cada restriccion puede
             # ser [anterior, intermedio, siguiente] o un dict equivalente.
             "restricciones_giro": datos.get("restricciones_giro", []),
+            "penalizaciones_giro": datos.get("penalizaciones_giro", []),
+            "retardos_nodo_s": datos.get(
+                "retardos_nodo_s", datos.get("penalizaciones_nodo_s", {})),
         }
 
     conexiones = []
@@ -76,7 +79,8 @@ def cargar_red(path_json, catalogo: pd.DataFrame, pares_excel: list) -> dict:
             conexiones.append({"a": a, "b": b, "d_ab_m": d, "d_ba_m": d, "path": None})
     return {"conexiones": conexiones, "por_via": False,
             "fuente": "hoja REDES en línea recta (falta data/red_nodos.json)",
-            "restricciones_giro": []}
+            "restricciones_giro": [], "penalizaciones_giro": [],
+            "retardos_nodo_s": {}}
 
 
 def _armonica(va, vb) -> float:
@@ -142,6 +146,140 @@ def _giros_restringidos(red: dict) -> set:
     return salida
 
 
+def _penalizaciones_giro(red: dict) -> dict:
+    """Retardos opcionales por giro, indexados como (anterior, via, siguiente)."""
+    salida = {}
+    for giro in red.get("penalizaciones_giro", []):
+        if not isinstance(giro, dict):
+            continue
+        trio = (
+            giro.get("anterior", giro.get("desde", giro.get("origen"))),
+            giro.get("intermedio", giro.get("via")),
+            giro.get("siguiente", giro.get("hacia", giro.get("destino"))),
+        )
+        retardo = giro.get("retardo_s", giro.get("penalizacion_s", giro.get("delay_s", 0)))
+        if all(trio) and retardo is not None:
+            salida[trio] = max(0.0, float(retardo))
+    return salida
+
+
+def _sentido_habilitado(conexion: dict, sentido: int) -> bool:
+    """Aplica metadatos opcionales de sentido sin inventarlos cuando no existen."""
+    clave = "permitir_ab" if sentido == 1 else "permitir_ba"
+    if clave in conexion:
+        return bool(conexion[clave])
+    permitidos = conexion.get("sentidos_permitidos")
+    if permitidos is not None:
+        codigo = "ab" if sentido == 1 else "ba"
+        return codigo in {str(x).lower().replace("_", "") for x in permitidos}
+    unico = conexion.get("oneway", conexion.get("un_sentido"))
+    if unico in (True, 1, "1", "ab", "a_b", "a->b"):
+        return sentido == 1
+    if unico in (-1, "-1", "ba", "b_a", "b->a"):
+        return sentido == -1
+    return True
+
+
+def _retardo_arista_s(conexion: dict, sentido: int, destino: str, red: dict) -> float:
+    """Suma retardos de infraestructura si la captura de red los proporciona."""
+    sufijo = "ab" if sentido == 1 else "ba"
+    retardo = 0.0
+    for clave in (f"retardo_{sufijo}_s", f"penalizacion_{sufijo}_s", f"delay_{sufijo}_s"):
+        if conexion.get(clave) is not None:
+            retardo += max(0.0, float(conexion[clave]))
+            break
+    else:
+        for clave in ("retardo_s", "penalizacion_s", "delay_s"):
+            if conexion.get(clave) is not None:
+                retardo += max(0.0, float(conexion[clave]))
+                break
+    retardos_nodo = red.get("retardos_nodo_s", red.get("penalizaciones_nodo_s", {}))
+    if isinstance(retardos_nodo, dict) and retardos_nodo.get(destino) is not None:
+        retardo += max(0.0, float(retardos_nodo[destino]))
+    return retardo
+
+
+def _trazo_dirigido(conexion: dict, sentido: int) -> list:
+    """Geometria disponible para una arista, sin necesitar el catalogo de nodos."""
+    if sentido == -1 and conexion.get("path_ba"):
+        return conexion["path_ba"]
+    path = conexion.get("path") or []
+    return path if sentido == 1 else path[::-1]
+
+
+def _delta_xy_m(p: list, q: list) -> tuple:
+    """Desplazamiento local aproximado este/norte entre dos [lat, lon]."""
+    lat_media = math.radians((p[0] + q[0]) / 2)
+    return ((q[1] - p[1]) * 111320 * math.cos(lat_media),
+            (q[0] - p[0]) * 111320)
+
+
+def _muestras_trazo(path: list, paso_m: float = 8.0) -> list:
+    """Muestrea una polilinea e incluye la direccion local de cada punto."""
+    muestras = []
+    for p, q in zip(path, path[1:]):
+        dx, dy = _delta_xy_m(p, q)
+        largo = math.hypot(dx, dy)
+        if largo <= 0:
+            continue
+        ux, uy = dx / largo, dy / largo
+        partes = max(1, math.ceil(largo / paso_m))
+        for i in range(partes):
+            f = i / partes
+            muestras.append((p[0] + (q[0] - p[0]) * f,
+                             p[1] + (q[1] - p[1]) * f, ux, uy))
+    if len(path) > 1:
+        p, q = path[-2], path[-1]
+        dx, dy = _delta_xy_m(p, q)
+        largo = math.hypot(dx, dy) or 1.0
+        muestras.append((q[0], q[1], dx / largo, dy / largo))
+    return muestras
+
+
+def _indice_geometrias_cerradas(red: dict, cierres) -> dict:
+    """Indice espacial ligero de los trazados rojos, separado por sentido."""
+    indice = {}
+    for cierre in cierres or ():
+        conexion = buscar_conexion(red, cierre["inicio"], cierre["fin"])
+        if not conexion:
+            continue
+        for u, w in aristas_cerradas([cierre]):
+            sentido = 1 if (u, w) == (conexion["a"], conexion["b"]) else -1
+            for lat, lon, ux, uy in _muestras_trazo(_trazo_dirigido(conexion, sentido)):
+                celda = (round(lat / 0.0001), round(lon / 0.0001))
+                indice.setdefault(celda, []).append((lat, lon, ux, uy))
+    return indice
+
+
+def _reutiliza_geometria_cerrada(path: list, indice: dict,
+                                  tolerancia_m: float = 12.0,
+                                  minimo_m: float = 24.0) -> bool:
+    """Detecta un tramo continuo que coincide con la geometria roja cerrada."""
+    if not indice or len(path) < 2:
+        return False
+    consecutivos = 0
+    paso_m = 8.0
+    for lat, lon, ux, uy in _muestras_trazo(path, paso_m):
+        base = (round(lat / 0.0001), round(lon / 0.0001))
+        coincide = False
+        for di in (-1, 0, 1):
+            for dj in (-1, 0, 1):
+                for clat, clon, cux, cuy in indice.get((base[0] + di, base[1] + dj), ()):
+                    dx, dy = _delta_xy_m([lat, lon], [clat, clon])
+                    misma_direccion = ux * cux + uy * cuy > 0.35
+                    if misma_direccion and math.hypot(dx, dy) <= tolerancia_m:
+                        coincide = True
+                        break
+                if coincide:
+                    break
+            if coincide:
+                break
+        consecutivos = consecutivos + 1 if coincide else 0
+        if consecutivos * paso_m >= minimo_m:
+            return True
+    return False
+
+
 def ruta_mas_rapida(origen: str, destino: str, red: dict, promedios: dict,
                     cierres: list | tuple | None = None):
     """
@@ -161,7 +299,9 @@ def ruta_mas_rapida(origen: str, destino: str, red: dict, promedios: dict,
         return None
 
     bloqueadas = aristas_cerradas(cierres)
+    geometrias_cerradas = _indice_geometrias_cerradas(red, cierres)
     giros_restringidos = _giros_restringidos(red)
+    penalizaciones_giro = _penalizaciones_giro(red)
     aristas = {}
     for c in red["conexiones"]:
         v = _armonica(promedios.get(c["a"], {}).get("vel_actual"),
@@ -172,11 +312,17 @@ def ruta_mas_rapida(origen: str, destino: str, red: dict, promedios: dict,
                             promedios.get(c["b"], {}).get("vel_libre"))
         for u, w, d, sentido in ((c["a"], c["b"], c["d_ab_m"], 1),
                                  (c["b"], c["a"], c["d_ba_m"], -1)):
-            if d is None or (u, w) in bloqueadas:
+            if (d is None or not _sentido_habilitado(c, sentido)
+                    or (u, w) in bloqueadas
+                    or _reutiliza_geometria_cerrada(
+                        _trazo_dirigido(c, sentido), geometrias_cerradas)):
                 continue
+            retardo = _retardo_arista_s(c, sentido, w, red)
             aristas.setdefault(u, []).append({
-                "hacia": w, "d": d, "t": d / (v / 3.6),
-                "t_libre": d / (v_libre / 3.6) if not pd.isna(v_libre) else d / (v / 3.6),
+                "hacia": w, "d": d, "t": d / (v / 3.6) + retardo,
+                "t_libre": ((d / (v_libre / 3.6) if not pd.isna(v_libre)
+                              else d / (v / 3.6)) + retardo),
+                "retardo_s": retardo,
                 "conexion": c, "sentido": sentido,
             })
 
@@ -199,10 +345,11 @@ def ruta_mas_rapida(origen: str, destino: str, red: dict, promedios: dict,
             if anterior is not None and (anterior, u, a["hacia"]) in giros_restringidos:
                 continue
             siguiente = (u, a["hacia"])
-            nuevo = t + a["t"]
+            retardo_giro = penalizaciones_giro.get((anterior, u, a["hacia"]), 0.0)
+            nuevo = t + a["t"] + retardo_giro
             if nuevo < tiempos.get(siguiente, float("inf")):
                 tiempos[siguiente] = nuevo
-                previo[siguiente] = (estado, a)
+                previo[siguiente] = (estado, {**a, "retardo_giro_s": retardo_giro})
                 heapq.heappush(cola, (nuevo, u, a["hacia"]))
 
     if estado_final is None:
@@ -217,8 +364,10 @@ def ruta_mas_rapida(origen: str, destino: str, red: dict, promedios: dict,
         "nodos": [origen] + [p["hacia"] for p in pasos],
         "tramos": [(p["conexion"], p["sentido"]) for p in pasos],
         "dist_m": sum(p["d"] for p in pasos),
-        "tiempo_s": sum(p["t"] for p in pasos),
-        "tiempo_libre_s": sum(p["t_libre"] for p in pasos),
+        "tiempo_s": sum(p["t"] + p.get("retardo_giro_s", 0) for p in pasos),
+        "tiempo_libre_s": sum(p["t_libre"] + p.get("retardo_giro_s", 0) for p in pasos),
+        "retardo_s": sum(p.get("retardo_s", 0) + p.get("retardo_giro_s", 0)
+                         for p in pasos),
     }
 
 
@@ -447,14 +596,12 @@ def construir_mapa_simulacion(
     for ruta in (ruta_normal, ruta_alternativa):
         if ruta:
             ids_destacados.update(ruta["nodos"])
-    en_destacado = df["id_nodo"].isin(ids_destacados)
-    if ids_destacados:
-        mapa_nodos.agregar_nodos(m, df[~en_destacado], metrica, escala, clasificar_ratio,
+    ids_ruta_alt = set(ruta_alternativa["nodos"]) if ruta_alternativa else set()
+    ids_nodos_superiores = ids_ruta_alt or ids_destacados
+    en_superior = df["id_nodo"].isin(ids_nodos_superiores)
+    if ids_nodos_superiores:
+        mapa_nodos.agregar_nodos(m, df[~en_superior], metrica, escala, clasificar_ratio,
                                  en_vivo, estilo="atenuado")
-        mapa_nodos.agregar_nodos(m, df[en_destacado], metrica, escala, clasificar_ratio,
-                                 en_vivo, estilo="resaltado")
-    else:
-        mapa_nodos.agregar_nodos(m, df, metrica, escala, clasificar_ratio, en_vivo)
 
     if ruta_normal:
         capa_normal = folium.FeatureGroup(name="Ruta sin cierres", control=False).add_to(m)
@@ -490,6 +637,15 @@ def construir_mapa_simulacion(
                 linea, "  →  ", repeat=True, offset=7,
                 attributes={"fill": COLOR_CIERRE, "font-weight": "bold", "font-size": "16"},
             ).add_to(m)
+
+    # Igual que Origen-Destino en Red de Nodos: los marcadores de todos los
+    # nodos de la alternativa se agregan despues de las lineas para que queden
+    # visibles directamente encima del trazado.
+    if ids_nodos_superiores:
+        mapa_nodos.agregar_nodos(m, df[en_superior], metrica, escala, clasificar_ratio,
+                                 en_vivo, estilo="resaltado")
+    else:
+        mapa_nodos.agregar_nodos(m, df, metrica, escala, clasificar_ratio, en_vivo)
 
     for id_nodo, etiqueta, color in (
             (origen, "Origen", "#22c55e"), (destino, "Destino", "#f59e0b")):

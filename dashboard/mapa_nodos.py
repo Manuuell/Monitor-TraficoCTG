@@ -502,14 +502,18 @@ def popup_html(fila: dict, clasificar_ratio, en_vivo: bool = False) -> str:
         color, etiqueta = clasificar_ratio(fila["ratio"])
         vel = fila["vel_actual"]
         ratio = fila["ratio"]
+        predicho = bool(fila.get("predicho", False))
         filas += [
-            ("Velocidad de circulación" if en_vivo else "Velocidad promedio",
+            ("Velocidad predicha" if predicho else
+             "Velocidad de circulación" if en_vivo else "Velocidad promedio",
              f"{vel:.1f} km/h" if pd.notna(vel) else "—"),
             ("Índice de fluidez",
              f'<span class="np-punto" style="background:{color};"></span>'
              f'{ratio:.2f} · {etiqueta}' if pd.notna(ratio) else "—"),
         ]
-        if not en_vivo:
+        if predicho:
+            filas.append(("Fuente", "Predicción Random Forest"))
+        elif not en_vivo:
             filas.append(("Mediciones", f"{int(fila['n']):,}"))
     else:
         filas.append(("Datos", "Sin lectura en la última ejecución" if en_vivo

@@ -10,6 +10,7 @@ import glob
 import streamlit.components.v1 as components
 from datetime import datetime, timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import numpy as np
 import pandas as pd
@@ -26,6 +27,7 @@ import horario       # noqa: E402
 import analisis_nodo  # noqa: E402
 import analisis_temporal  # noqa: E402
 import mapa_nodos     # noqa: E402
+import prediccion_trafico  # noqa: E402
 import red_nodos      # noqa: E402
 from security_utils import sanitizar_error  # noqa: E402
 
@@ -1401,6 +1403,67 @@ def promedios_mapa(fecha_ini, fecha_fin, desde, hasta, mes, dia_semana,
     return mapa_nodos.promedios_por_nodo_df(df, **consulta), "Google Sheets"
 
 
+@st.cache_data(ttl=3600, show_spinner=False)
+def cargar_historico_random_forest() -> tuple:
+    """Historico de entrenamiento; prioriza los CSV locales disponibles."""
+    local = cargar_historico_local()
+    if len(local) >= 500:
+        return local, "CSV local"
+    fecha_min, fecha_max, _ = rango_fechas_historico()
+    if fecha_min is None:
+        return local, "CSV local"
+    externo, fuente = cargar_historico(fecha_min, fecha_max)
+    return (externo, fuente) if len(externo) >= 500 else (local, "CSV local")
+
+
+@st.cache_resource(show_spinner=False)
+def entrenar_random_forest_cache(version, _historico, _catalogo):
+    """Un modelo por version del historico; los DataFrame no se copian al hash."""
+    return prediccion_trafico.entrenar_random_forest(_historico, _catalogo)
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def datos_reales_simulacion(fecha, corrida: str) -> tuple:
+    """Busca la corrida exacta primero en CSV y luego en la fuente configurada."""
+    local = cargar_historico_local(fecha, fecha)
+    resumen = prediccion_trafico.resumir_corrida_real(local, fecha, corrida)
+    if not resumen.empty:
+        return resumen, "CSV local"
+    externo, fuente = cargar_historico(fecha, fecha)
+    return prediccion_trafico.resumir_corrida_real(externo, fecha, corrida), fuente
+
+
+def indicadores_simulacion(fecha, corrida: str, catalogo: pd.DataFrame) -> tuple:
+    """Indicadores reales si existe la corrida; Random Forest en caso contrario."""
+    hora, minuto = map(int, corrida.split(":"))
+    instante = datetime.combine(fecha, datetime.min.time()).replace(
+        hour=hora, minute=minuto)
+    ahora = datetime.now(ZoneInfo(config.TZ)).replace(tzinfo=None)
+    if instante <= ahora:
+        reales, fuente = datos_reales_simulacion(fecha, corrida)
+        if not reales.empty:
+            return reales, {
+                "tipo": "real", "fuente": fuente,
+                "detalle": "Mediciones registradas",
+            }
+
+    historico, fuente_modelo = cargar_historico_random_forest()
+    tiempos = pd.to_datetime(historico.get("consultation_time"), errors="coerce")
+    version = (
+        len(historico),
+        tiempos.max().isoformat() if tiempos is not None and tiempos.notna().any() else "sin-fecha",
+    )
+    modelo = entrenar_random_forest_cache(version, historico, catalogo)
+    predichos = prediccion_trafico.predecir_velocidades(
+        modelo, catalogo, fecha, corrida)
+    detalle = ("Fecha u hora futura" if instante > ahora
+               else "No existe una medición exacta para esta corrida")
+    return predichos, {
+        "tipo": "predicho", "fuente": f"Random Forest · {fuente_modelo}",
+        "detalle": detalle, "modelo": modelo,
+    }
+
+
 def calcular_proxima_ejecucion():
     ahora = datetime.now()
     horarios_hoy = []
@@ -2665,18 +2728,29 @@ with tab_simulacion:
         cierres_sim = st.session_state.setdefault("sim_cierres", [])
         col_filtros_sim, col_mapa_sim = st.columns([1, 3])
 
-        with col_filtros_sim, mapa_nodos.tarjeta_filtros("sim", "Simulación de cierres"):
-            filtros_sim = mapa_nodos.panel_filtros(
-                "sim", nombres_sim, fechas_disponibles(), _hora_snapshot
+        with col_filtros_sim, mapa_nodos.tarjeta_filtros("sim", "Fecha y hora"):
+            fechas_sim = fechas_disponibles()
+            hoy_sim = mapa_nodos.hoy_cartagena()
+            fecha_min_sim = fechas_sim[0] if fechas_sim else hoy_sim - timedelta(days=365)
+            fecha_default_sim = (
+                pd.Timestamp(_hora_snapshot).date()
+                if pd.notna(_hora_snapshot) else hoy_sim
             )
-            mostrar_conexiones_sim = st.checkbox(
-                "Mostrar conexiones", value=True, key="sim_conexiones"
+            fecha_sim = st.date_input(
+                "Fecha", value=fecha_default_sim, min_value=fecha_min_sim,
+                max_value=hoy_sim + timedelta(days=365), format="DD/MM/YYYY",
+                key="sim_fecha",
             )
-            seguir_vias_sim = st.checkbox(
-                "Seguir las carreteras", value=red_sim["por_via"],
-                key=f"sim_vias_{red_sim['por_via']}", disabled=not red_sim["por_via"],
-                help="Dibuja cada conexión usando la geometría real disponible.",
+            corrida_default_sim = mapa_nodos._corrida_ultima(_hora_snapshot)
+            indice_corrida_sim = (
+                horario.CORRIDAS.index(corrida_default_sim)
+                if corrida_default_sim in horario.CORRIDAS else 0
             )
+            corrida_sim = st.selectbox(
+                "Hora o corrida", horario.CORRIDAS, index=indice_corrida_sim,
+                key="sim_corrida", format_func=horario.etiqueta,
+            )
+            st.caption("Selecciona una sola fecha y una sola corrida del monitoreo.")
 
             st.markdown("#### Agregar cierre")
             inicio_cierre = st.selectbox(
@@ -2781,13 +2855,18 @@ with tab_simulacion:
                 }
                 st.rerun()
 
-        consulta_sim = {**filtros_sim["consulta"], "ids": ()}
-        en_vivo_sim = filtros_sim["en_vivo"]
-        if en_vivo_sim:
-            promedios_sim = lecturas_ultima_ejecucion(df_snapshot)
-        else:
-            with st.spinner("Calculando promedios..."):
-                promedios_sim, _ = promedios_mapa(**consulta_sim)
+        try:
+            with st.spinner("Consultando datos o calculando la predicción..."):
+                promedios_sim, estado_sim = indicadores_simulacion(
+                    fecha_sim, corrida_sim, catalogo)
+        except (ValueError, ImportError) as error_modelo:
+            promedios_sim = pd.DataFrame(
+                columns=["id_nodo", "vel_actual", "vel_libre", "ratio", "n", "predicho"])
+            estado_sim = {
+                "tipo": "error", "fuente": "Sin datos",
+                "detalle": sanitizar_error(error_modelo),
+            }
+        en_vivo_sim = estado_sim["tipo"] == "real"
         prom_sim = promedios_sim.set_index("id_nodo").to_dict("index")
 
         calculo_sim = st.session_state.get("sim_calculo")
@@ -2819,24 +2898,34 @@ with tab_simulacion:
             )
 
         nodos_sim = catalogo.merge(promedios_sim, on="id_nodo", how="left")
-        ids_vista_sim = set(filtros_sim["consulta"]["ids"])
-        if ids_vista_sim:
-            ids_vista_sim.update(n for c in cierres_sim for n in (c["inicio"], c["fin"]))
-            for ruta_sim in (ruta_normal_sim, ruta_alternativa_sim):
-                if ruta_sim:
-                    ids_vista_sim.update(ruta_sim["nodos"])
-            nodos_sim = nodos_sim[nodos_sim["id_nodo"].isin(ids_vista_sim)]
 
         with col_mapa_sim:
+            fecha_hora_sim = f"{fecha_sim.strftime('%d/%m/%Y')} · {corrida_sim}"
+            if estado_sim["tipo"] == "real":
+                st.success(
+                    f"Datos reales · {fecha_hora_sim} · Fuente: {estado_sim['fuente']}"
+                )
+            elif estado_sim["tipo"] == "predicho":
+                modelo_sim = estado_sim["modelo"]
+                st.info(
+                    f"Predicción Random Forest · {fecha_hora_sim} · "
+                    f"{estado_sim['detalle']} · Entrenado con "
+                    f"{modelo_sim['filas']:,} mediciones"
+                )
+            else:
+                st.error(
+                    "No fue posible obtener datos reales ni entrenar Random Forest: "
+                    + estado_sim["detalle"]
+                )
             if calculo_sim and ruta_normal_sim is None:
-                st.warning("No hay un camino normal entre esos nodos con datos para estos filtros.")
+                st.warning("No hay un camino normal entre esos nodos para la fecha y hora elegidas.")
             elif calculo_sim and ruta_alternativa_sim is None:
                 st.warning("No existe una ruta alternativa disponible con los cierres seleccionados.")
 
             mapa_sim = red_nodos.construir_mapa_simulacion(
-                nodos_sim, red_sim, prom_sim, filtros_sim["metrica"],
-                filtros_sim["metrica_label"], clasificar_ratio,
-                mostrar_conexiones_sim, seguir_vias_sim, cierres_sim,
+                nodos_sim, red_sim, prom_sim, "ratio",
+                "Índice de fluidez", clasificar_ratio,
+                True, red_sim["por_via"], cierres_sim,
                 ruta_normal_sim, ruta_alternativa_sim,
                 origen_calculado or origen_sim, destino_calculado or destino_sim,
                 en_vivo_sim,
@@ -2849,20 +2938,32 @@ with tab_simulacion:
                 "Rojo: tramos cerrados · Gris discontinuo: ruta sin cierres · "
                 "Turquesa: ruta alternativa"
             )
-            if filtros_sim["metrica"] == "ratio":
-                leyenda_ratio("ratio")
+            leyenda_ratio("ratio")
 
         if ruta_alternativa_sim:
             st.markdown("### Ruta alternativa")
             km_alt = ruta_alternativa_sim["dist_m"] / 1000
             min_alt = ruta_alternativa_sim["tiempo_s"] / 60
             vel_alt = km_alt / (min_alt / 60)
-            m1, m2, m3, m4, m5 = st.columns(5)
+            ratios_alt = pd.Series([
+                prom_sim.get(n, {}).get("ratio")
+                for n in ruta_alternativa_sim["nodos"]
+            ], dtype=float)
+            fluidez_alt = ratios_alt.mean()
+            estado_fluidez_alt = clasificar_ratio(fluidez_alt)[1]
+            m1, m2, m3, m4, m5, m6 = st.columns(6)
             with m1: st.metric("Distancia total", f"{km_alt:.1f} km")
             with m2: st.metric("Tiempo estimado", f"{min_alt:.1f} min")
             with m3: st.metric("Velocidad promedio", f"{vel_alt:.1f} km/h")
-            with m4: st.metric("Nodos recorridos", len(ruta_alternativa_sim["nodos"]))
-            with m5: st.metric("Tramos utilizados", len(ruta_alternativa_sim["tramos"]))
+            with m4:
+                st.metric(
+                    "Índice de fluidez",
+                    f"{fluidez_alt:.2f}" if pd.notna(fluidez_alt) else "—",
+                    estado_fluidez_alt if pd.notna(fluidez_alt) else "Sin datos",
+                    delta_color="off",
+                )
+            with m5: st.metric("Nodos recorridos", len(ruta_alternativa_sim["nodos"]))
+            with m6: st.metric("Tramos utilizados", len(ruta_alternativa_sim["tramos"]))
             st.markdown(
                 "**Secuencia de nodos:** " + " → ".join(
                     nombres_sim.get(n, n) for n in ruta_alternativa_sim["nodos"]
@@ -2883,10 +2984,18 @@ with tab_simulacion:
                 subset=["Índice de fluidez"]
             ).nsmallest(3, "Índice de fluidez")
             if criticos_sim.empty:
-                st.markdown("**Mayor congestión en la ruta:** Sin datos para estos filtros.")
+                titulo_congestion_sim = (
+                    "Mayor congestión esperada" if estado_sim["tipo"] == "predicho"
+                    else "Mayor congestión en la ruta"
+                )
+                st.markdown(f"**{titulo_congestion_sim}:** Sin datos para esta corrida.")
             else:
+                titulo_congestion_sim = (
+                    "Mayor congestión esperada" if estado_sim["tipo"] == "predicho"
+                    else "Mayor congestión en la ruta"
+                )
                 st.markdown(
-                    "**Mayor congestión en la ruta:** " + " · ".join(
+                    f"**{titulo_congestion_sim}:** " + " · ".join(
                         f"{r['Nodo']} ({r['Índice de fluidez']:.2f}, {r['Estado'].lower()})"
                         for _, r in criticos_sim.iterrows()
                     )

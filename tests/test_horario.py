@@ -99,6 +99,28 @@ class HorarioTest(unittest.TestCase):
         self.assertEqual(escala_actual(mapa_nodos.VEL_MIN), "#1e3a8aff")
         self.assertEqual(escala_actual(mapa_nodos.VEL_MAX), "#93c5fdff")
 
+    def test_popup_muestra_la_velocidad_seleccionada(self):
+        fila = {
+            "barrio": "Centro", "punto_referencia": "Prueba",
+            "lat": 10.4, "lon": -75.5,
+            "vel_actual": 20.0, "vel_libre": 60.0, "ratio": 1 / 3, "n": 1,
+        }
+        clasificar = lambda valor: ("#000000", "Prueba")
+
+        circulacion = mapa_nodos.popup_html(
+            fila, clasificar, metrica="vel_actual"
+        )
+        flujo_libre = mapa_nodos.popup_html(
+            fila, clasificar, metrica="vel_libre"
+        )
+
+        self.assertIn("Velocidad de circulación promedio", circulacion)
+        self.assertIn("20.0 km/h", circulacion)
+        self.assertNotIn("60.0 km/h", circulacion)
+        self.assertIn("Velocidad de flujo libre promedio", flujo_libre)
+        self.assertIn("60.0 km/h", flujo_libre)
+        self.assertNotIn("20.0 km/h", flujo_libre)
+
 
 if __name__ == "__main__":
     unittest.main()

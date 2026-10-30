@@ -533,7 +533,8 @@ def texto_html(valor) -> str:
     return html.escape(str(valor).strip())
 
 
-def popup_html(fila: dict, clasificar_ratio, en_vivo: bool = False) -> str:
+def popup_html(fila: dict, clasificar_ratio, en_vivo: bool = False,
+               metrica: str = "vel_actual") -> str:
     """HTML de la ventana emergente de un nodo (ultima ejecucion o promedios)."""
     foto = ""
     url = url_streetview(fila["lat"], fila["lon"])
@@ -549,13 +550,23 @@ def popup_html(fila: dict, clasificar_ratio, en_vivo: bool = False) -> str:
     ]
     if fila.get("n") and fila["n"] > 0:
         color, etiqueta = clasificar_ratio(fila["ratio"])
-        vel = fila["vel_actual"]
+        es_flujo_libre = metrica == "vel_libre"
+        vel = fila["vel_libre"] if es_flujo_libre else fila["vel_actual"]
         ratio = fila["ratio"]
         predicho = bool(fila.get("predicho", False))
+        if es_flujo_libre:
+            etiqueta_velocidad = (
+                "Velocidad de flujo libre" if en_vivo
+                else "Velocidad de flujo libre promedio"
+            )
+        else:
+            etiqueta_velocidad = (
+                "Velocidad predicha" if predicho
+                else "Velocidad de circulación" if en_vivo
+                else "Velocidad de circulación promedio"
+            )
         filas += [
-            ("Velocidad predicha" if predicho else
-             "Velocidad de circulación" if en_vivo else "Velocidad promedio",
-             f"{vel:.1f} km/h" if pd.notna(vel) else "—"),
+            (etiqueta_velocidad, f"{vel:.1f} km/h" if pd.notna(vel) else "—"),
             ("Índice de fluidez",
              f'<span class="np-punto" style="background:{color};"></span>'
              f'{ratio:.2f} · {etiqueta}' if pd.notna(ratio) else "—"),
@@ -798,7 +809,9 @@ def agregar_nodos(m: folium.Map, df: pd.DataFrame, metrica: str, escala,
             fill=True, fill_color="#ffffff" if estilo == "corredor" else color,
             fill_opacity=relleno,
             tooltip=f"{texto_html(fila.get('nombre_nodo'))} · {valor_txt}",
-            popup=folium.Popup(popup_html(fila, clasificar_ratio, en_vivo), max_width=340),
+            popup=folium.Popup(
+                popup_html(fila, clasificar_ratio, en_vivo, metrica), max_width=340
+            ),
         ).add_to(m)
 
 

@@ -46,6 +46,12 @@ ESCALA_FLUIDEZ = [
 
 DIAS = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"]
 TIPOS_DIA = ["Todos", "Días laborables (L–V)", "Fin de semana", "Quincena"] + DIAS
+VISTAS = (
+    "↗ Evolución mensual",
+    "▥ Comportamiento horario",
+    "▦ Mapa de calor",
+    "▭ Distribución horaria",
+)
 
 
 def _mascara_ok(df: pd.DataFrame) -> pd.Series:

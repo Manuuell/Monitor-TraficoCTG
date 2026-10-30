@@ -1958,27 +1958,25 @@ def render_analisis_temporal():
         with s4:
             st.metric("Nodos por ejecución", f"{nodos_promedio:.1f}")
 
-        vista_tendencia, vista_box, vista_calor, vista_hora = st.tabs(
-            [
-                "↗ Evolución mensual",
-                "▭ Distribución horaria",
-                "▦ Mapa de calor",
-                "▥ Comportamiento horario",
-            ]
+        vista_tendencia, vista_hora, vista_calor, vista_box = st.tabs(
+            analisis_temporal.VISTAS
         )
 
         with vista_hora:
-            # Una barra por corrida del cron (04:00 ... 00:00), con 05:30, 06:30... aparte
+            # Una posicion por corrida del cron (04:00 ... 00:00), con 05:30,
+            # 06:30... aparte. Los calculos no cambian; solo comparte el estilo
+            # de lineas y marcadores de Evolucion mensual.
             hora = analisis_temporal.resumen_por_corrida(serie)
             etiquetas_hora = hora["corrida"]
             custom = hora[["mediana", "p25", "p75", "ejecuciones", "nodos_promedio"]].to_numpy()
             fig_hora = go.Figure()
-            fig_hora.add_trace(go.Bar(
+            fig_hora.add_trace(go.Scatter(
                 x=etiquetas_hora,
                 y=hora["promedio"],
                 name="Promedio",
-                marker_color=SERIE_ACTUAL,
-                opacity=0.70,
+                mode="lines+markers",
+                line=dict(color=SERIE_ACTUAL, width=3),
+                marker=dict(size=8),
                 customdata=custom,
                 hovertemplate=(
                     "Hora: %{x}<br>Promedio: %{y:." + str(decimales) + "f} " + unidad
@@ -1994,8 +1992,8 @@ def render_analisis_temporal():
                 y=hora["mediana"],
                 name="Mediana",
                 mode="lines+markers",
-                line=dict(color=R_AZUL_OSC, width=3),
-                marker=dict(size=7, color=R_MENTA_OSC),
+                line=dict(color=R_MENTA_OSC, width=2, dash="dash"),
+                marker=dict(size=6),
                 hovertemplate=(
                     "Hora: %{x}<br>Mediana: %{y:." + str(decimales) + "f} "
                     + unidad + "<extra></extra>"
@@ -2005,7 +2003,6 @@ def render_analisis_temporal():
                 xaxis_title="Hora del día",
                 yaxis_title=f"{metrica_label}",
                 legend=dict(orientation="h", y=1.12),
-                bargap=0.22,
             )
             fig_hora.update_xaxes(type="category")
             if columna == "velocidad_ratio":
@@ -2013,8 +2010,8 @@ def render_analisis_temporal():
             fig_hora = plotly_base(fig_hora, height=430)
             mostrar_grafica(fig_hora, "temporal_hora")
             st.caption(
-                "Las barras muestran el promedio entre ejecuciones; la línea muestra la "
-                "mediana, menos sensible a valores extremos."
+                "La línea continua muestra el promedio entre ejecuciones; la línea "
+                "discontinua muestra la mediana, menos sensible a valores extremos."
             )
 
         with vista_calor:

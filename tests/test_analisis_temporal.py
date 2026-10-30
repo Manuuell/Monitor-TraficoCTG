@@ -121,6 +121,17 @@ class AnalisisTemporalTest(unittest.TestCase):
             ["Velocidad de circulación (km/h)", "Velocidad de flujo libre (km/h)", "Índice de fluidez (0–1)"],
         )
 
+    def test_orden_de_las_vistas_temporales(self):
+        self.assertEqual(
+            temporal.VISTAS,
+            (
+                "↗ Evolución mensual",
+                "▥ Comportamiento horario",
+                "▦ Mapa de calor",
+                "▭ Distribución horaria",
+            ),
+        )
+
     def test_escalas_visuales_avanzan_de_oscuro_a_claro(self):
         self.assertEqual(temporal.ESCALA_VELOCIDAD, "Blues_r")
         posiciones = [posicion for posicion, _ in temporal.ESCALA_FLUIDEZ]

@@ -2039,8 +2039,9 @@ def render_analisis_temporal():
                     zmin, zmax = 0, 1
                     marcas_barra = dict(
                         tickmode="array",
-                        tickvals=[0, 0.25, 0.50, 0.75, 1],
-                        ticktext=["0 · Congestión", "0.25", "0.50", "0.75", "1 · Fluidez"],
+                        tickvals=[0, 0.60, 0.75, 0.90, 1],
+                        ticktext=["0", "0.60", "0.75", "0.90", "1"],
+                        ticklabelposition="outside bottom",
                     )
                 else:
                     # Velocidad de circulación y flujo libre con la misma escala: el minimo
@@ -2094,8 +2095,8 @@ def render_analisis_temporal():
                     f"({zmin:.0f}–{zmax:.0f} km/h) para poder compararlas: azul oscuro "
                     f"indica menor velocidad y azul claro, mayor velocidad."
                     if columna in analisis_temporal.VELOCIDADES
-                    else " Los tonos oscuros indican mayor congestión; el verde claro y "
-                    "suave indica mayor fluidez."
+                    else " La escala avanza continuamente desde rojo oscuro hasta amarillo "
+                    "anaranjado, con referencias en 0, 0.60, 0.75, 0.90 y 1."
                 )
                 st.caption(
                     "Cada celda es el promedio de las ejecuciones observadas en esa "

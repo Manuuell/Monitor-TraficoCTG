@@ -127,13 +127,16 @@ class AnalisisTemporalTest(unittest.TestCase):
         self.assertEqual(posiciones, sorted(posiciones))
         self.assertEqual(posiciones[0], 0)
         self.assertEqual(posiciones[-1], 1)
+        self.assertTrue({0.60, 0.75, 0.90}.issubset(posiciones))
         self.assertEqual(temporal.ESCALA_FLUIDEZ[0][1], "#7F1D1D")
-        self.assertEqual(temporal.ESCALA_FLUIDEZ[-1][1], "#DCFCE7")
+        self.assertEqual(temporal.ESCALA_FLUIDEZ[-1][1], "#FBBF24")
         luminosidades = []
         for _, hexadecimal in temporal.ESCALA_FLUIDEZ:
             rojo, verde, azul = (
                 int(hexadecimal[inicio:inicio + 2], 16) for inicio in (1, 3, 5)
             )
+            self.assertGreater(rojo, verde)
+            self.assertGreaterEqual(verde, azul)
             luminosidades.append(0.2126 * rojo + 0.7152 * verde + 0.0722 * azul)
         self.assertTrue(all(
             anterior < siguiente

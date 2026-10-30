@@ -62,6 +62,31 @@ class PrediccionTraficoTest(unittest.TestCase):
         self.assertTrue((prediccion["ratio"] > 0).all())
         self.assertGreaterEqual(modelo["filas"], 500)
 
+    def test_ventana_no_usa_datos_posteriores_a_la_prediccion(self):
+        fechas = pd.date_range("2026-01-01", "2026-07-01", freq="12h")
+        historico = pd.DataFrame({
+            "consultation_time": fechas,
+            "marca": range(len(fechas)),
+        })
+        ventana, periodo = prediccion_trafico.seleccionar_ventana_entrenamiento(
+            historico, date(2026, 4, 15), "12:00")
+        objetivo = pd.Timestamp("2026-04-15 12:00")
+        self.assertTrue((ventana["consultation_time"] < objetivo).all())
+        self.assertGreaterEqual(
+            ventana["consultation_time"].min(), objetivo - pd.DateOffset(months=3))
+        self.assertFalse(periodo["usa_ultimos_disponibles"])
+
+    def test_fecha_futura_usa_los_tres_meses_reales_mas_recientes(self):
+        fechas = pd.date_range("2026-01-01", "2026-07-01", freq="12h")
+        historico = pd.DataFrame({"consultation_time": fechas})
+        ventana, periodo = prediccion_trafico.seleccionar_ventana_entrenamiento(
+            historico, date(2027, 1, 1), "17:00")
+        ultima = fechas.max()
+        self.assertEqual(ventana["consultation_time"].max(), ultima)
+        self.assertGreaterEqual(
+            ventana["consultation_time"].min(), ultima - pd.DateOffset(months=3))
+        self.assertTrue(periodo["usa_ultimos_disponibles"])
+
 
 if __name__ == "__main__":
     unittest.main()

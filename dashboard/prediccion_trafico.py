@@ -42,6 +42,48 @@ def _features(ids, timestamps, vel_libre, lat, lon) -> pd.DataFrame:
     })
 
 
+def seleccionar_ventana_entrenamiento(historico: pd.DataFrame, fecha,
+                                       corrida: str) -> tuple:
+    """Selecciona solo los tres meses reales anteriores a la prediccion.
+
+    Si el instante solicitado esta despues del ultimo dato real, la ventana
+    termina en esa ultima medicion disponible. Nunca incluye observaciones
+    posteriores al instante que se desea predecir.
+    """
+    if historico.empty or "consultation_time" not in historico.columns:
+        raise ValueError("No hay datos históricos para construir la ventana de entrenamiento.")
+    hora, minuto = map(int, corrida.split(":"))
+    objetivo = pd.Timestamp(datetime.combine(fecha, time(hora, minuto)))
+    df = historico.copy()
+    df["consultation_time"] = pd.to_datetime(df["consultation_time"], errors="coerce")
+    df = df[df["consultation_time"].notna()].copy()
+    if df.empty:
+        raise ValueError("El histórico no contiene fechas válidas para entrenar.")
+
+    ultima_real = df["consultation_time"].max()
+    usa_ultimos_disponibles = objetivo > ultima_real
+    if usa_ultimos_disponibles:
+        fin = ultima_real
+        inicio = fin - pd.DateOffset(months=3)
+        mascara = df["consultation_time"].between(inicio, fin, inclusive="both")
+    else:
+        fin = objetivo
+        inicio = objetivo - pd.DateOffset(months=3)
+        mascara = ((df["consultation_time"] >= inicio)
+                   & (df["consultation_time"] < objetivo))
+
+    ventana = df.loc[mascara].copy()
+    if ventana.empty:
+        raise ValueError("No hay mediciones reales en los tres meses anteriores.")
+    return ventana, {
+        "objetivo": objetivo,
+        "inicio": ventana["consultation_time"].min(),
+        "fin": ventana["consultation_time"].max(),
+        "ultima_real_disponible": ultima_real,
+        "usa_ultimos_disponibles": usa_ultimos_disponibles,
+    }
+
+
 def preparar_entrenamiento(historico: pd.DataFrame, catalogo: pd.DataFrame) -> tuple:
     """Limpia el historico y devuelve X, y y la referencia fija por nodo."""
     requeridas = {"id_nodo", "consultation_time", "currentSpeed", "freeFlowSpeed"}

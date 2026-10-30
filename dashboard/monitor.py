@@ -1448,19 +1448,22 @@ def indicadores_simulacion(fecha, corrida: str, catalogo: pd.DataFrame) -> tuple
             }
 
     historico, fuente_modelo = cargar_historico_random_forest()
-    tiempos = pd.to_datetime(historico.get("consultation_time"), errors="coerce")
+    ventana_rf, periodo_rf = prediccion_trafico.seleccionar_ventana_entrenamiento(
+        historico, fecha, corrida)
+    tiempos = pd.to_datetime(ventana_rf.get("consultation_time"), errors="coerce")
     version = (
-        len(historico),
+        len(ventana_rf),
+        tiempos.min().isoformat() if tiempos is not None and tiempos.notna().any() else "sin-inicio",
         tiempos.max().isoformat() if tiempos is not None and tiempos.notna().any() else "sin-fecha",
     )
-    modelo = entrenar_random_forest_cache(version, historico, catalogo)
+    modelo = entrenar_random_forest_cache(version, ventana_rf, catalogo)
     predichos = prediccion_trafico.predecir_velocidades(
         modelo, catalogo, fecha, corrida)
     detalle = ("Fecha u hora futura" if instante > ahora
                else "No existe una medición exacta para esta corrida")
     return predichos, {
         "tipo": "predicho", "fuente": f"Random Forest · {fuente_modelo}",
-        "detalle": detalle, "modelo": modelo,
+        "detalle": detalle, "modelo": modelo, "periodo_modelo": periodo_rf,
     }
 
 
@@ -2907,10 +2910,13 @@ with tab_simulacion:
                 )
             elif estado_sim["tipo"] == "predicho":
                 modelo_sim = estado_sim["modelo"]
+                periodo_sim = estado_sim["periodo_modelo"]
                 st.info(
                     f"Predicción Random Forest · {fecha_hora_sim} · "
                     f"{estado_sim['detalle']} · Entrenado con "
-                    f"{modelo_sim['filas']:,} mediciones"
+                    f"{modelo_sim['filas']:,} mediciones reales entre "
+                    f"{periodo_sim['inicio'].strftime('%d/%m/%Y %H:%M')} y "
+                    f"{periodo_sim['fin'].strftime('%d/%m/%Y %H:%M')}"
                 )
             else:
                 st.error(

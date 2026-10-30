@@ -24,7 +24,11 @@ class PrediccionTraficoTest(unittest.TestCase):
             {"id_nodo": "C", "lat": 10.42, "lon": -75.48},
         ])
         filas = []
-        corridas = pd.date_range("2026-09-20 04:00", periods=280, freq="90min")
+        corridas = [
+            dia + pd.Timedelta(hours=hora)
+            for dia in pd.date_range("2026-09-20", periods=60, freq="D")
+            for hora in (4, 7, 17, 23)
+        ]
         for instante in corridas:
             for indice, nodo in enumerate("ABC"):
                 libre = 50 + indice * 5
@@ -61,6 +65,18 @@ class PrediccionTraficoTest(unittest.TestCase):
         self.assertTrue((prediccion["vel_actual"] > 0).all())
         self.assertTrue((prediccion["ratio"] > 0).all())
         self.assertGreaterEqual(modelo["filas"], 500)
+        esperadas = pd.Series([38.0, 43.0, 48.0])
+        self.assertLess((prediccion["vel_actual"].reset_index(drop=True) - esperadas).abs().mean(), 3)
+
+    def test_entrenamiento_no_recorta_las_mediciones_de_tres_meses(self):
+        repeticiones = 201
+        historico_amplio = pd.concat(
+            [self.historico] * repeticiones, ignore_index=True)
+        X, y, _ = prediccion_trafico.preparar_entrenamiento(
+            historico_amplio, self.catalogo)
+        self.assertEqual(len(X), len(historico_amplio))
+        self.assertEqual(len(y), len(historico_amplio))
+        self.assertGreater(len(X), 60_000)
 
     def test_ventana_no_usa_datos_posteriores_a_la_prediccion(self):
         fechas = pd.date_range("2026-01-01", "2026-07-01", freq="12h")

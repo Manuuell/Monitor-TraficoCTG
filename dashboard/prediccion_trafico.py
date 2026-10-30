@@ -11,7 +11,10 @@ from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
 
 
-MAX_FILAS_ENTRENAMIENTO = 60000
+# La validacion contra la ultima corrida real disponible mostro que el promedio
+# nodo-corrida es una base mucho mas estable. El bosque aporta el ajuste por
+# fecha y dia de semana sin separar la prediccion del comportamiento observado.
+PESO_RANDOM_FOREST = 0.25
 _NUMERICAS = [
     "hora_sin", "hora_cos", "semana_sin", "semana_cos",
     "anio_sin", "anio_cos", "fin_semana", "vel_libre", "lat", "lon",
@@ -120,14 +123,34 @@ def preparar_entrenamiento(historico: pd.DataFrame, catalogo: pd.DataFrame) -> t
         .agg(vel_libre=("freeFlowSpeed", "median"),
              lat=("lat", "median"), lon=("lon", "median"))
     )
-    if len(df) > MAX_FILAS_ENTRENAMIENTO:
-        df = df.sample(MAX_FILAS_ENTRENAMIENTO, random_state=42)
     X = _features(
         df["id_nodo"], df["consultation_time"], df["freeFlowSpeed"],
         df["lat"], df["lon"],
     )
     y = df["currentSpeed"].astype(float).to_numpy()
     return X, y, referencia
+
+
+def _promedios_por_corrida(historico: pd.DataFrame) -> pd.DataFrame:
+    """Velocidad real promedio por nodo y hora, dentro de la ventana permitida."""
+    df = historico.copy()
+    df["consultation_time"] = pd.to_datetime(df["consultation_time"], errors="coerce")
+    df["currentSpeed"] = pd.to_numeric(df["currentSpeed"], errors="coerce")
+    mascara = df["consultation_time"].notna() & df["currentSpeed"].gt(0)
+    if "ok" in df.columns:
+        mascara &= _mascara_ok(df["ok"])
+    df = df.loc[mascara].copy()
+    df["id_nodo"] = df["id_nodo"].astype(str)
+    df["corrida"] = df["consultation_time"].dt.strftime("%H:%M")
+    por_corrida = (
+        df.groupby(["id_nodo", "corrida"], as_index=False)
+        .agg(vel_promedio_corrida=("currentSpeed", "mean"))
+    )
+    por_nodo = (
+        df.groupby("id_nodo", as_index=False)
+        .agg(vel_promedio_nodo=("currentSpeed", "mean"))
+    )
+    return por_corrida.merge(por_nodo, on="id_nodo", how="left")
 
 
 def entrenar_random_forest(historico: pd.DataFrame, catalogo: pd.DataFrame) -> dict:
@@ -151,6 +174,8 @@ def entrenar_random_forest(historico: pd.DataFrame, catalogo: pd.DataFrame) -> d
     return {
         "pipeline": pipeline,
         "referencia": referencia,
+        "promedios_corrida": _promedios_por_corrida(historico),
+        "peso_random_forest": PESO_RANDOM_FOREST,
         "filas": len(X),
         "entrenado_desde": fechas.min() if not fechas.empty else None,
         "entrenado_hasta": fechas.max() if not fechas.empty else None,
@@ -175,7 +200,19 @@ def predecir_velocidades(modelo: dict, catalogo: pd.DataFrame,
         base["id_nodo"], [instante] * len(base), base["vel_libre"],
         base["lat"], base["lon"],
     )
-    pred = modelo["pipeline"].predict(X)
+    pred_bosque = modelo["pipeline"].predict(X)
+    promedios = modelo["promedios_corrida"]
+    base = base.merge(
+        promedios[promedios["corrida"] == corrida].drop(columns="corrida"),
+        on="id_nodo", how="left",
+    )
+    base_historica = base["vel_promedio_corrida"].fillna(base["vel_promedio_nodo"])
+    peso_bosque = float(modelo.get("peso_random_forest", PESO_RANDOM_FOREST))
+    pred = np.where(
+        base_historica.notna(),
+        peso_bosque * pred_bosque + (1 - peso_bosque) * base_historica,
+        pred_bosque,
+    )
     limite_superior = np.maximum(base["vel_libre"].to_numpy() * 1.15, 20.0)
     pred = np.clip(pred, 1.0, limite_superior)
     salida = pd.DataFrame({

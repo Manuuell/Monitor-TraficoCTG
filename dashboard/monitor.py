@@ -1403,17 +1403,71 @@ def promedios_mapa(fecha_ini, fecha_fin, desde, hasta, mes, dia_semana,
     return mapa_nodos.promedios_por_nodo_df(df, **consulta), "Google Sheets"
 
 
+def _normalizar_historico_random_forest(datos: pd.DataFrame) -> pd.DataFrame:
+    """Normaliza y elimina duplicados antes de entrenar la prediccion."""
+    if datos.empty or "consultation_time" not in datos.columns:
+        return pd.DataFrame()
+    datos = datos.copy()
+    datos["consultation_time"] = pd.to_datetime(
+        datos["consultation_time"], errors="coerce")
+    datos = datos[datos["consultation_time"].notna()].copy()
+    claves = ["id_nodo", "consultation_time"]
+    if "vps_id" in datos.columns:
+        claves.append("vps_id")
+    return datos.drop_duplicates(claves, keep="last")
+
+
+def _postgresql_configurado() -> bool:
+    """Evita intentar una conexion local inexistente cuando se usan Sheets."""
+    return bool(
+        getattr(config, "FUENTE_DASHBOARD", "sheets") == "db"
+        or getattr(config, "DB_PASSWORD", "")
+        or getattr(config, "GUARDAR_EN_DB", False)
+    )
+
+
 @st.cache_data(ttl=3600, show_spinner=False)
-def cargar_historico_random_forest() -> tuple:
-    """Historico de entrenamiento; prioriza los CSV locales disponibles."""
-    local = cargar_historico_local()
-    if len(local) >= 500:
-        return local, "CSV local"
-    fecha_min, fecha_max, _ = rango_fechas_historico()
-    if fecha_min is None:
-        return local, "CSV local"
-    externo, fuente = cargar_historico(fecha_min, fecha_max)
-    return (externo, fuente) if len(externo) >= 500 else (local, "CSV local")
+def cargar_historico_random_forest(fecha, corrida: str) -> tuple:
+    """Carga tres meses desde PostgreSQL o Sheets; CSV es solo respaldo local.
+
+    En PostgreSQL se consulta unicamente el rango necesario. Google Sheets ya
+    lee todas las partes rotadas del historico y luego la seleccion exacta de
+    tres meses se realiza en ``seleccionar_ventana_entrenamiento``.
+    """
+    hora, minuto = map(int, corrida.split(":"))
+    objetivo = pd.Timestamp(datetime.combine(fecha, datetime.min.time())).replace(
+        hour=hora, minute=minuto)
+
+    if _postgresql_configurado():
+        try:
+            import db  # import diferido
+
+            _, ultima_real = db.rango_fechas()
+            if ultima_real is not None:
+                ultima_real = pd.Timestamp(ultima_real)
+                if ultima_real.tzinfo is not None:
+                    ultima_real = ultima_real.tz_localize(None)
+                fin = min(objetivo, ultima_real)
+                inicio = fin - pd.DateOffset(months=3)
+                datos_db = _normalizar_historico_random_forest(
+                    db.leer_rango(inicio.date(), fin.date()))
+                if not datos_db.empty:
+                    return datos_db, "PostgreSQL"
+        except Exception as error:
+            print(f"  [Predicción] PostgreSQL no disponible, usando Sheets: {error}")
+
+    try:
+        datos_sheets = _normalizar_historico_random_forest(
+            google_upload.leer_sheet(n_dias=3650))
+        if not datos_sheets.empty:
+            return datos_sheets, "Google Sheets"
+    except Exception as error:
+        print(f"  [Predicción] Google Sheets no disponible: {error}")
+
+    local = _normalizar_historico_random_forest(cargar_historico_local())
+    if not local.empty:
+        return local, "CSV local (respaldo)"
+    return pd.DataFrame(), "Sin histórico"
 
 
 @st.cache_resource(show_spinner=False)
@@ -1424,13 +1478,13 @@ def entrenar_random_forest_cache(version, _historico, _catalogo):
 
 @st.cache_data(ttl=300, show_spinner=False)
 def datos_reales_simulacion(fecha, corrida: str) -> tuple:
-    """Busca la corrida exacta primero en CSV y luego en la fuente configurada."""
-    local = cargar_historico_local(fecha, fecha)
-    resumen = prediccion_trafico.resumir_corrida_real(local, fecha, corrida)
-    if not resumen.empty:
-        return resumen, "CSV local"
+    """Busca la corrida en la fuente del servidor; el CSV es solo respaldo."""
     externo, fuente = cargar_historico(fecha, fecha)
-    return prediccion_trafico.resumir_corrida_real(externo, fecha, corrida), fuente
+    resumen = prediccion_trafico.resumir_corrida_real(externo, fecha, corrida)
+    if not resumen.empty:
+        return resumen, fuente
+    local = cargar_historico_local(fecha, fecha)
+    return prediccion_trafico.resumir_corrida_real(local, fecha, corrida), "CSV local (respaldo)"
 
 
 def indicadores_simulacion(fecha, corrida: str, catalogo: pd.DataFrame) -> tuple:
@@ -1447,7 +1501,7 @@ def indicadores_simulacion(fecha, corrida: str, catalogo: pd.DataFrame) -> tuple
                 "detalle": "Mediciones registradas",
             }
 
-    historico, fuente_modelo = cargar_historico_random_forest()
+    historico, fuente_modelo = cargar_historico_random_forest(fecha, corrida)
     ventana_rf, periodo_rf = prediccion_trafico.seleccionar_ventana_entrenamiento(
         historico, fecha, corrida)
     tiempos = pd.to_datetime(ventana_rf.get("consultation_time"), errors="coerce")
@@ -2911,12 +2965,16 @@ with tab_simulacion:
             elif estado_sim["tipo"] == "predicho":
                 modelo_sim = estado_sim["modelo"]
                 periodo_sim = estado_sim["periodo_modelo"]
+                dias_sim = (
+                    periodo_sim["fin"].normalize() - periodo_sim["inicio"].normalize()
+                ).days + 1
                 st.info(
                     f"Predicción Random Forest · {fecha_hora_sim} · "
                     f"{estado_sim['detalle']} · Entrenado con "
                     f"{modelo_sim['filas']:,} mediciones reales entre "
                     f"{periodo_sim['inicio'].strftime('%d/%m/%Y %H:%M')} y "
-                    f"{periodo_sim['fin'].strftime('%d/%m/%Y %H:%M')}"
+                    f"{periodo_sim['fin'].strftime('%d/%m/%Y %H:%M')} · "
+                    f"{dias_sim} días reales disponibles de una ventana máxima de 3 meses"
                 )
             else:
                 st.error(

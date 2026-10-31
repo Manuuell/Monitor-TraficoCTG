@@ -1572,6 +1572,7 @@ def render_analisis_nodo():
     fecha_max_selector = max(max_fecha, fecha_fin_default)
     iniciales = {
         f"{prefijo}_id": ids_nodos[0],
+        f"{prefijo}_ids_adicionales": [],
         f"{prefijo}_fecha_ini": min_fecha,
         f"{prefijo}_fecha_fin": fecha_fin_default,
         f"{prefijo}_tipo_dia": analisis_nodo.TIPOS_DIA[0],
@@ -1592,6 +1593,21 @@ def render_analisis_nodo():
             ids_nodos,
             key=f"{prefijo}_id",
             format_func=lambda valor: nombres.get(valor, valor),
+        )
+        clave_adicionales = f"{prefijo}_ids_adicionales"
+        adicionales_validos = [
+            valor for valor in st.session_state[clave_adicionales]
+            if valor in nombres and valor != id_nodo
+        ]
+        if st.session_state[clave_adicionales] != adicionales_validos:
+            st.session_state[clave_adicionales] = adicionales_validos
+        ids_adicionales = st.multiselect(
+            "Añadir más nodos:",
+            [valor for valor in ids_nodos if valor != id_nodo],
+            key=clave_adicionales,
+            format_func=lambda valor: nombres.get(valor, valor),
+            placeholder="Comparar con otros puntos",
+            help="Los nodos añadidos se comparan en las mismas fechas y tipo de día.",
         )
         st.markdown(
             '<div class="grupo-filtro-label">Seleccionar rango de fechas</div>',
@@ -1631,50 +1647,99 @@ def render_analisis_nodo():
             st.info("Ajusta el rango de fechas para ver el análisis del nodo.")
         return
 
-    with st.spinner("Calculando análisis del nodo..."):
-        df_nodo, _ = cargar_historico_nodo(id_nodo, fecha_ini, fecha_fin)
-        ejecuciones = analisis_nodo.preparar_mediciones(
-            df_nodo,
-            id_nodo,
-            fecha_ini=fecha_ini,
-            fecha_fin=fecha_fin,
-            tipo_dia=tipo_dia,
-        )
+    ids_seleccionados = list(dict.fromkeys([id_nodo, *ids_adicionales]))
+    ejecuciones_por_nodo = {}
+    sin_datos = []
+    with st.spinner("Calculando análisis de los nodos..."):
+        for id_seleccionado in ids_seleccionados:
+            df_nodo, _ = cargar_historico_nodo(
+                id_seleccionado, fecha_ini, fecha_fin
+            )
+            preparado = analisis_nodo.preparar_mediciones(
+                df_nodo,
+                id_seleccionado,
+                fecha_ini=fecha_ini,
+                fecha_fin=fecha_fin,
+                tipo_dia=tipo_dia,
+            )
+            if preparado.empty:
+                sin_datos.append(id_seleccionado)
+                continue
+            preparado = preparado.copy()
+            preparado["id_nodo"] = id_seleccionado
+            preparado["nombre_nodo"] = nombres.get(id_seleccionado, id_seleccionado)
+            ejecuciones_por_nodo[id_seleccionado] = preparado
+
+    ejecuciones = (
+        pd.concat(ejecuciones_por_nodo.values(), ignore_index=True)
+        if ejecuciones_por_nodo else pd.DataFrame()
+    )
 
     with col_graficos:
-        nombre_nodo = html.escape(str(nombres.get(id_nodo, id_nodo)))
+        nombres_seleccionados = [
+            nombres.get(valor, valor) for valor in ids_seleccionados
+        ]
+        nombre_nodo = html.escape(" · ".join(map(str, nombres_seleccionados)))
         st.markdown(
             f"<div style='margin:0 0 14px 2px;'>"
             f"<div style='color:{UTB_WHITE};font-size:20px;font-weight:800;'>{nombre_nodo}</div>"
-            f"<div style='color:{UTB_GRAY};font-size:12px;'>Nodo {html.escape(str(id_nodo))} · "
+            f"<div style='color:{UTB_GRAY};font-size:12px;'>"
+            f"{len(ids_seleccionados)} nodo(s) seleccionado(s) · "
             f"{fecha_ini.strftime('%d/%m/%Y')}–{fecha_fin.strftime('%d/%m/%Y')}</div></div>",
             unsafe_allow_html=True,
         )
         if ejecuciones.empty:
-            st.info("No hay mediciones válidas para este nodo con los filtros seleccionados.")
+            st.info("No hay mediciones válidas para los nodos con los filtros seleccionados.")
             return
+        if sin_datos:
+            st.caption(
+                "Sin mediciones para: "
+                + ", ".join(nombres.get(valor, valor) for valor in sin_datos)
+            )
 
         ratio_promedio = ejecuciones["velocidad_ratio"].mean()
         velocidad_promedio = ejecuciones["currentSpeed"].mean()
         flujo_libre_promedio = ejecuciones["freeFlowSpeed"].mean()
         estado = clasificar_ratio(ratio_promedio)[1]
-        m1, m2 = st.columns(2)
+        m1, m2, m3, m4 = st.columns(4)
         with m1:
             st.metric("Índice de fluidez", f"{ratio_promedio:.3f}", estado)
         with m2:
             st.metric("Velocidad de circulación", f"{velocidad_promedio:.1f} km/h")
-        m3, m4 = st.columns(2)
         with m3:
             st.metric("Velocidad de flujo libre", f"{flujo_libre_promedio:.1f} km/h")
         with m4:
-            st.metric("Ejecuciones válidas", f"{len(ejecuciones):,}")
+            st.metric("Mediciones válidas", f"{len(ejecuciones):,}")
 
-        diaria = analisis_nodo.serie_diaria(ejecuciones)
-        hora = analisis_nodo.resumen_por_hora(ejecuciones)
-        # Solo horas con corridas y en orden de dia operativo (04:00 ... 00:00):
-        # el eje no muestra la franja vacia de 01 a 03
-        horas = pd.DataFrame({"hora": horario.HORAS}).merge(hora, on="hora", how="left")
-        horas["etiqueta"] = horas["hora"].map(lambda h: f"{h:02d}:00")
+        paleta_nodos = [
+            SERIE_ACTUAL, R_MENTA_OSC, COLOR_MODERADO, "#7c3aed",
+            COLOR_LENTO, "#0891b2", "#db2777", "#65a30d",
+        ]
+        color_nodo = {
+            valor: paleta_nodos[indice % len(paleta_nodos)]
+            for indice, valor in enumerate(ejecuciones_por_nodo)
+        }
+        series_diarias = []
+        resumenes_hora = []
+        for valor, medidas in ejecuciones_por_nodo.items():
+            nombre = nombres.get(valor, valor)
+            diaria_nodo = analisis_nodo.serie_diaria(medidas)
+            diaria_nodo["id_nodo"] = valor
+            diaria_nodo["nombre_nodo"] = nombre
+            series_diarias.append(diaria_nodo)
+
+            hora_nodo = analisis_nodo.resumen_por_hora(medidas)
+            # Solo horas con corridas y en orden de dia operativo
+            hora_nodo = pd.DataFrame({"hora": horario.HORAS}).merge(
+                hora_nodo, on="hora", how="left"
+            )
+            hora_nodo["etiqueta"] = hora_nodo["hora"].map(lambda h: f"{h:02d}:00")
+            hora_nodo["id_nodo"] = valor
+            hora_nodo["nombre_nodo"] = nombre
+            resumenes_hora.append(hora_nodo)
+
+        diaria = pd.concat(series_diarias, ignore_index=True)
+        horas = pd.concat(resumenes_hora, ignore_index=True)
         distribucion = analisis_nodo.distribucion_congestion(
             ejecuciones,
             UMBRAL_FLUIDO,
@@ -1686,82 +1751,94 @@ def render_analisis_nodo():
         # las horas con corridas.
         ticks_hora = [f"{h:02d}:00" for h in horario.HORAS if horario.orden_hora(h) % 240 == 0]
         eje_horas = dict(
-            type="category", categoryorder="array", categoryarray=list(horas["etiqueta"]),
+            type="category", categoryorder="array",
+            categoryarray=[f"{h:02d}:00" for h in horario.HORAS],
             tickmode="array", tickvals=ticks_hora, ticktext=ticks_hora,
         )
 
-        fila_1a, fila_1b = st.columns(2, gap="medium")
-        with fila_1a, st.container(border=True):
+        tab_serie, tab_patron, tab_velocidad, tab_distribucion = st.tabs([
+            "Serie temporal", "Patrón horario", "Velocidades por hora",
+            "Distribución de congestión",
+        ])
+
+        with tab_serie, st.container(border=True):
             st.markdown(
                 f"<div style='border-top:4px solid {SERIE_ACTUAL};padding-top:9px;'>"
                 f"<b style='color:{R_AZUL_OSC};'>Serie temporal</b><br>"
                 f"<span style='color:{UTB_GRAY};font-size:12px;'>Índice de fluidez por fecha</span></div>",
                 unsafe_allow_html=True,
             )
-            fig_serie = go.Figure(go.Scatter(
-                x=diaria["fecha"],
-                y=diaria["ratio_promedio"],
-                mode="lines+markers",
-                name="Índice promedio",
-                line=dict(color=SERIE_ACTUAL, width=2.5),
-                marker=dict(size=5, color=R_MENTA_OSC),
-                customdata=diaria[["ratio_mediana", "ejecuciones"]].to_numpy(),
-                connectgaps=False,
-                hovertemplate=(
-                    "Fecha: %{x|%d/%m/%Y}<br>Índice promedio: %{y:.3f}"
-                    "<br>Mediana: %{customdata[0]:.3f}"
-                    "<br>Ejecuciones: %{customdata[1]:.0f}<extra></extra>"
-                ),
-            ))
+            fig_serie = go.Figure()
+            for valor, datos_nodo in diaria.groupby("id_nodo", sort=False):
+                fig_serie.add_trace(go.Scatter(
+                    x=datos_nodo["fecha"],
+                    y=datos_nodo["ratio_promedio"],
+                    mode="lines+markers",
+                    name=nombres.get(valor, valor),
+                    line=dict(color=color_nodo[valor], width=2.8),
+                    marker=dict(size=6, color=color_nodo[valor]),
+                    customdata=datos_nodo[["ratio_mediana", "ejecuciones"]].to_numpy(),
+                    connectgaps=False,
+                    hovertemplate=(
+                        "Nodo: %{fullData.name}<br>Fecha: %{x|%d/%m/%Y}"
+                        "<br>Índice promedio: %{y:.3f}"
+                        "<br>Mediana: %{customdata[0]:.3f}"
+                        "<br>Ejecuciones: %{customdata[1]:.0f}<extra></extra>"
+                    ),
+                ))
             fig_serie.update_layout(
-                xaxis_title="Meses",
+                xaxis_title="Fecha",
                 yaxis_title="Índice de fluidez",
-                showlegend=False,
+                showlegend=len(ejecuciones_por_nodo) > 1,
+                legend=dict(orientation="h", y=1.10),
             )
             fig_serie.update_yaxes(
                 range=[0, max(1.05, float(diaria["ratio_promedio"].max()) * 1.08)]
             )
-            fig_serie = plotly_base(fig_serie, height=330)
+            fig_serie = plotly_base(fig_serie, height=470)
             mostrar_grafica(fig_serie, "nodo_serie")
             st.caption("Cada punto es el promedio de las ejecuciones válidas de un día.")
 
-        with fila_1b, st.container(border=True):
+        with tab_patron, st.container(border=True):
             st.markdown(
                 f"<div style='border-top:4px solid {R_MENTA_OSC};padding-top:9px;'>"
                 f"<b style='color:{R_AZUL_OSC};'>Patrón horario</b><br>"
                 f"<span style='color:{UTB_GRAY};font-size:12px;'>Índice de fluidez por hora</span></div>",
                 unsafe_allow_html=True,
             )
-            fig_patron = go.Figure(go.Scatter(
-                x=horas["etiqueta"],
-                y=horas["ratio_promedio"],
-                mode="lines+markers",
-                name="Índice promedio",
-                line=dict(color=R_MENTA_OSC, width=3),
-                marker=dict(size=7, color=SERIE_ACTUAL),
-                customdata=horas[["ratio_mediana", "ejecuciones"]].fillna(0).to_numpy(),
-                connectgaps=False,
-                hovertemplate=(
-                    "Hora: %{x}<br>Índice promedio: %{y:.3f}"
-                    "<br>Mediana: %{customdata[0]:.3f}"
-                    "<br>Ejecuciones: %{customdata[1]:.0f}<extra></extra>"
-                ),
-            ))
+            fig_patron = go.Figure()
+            for valor, datos_nodo in horas.groupby("id_nodo", sort=False):
+                fig_patron.add_trace(go.Scatter(
+                    x=datos_nodo["etiqueta"],
+                    y=datos_nodo["ratio_promedio"],
+                    mode="lines+markers",
+                    name=nombres.get(valor, valor),
+                    line=dict(color=color_nodo[valor], width=3),
+                    marker=dict(size=7, color=color_nodo[valor]),
+                    customdata=datos_nodo[["ratio_mediana", "ejecuciones"]].fillna(0).to_numpy(),
+                    connectgaps=False,
+                    hovertemplate=(
+                        "Nodo: %{fullData.name}<br>Hora: %{x}"
+                        "<br>Índice promedio: %{y:.3f}"
+                        "<br>Mediana: %{customdata[0]:.3f}"
+                        "<br>Ejecuciones: %{customdata[1]:.0f}<extra></extra>"
+                    ),
+                ))
             fig_patron.update_layout(
                 xaxis_title="Hora del día",
                 yaxis_title="Índice de fluidez",
-                showlegend=False,
+                showlegend=len(ejecuciones_por_nodo) > 1,
+                legend=dict(orientation="h", y=1.10),
             )
             fig_patron.update_xaxes(**eje_horas)
             fig_patron.update_yaxes(
-                range=[0, max(1.05, float(hora["ratio_promedio"].max()) * 1.08)]
+                range=[0, max(1.05, float(horas["ratio_promedio"].max()) * 1.08)]
             )
-            fig_patron = plotly_base(fig_patron, height=330)
+            fig_patron = plotly_base(fig_patron, height=470)
             mostrar_grafica(fig_patron, "nodo_patron")
             st.caption("Las horas sin mediciones quedan vacías: no se interpolan ni se estiman.")
 
-        fila_2a, fila_2b = st.columns(2, gap="medium")
-        with fila_2a, st.container(border=True):
+        with tab_velocidad, st.container(border=True):
             st.markdown(
                 f"<div style='border-top:4px solid {COLOR_MODERADO};padding-top:9px;'>"
                 f"<b style='color:{R_AZUL_OSC};'>Velocidad de circulación frente a flujo libre por hora</b><br>"
@@ -1769,41 +1846,53 @@ def render_analisis_nodo():
                 unsafe_allow_html=True,
             )
             fig_velocidad = go.Figure()
-            fig_velocidad.add_trace(go.Scatter(
-                x=horas["etiqueta"],
-                y=horas["flujo_libre_promedio"],
-                mode="lines+markers",
-                name="Flujo libre",
-                line=dict(color=SERIE_LIBRE, width=2, dash="dash"),
-                marker=dict(size=5),
-                connectgaps=False,
-                hovertemplate="Hora: %{x}<br>Flujo libre: %{y:.1f} km/h<extra></extra>",
-            ))
-            fig_velocidad.add_trace(go.Scatter(
-                x=horas["etiqueta"],
-                y=horas["velocidad_promedio"],
-                mode="lines+markers",
-                name="Velocidad de circulación",
-                line=dict(color=SERIE_ACTUAL, width=3),
-                marker=dict(size=6, color=COLOR_MODERADO),
-                connectgaps=False,
-                hovertemplate="Hora: %{x}<br>Velocidad de circulación: %{y:.1f} km/h<extra></extra>",
-            ))
+            for valor, datos_nodo in horas.groupby("id_nodo", sort=False):
+                nombre = nombres.get(valor, valor)
+                color = color_nodo[valor]
+                fig_velocidad.add_trace(go.Scatter(
+                    x=datos_nodo["etiqueta"],
+                    y=datos_nodo["flujo_libre_promedio"],
+                    mode="lines+markers",
+                    name=f"{nombre} · flujo libre",
+                    legendgroup=str(valor),
+                    line=dict(color=_rgba(color, 0.50), width=2, dash="dash"),
+                    marker=dict(size=5),
+                    connectgaps=False,
+                    hovertemplate=(
+                        "Nodo: " + html.escape(str(nombre))
+                        + "<br>Hora: %{x}<br>Flujo libre: %{y:.1f} km/h<extra></extra>"
+                    ),
+                ))
+                fig_velocidad.add_trace(go.Scatter(
+                    x=datos_nodo["etiqueta"],
+                    y=datos_nodo["velocidad_promedio"],
+                    mode="lines+markers",
+                    name=f"{nombre} · circulación",
+                    legendgroup=str(valor),
+                    line=dict(color=color, width=3),
+                    marker=dict(size=6, color=color),
+                    connectgaps=False,
+                    hovertemplate=(
+                        "Nodo: " + html.escape(str(nombre))
+                        + "<br>Hora: %{x}<br>Velocidad de circulación: "
+                        "%{y:.1f} km/h<extra></extra>"
+                    ),
+                ))
             fig_velocidad.update_layout(
                 xaxis_title="Hora del día",
                 yaxis_title="Velocidad (km/h)",
                 legend=dict(orientation="h", y=1.12),
             )
             fig_velocidad.update_xaxes(**eje_horas)
-            fig_velocidad = plotly_base(fig_velocidad, height=330)
+            fig_velocidad = plotly_base(fig_velocidad, height=470)
             mostrar_grafica(fig_velocidad, "nodo_velocidad")
             st.caption("Ambas líneas usan las mismas ejecuciones; los huecos indican falta de datos.")
 
-        with fila_2b, st.container(border=True):
+        with tab_distribucion, st.container(border=True):
             st.markdown(
                 f"<div style='border-top:4px solid {COLOR_CONGESTIONADO};padding-top:9px;'>"
                 f"<b style='color:{R_AZUL_OSC};'>Distribución de congestión</b><br>"
-                f"<span style='color:{UTB_GRAY};font-size:12px;'>Porcentaje de ejecuciones por estado</span></div>",
+                f"<span style='color:{UTB_GRAY};font-size:12px;'>Porcentaje de mediciones por estado</span></div>",
                 unsafe_allow_html=True,
             )
             colores = [COLOR_FLUIDO, COLOR_MODERADO, COLOR_LENTO, COLOR_CONGESTIONADO]
@@ -1818,20 +1907,20 @@ def render_analisis_nodo():
                 textfont=dict(size=12, color="#ffffff"),
                 customdata=distribucion[["porcentaje"]].to_numpy(),
                 hovertemplate=(
-                    "%{label}<br>Ejecuciones: %{value:,}"
+                    "%{label}<br>Mediciones: %{value:,}"
                     "<br>Porcentaje: %{customdata[0]:.1f}%<extra></extra>"
                 ),
             ))
             fig_distribucion.update_layout(
                 legend=dict(orientation="h", y=-0.08, x=0.5, xanchor="center"),
                 annotations=[dict(
-                    text=f"<b>{len(ejecuciones):,}</b><br><span style='font-size:11px'>ejecuciones</span>",
+                    text=f"<b>{len(ejecuciones):,}</b><br><span style='font-size:11px'>mediciones</span>",
                     x=0.5, y=0.5, showarrow=False, font=dict(color=R_AZUL_OSC, size=16),
                 )],
             )
-            fig_distribucion = plotly_base(fig_distribucion, height=330)
+            fig_distribucion = plotly_base(fig_distribucion, height=470)
             mostrar_grafica(fig_distribucion, "nodo_distribucion")
-            st.caption("Cada ejecución válida pesa una vez en la clasificación del nodo.")
+            st.caption("Cada medición válida pesa una vez en la clasificación de los nodos seleccionados.")
 
 
 def render_analisis_temporal():

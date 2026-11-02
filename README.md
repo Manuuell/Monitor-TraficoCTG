@@ -77,6 +77,18 @@ VPS 2 ──────────────┬─→ Google Sheets     │ 
 
 **Panel administrativo** (botón de la barra lateral, protegido con clave): resumen operativo de los dos servidores, estado y consumo de las llaves de TomTom, ejecuciones y errores por hora, ocupación del Google Sheet y diagnóstico de la configuración.
 
+### Catálogo de nodos y corredores
+
+El archivo [nodos.xlsx](nodos.xlsx) reúne la información de referencia de la red que usa el ETL y el dashboard. Permite consultar los puntos monitoreados, sus conexiones y el recorrido ordenado de los corredores.
+
+| Hoja | Contenido | Uso en el sistema |
+|------|-----------|-------------------|
+| **NODOS** | 113 nodos con barrio o lugar, identificador, nombre, coordenadas y campos de clasificación | Define los puntos consultados en TomTom y la información fija que muestran el mapa y el análisis por nodo |
+| **REDES** | Matriz de vecindad entre los identificadores de los nodos | Define las conexiones de la Red de Nodos y sirve de base para las rutas Origen–Destino |
+| **CORREDORES** | 18 corredores con el orden de sus nodos y coordenadas | Define el trazado, los filtros y los resúmenes de distancia, tiempo, demora y fluidez por corredor |
+
+Los identificadores de las tres hojas deben mantenerse consistentes. Después de cambiar `REDES` o `CORREDORES`, vuelve a ejecutar la captura de red descrita en la sección **Uso**.
+
 ---
 
 ## 🧰 Tecnologías

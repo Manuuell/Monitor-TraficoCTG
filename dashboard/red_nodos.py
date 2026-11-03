@@ -257,9 +257,12 @@ def _reutiliza_geometria_cerrada(path: list, indice: dict,
     """Detecta un tramo continuo que coincide con la geometria roja cerrada."""
     if not indice or len(path) < 2:
         return False
-    consecutivos = 0
-    paso_m = 8.0
-    for lat, lon, ux, uy in _muestras_trazo(path, paso_m):
+    # Se mide la distancia real entre muestras: cerca de los cruces el trazado
+    # trae vertices cada pocos metros y contar muestras como pasos de 8 m
+    # bloqueaba tramos que solo tocan el cierre al llegar al mismo nodo.
+    recorrido_m = 0.0
+    anterior = None
+    for lat, lon, ux, uy in _muestras_trazo(path):
         base = (round(lat / 0.0001), round(lon / 0.0001))
         coincide = False
         for di in (-1, 0, 1):
@@ -274,8 +277,13 @@ def _reutiliza_geometria_cerrada(path: list, indice: dict,
                     break
             if coincide:
                 break
-        consecutivos = consecutivos + 1 if coincide else 0
-        if consecutivos * paso_m >= minimo_m:
+        if not coincide:
+            recorrido_m, anterior = 0.0, None
+            continue
+        if anterior is not None:
+            recorrido_m += math.hypot(*_delta_xy_m(anterior, [lat, lon]))
+        anterior = [lat, lon]
+        if recorrido_m >= minimo_m:
             return True
     return False
 

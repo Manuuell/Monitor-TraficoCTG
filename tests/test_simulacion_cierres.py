@@ -117,6 +117,22 @@ class SimulacionCierresTest(unittest.TestCase):
         cierre = [{"inicio": "A", "fin": "B", "sentido": "ida"}]
         self.assertIsNone(self.ruta(cierre, red=red))
 
+    def test_llegar_al_nodo_del_cierre_no_cuenta_como_reutilizarlo(self):
+        red = copy.deepcopy(self.red)
+        # E->A llega a A en la misma direccion del cierre A->B, con vertices
+        # cada ~3 m en los ultimos 13 m: solo toca el cierre al final.
+        e = [10.0000, -75.0010]
+        cerca_de_a = [[10.0000, -75.0000 - 0.00003 * k] for k in (4, 3, 2, 1)]
+        path = [e, *cerca_de_a, [10.0000, -75.0000]]
+        red["conexiones"].append({
+            "a": "E", "b": "A", "d_ab_m": 110, "d_ba_m": 110,
+            "path": path, "path_ba": path[::-1],
+        })
+        promedios = {**self.promedios, "E": self.promedios["A"]}
+        cierre = [{"inicio": "A", "fin": "B", "sentido": "ida"}]
+        ruta = red_nodos.ruta_mas_rapida("E", "D", red, promedios, cierres=cierre)
+        self.assertEqual(ruta["nodos"], ["E", "A", "C", "D"])
+
 
 if __name__ == "__main__":
     unittest.main()

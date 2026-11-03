@@ -327,6 +327,109 @@ class CalzadasParalelasTest(unittest.TestCase):
             "O", "D", red, self.promedios, cierres=cierre)
         self.assertEqual(ruta["nodos"], ["O", "B", "D"])
 
+    def test_origen_intermedio_no_obliga_a_tocar_un_nodo_lateral(self):
+        puntos = {
+            "O": [10.0001, -74.9950], "A": [10.0000, -75.0000],
+            "B": [10.0000, -74.9900], "D": [10.0000, -74.9800],
+        }
+        conexiones = [
+            self.conexion("O", "A", [
+                puntos["O"], [10.0030, -74.9970], puntos["A"]], 1100),
+            self.conexion("A", "B", [puntos["A"], puntos["B"]], 1100),
+            self.conexion("B", "D", [puntos["B"], puntos["D"]], 1100),
+        ]
+        promedios = {
+            nodo: {"vel_actual": 36.0, "vel_libre": 45.0, "ratio": 0.8}
+            for nodo in puntos
+        }
+        red_anterior = {"conexiones": conexiones, "restricciones_giro": []}
+        red_nueva = {**red_anterior, "puntos": puntos}
+        anterior = red_nodos.ruta_mas_rapida("O", "D", red_anterior, promedios)
+        corregida = red_nodos.ruta_mas_rapida("O", "D", red_nueva, promedios)
+        self.assertEqual(anterior["nodos"], ["O", "A", "B", "D"])
+        self.assertEqual(corregida["nodos"], ["O", "B", "D"])
+        self.assertNotIn("A", corregida["nodos"])
+        self.assertLess(corregida["tiempo_s"], anterior["tiempo_s"])
+
+    def test_destino_intermedio_no_se_sobrepasa_para_tocar_otro_nodo(self):
+        puntos = {
+            "O": [10.0000, -75.0000], "B": [10.0000, -74.9900],
+            "C": [10.0000, -74.9800], "D": [10.0001, -74.9850],
+        }
+        conexiones = [
+            self.conexion("O", "B", [puntos["O"], puntos["B"]], 1100),
+            self.conexion("B", "C", [puntos["B"], puntos["C"]], 1100),
+            self.conexion("C", "D", [
+                puntos["C"], [10.0030, -74.9830], puntos["D"]], 1000),
+        ]
+        promedios = {
+            nodo: {"vel_actual": 36.0, "vel_libre": 45.0, "ratio": 0.8}
+            for nodo in puntos
+        }
+        red_anterior = {"conexiones": conexiones, "restricciones_giro": []}
+        red_nueva = {**red_anterior, "puntos": puntos}
+        anterior = red_nodos.ruta_mas_rapida("O", "D", red_anterior, promedios)
+        corregida = red_nodos.ruta_mas_rapida("O", "D", red_nueva, promedios)
+        self.assertEqual(anterior["nodos"], ["O", "B", "C", "D"])
+        self.assertEqual(corregida["nodos"], ["O", "B", "D"])
+        self.assertNotIn("C", corregida["nodos"])
+        self.assertLess(corregida["tiempo_s"], anterior["tiempo_s"])
+
+    def test_sentido_contrario_busca_la_calzada_paralela_legal(self):
+        puntos = {
+            "O": [10.0001, -74.9950], "A": [10.0000, -75.0000],
+            "B": [10.0000, -74.9900], "C": [10.0002, -74.9900],
+            "D": [10.0002, -75.0000], "T": [10.0002, -75.0050],
+        }
+        este = self.conexion("A", "B", [puntos["A"], puntos["B"]], 1100,
+                              permitir_ab=True, permitir_ba=False)
+        oeste = self.conexion("C", "D", [puntos["C"], puntos["D"]], 1100,
+                               permitir_ab=True, permitir_ba=False)
+        conexiones = [
+            este, oeste,
+            self.conexion("D", "T", [puntos["D"], puntos["T"]], 550),
+            self.conexion("O", "A", [puntos["O"], puntos["A"]], 600),
+        ]
+        promedios = {
+            nodo: {"vel_actual": 36.0, "vel_libre": 45.0, "ratio": 0.8}
+            for nodo in puntos
+        }
+        red = {"conexiones": conexiones, "puntos": puntos,
+               "restricciones_giro": []}
+        ruta = red_nodos.ruta_mas_rapida("O", "T", red, promedios)
+        self.assertEqual(ruta["nodos"], ["O", "D", "T"])
+        self.assertNotIn("B", ruta["nodos"])
+        self.assertEqual(ruta["tramos"][0][0]["a"], "C")
+
+    def test_la_ruta_resultante_no_repite_nodos_ni_conexiones(self):
+        red = copy.deepcopy(self.red_de_ciclo())
+        promedios = {
+            nodo: {"vel_actual": 36.0, "vel_libre": 45.0, "ratio": 0.8}
+            for nodo in "OABCD"
+        }
+        ruta = red_nodos.ruta_mas_rapida("O", "D", red, promedios)
+        ids_aristas = [paso["id_arista"] for paso in ruta["_pasos"]]
+        self.assertEqual(len(ruta["nodos"]), len(set(ruta["nodos"])))
+        self.assertEqual(len(ids_aristas), len(set(ids_aristas)))
+
+    @classmethod
+    def red_de_ciclo(cls):
+        puntos = {
+            "O": [10.0000, -75.0000], "A": [10.0000, -74.9990],
+            "B": [10.0010, -74.9990], "C": [10.0010, -75.0000],
+            "D": [10.0020, -74.9990],
+        }
+        return {
+            "conexiones": [
+                cls.conexion("O", "A", [puntos["O"], puntos["A"]], 100),
+                cls.conexion("A", "B", [puntos["A"], puntos["B"]], 100),
+                cls.conexion("B", "C", [puntos["B"], puntos["C"]], 100),
+                cls.conexion("C", "A", [puntos["C"], puntos["A"]], 100),
+                cls.conexion("B", "D", [puntos["B"], puntos["D"]], 100),
+            ],
+            "restricciones_giro": [],
+        }
+
 
 if __name__ == "__main__":
     unittest.main()

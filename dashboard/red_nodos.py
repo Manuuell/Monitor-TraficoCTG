@@ -37,6 +37,12 @@ RECORTE_MAX_M = 3000.0
 AHORRO_MIN_M = 35.0
 FACTOR_ACCESO = 2.0
 VELOCIDAD_ACCESO_KMH = 18.0
+RADIO_BUSQUEDA_EXTREMOS_M = 800.0
+MAX_CANDIDATOS_EXTREMO = 24
+MAX_PROYECCIONES_POR_CONEXION = 3
+PENALIZACION_RETORNO_INMEDIATO_S = 90.0
+PENALIZACION_ALEJAMIENTO_MAX_S = 45.0
+ALEJAMIENTO_SIN_PENALIZAR_M = 180.0
 # Un color por corredor en el orden de la hoja CORREDORES (PALETA_AVENIDAS
 # del dashboard R): el color de cada uno no cambia al filtrar
 PALETA_CORREDORES = [
@@ -427,6 +433,7 @@ def _aristas_para_rutas(red: dict, promedios: dict,
                 "retardo_s": retardo,
                 "conexion": c, "sentido": sentido,
                 "v": v, "v_libre": v_libre,
+                "id_arista": f"{c['a']}|{c['b']}|{sentido}",
             })
     return aristas
 
@@ -513,21 +520,222 @@ def _ajustar_extremos(aristas: dict, origen: str, destino: str, red: dict) -> di
     }
 
 
+def _proyecciones_candidatas(path: list, punto: list, inicio: bool) -> list:
+    """Hasta tres anclajes distintos y cercanos sobre un trazado dirigido."""
+    total = _longitud_trazo_m(path)
+    candidatas = [p for p in _proyecciones_sobre_trazo(path, punto)
+                  if p["acceso_m"] <= RADIO_BUSQUEDA_EXTREMOS_M]
+    for candidata in candidatas:
+        restante = (total - candidata["progreso_m"] if inicio
+                     else candidata["progreso_m"])
+        candidata["puntaje_local"] = (
+            candidata["acceso_m"] * FACTOR_ACCESO + 0.08 * restante)
+    candidatas.sort(key=lambda x: (x["puntaje_local"], x["acceso_m"]))
+    salida = []
+    for candidata in candidatas:
+        # Un trazado que vuelve cerca del punto puede ofrecer varias calzadas.
+        # Se conservan si difieren en ubicacion, direccion o progreso.
+        repetida = any(
+            _distancia_puntos_m(candidata["punto"], otra["punto"]) < 3
+            and sum(x * y for x, y in zip(
+                candidata["direccion"], otra["direccion"])) > 0.8
+            and abs(candidata["progreso_m"] - otra["progreso_m"]) < 35
+            for otra in salida
+        )
+        if not repetida:
+            salida.append(candidata)
+        if len(salida) >= MAX_PROYECCIONES_POR_CONEXION:
+            break
+    return salida
+
+
+def _penalizacion_alejamiento(punto: list, siguiente: list, destino: list) -> float:
+    """Penalizacion suave si el primer movimiento se aleja del destino."""
+    antes = _distancia_puntos_m(punto, destino)
+    despues = _distancia_puntos_m(siguiente, destino)
+    exceso = despues - antes - ALEJAMIENTO_SIN_PENALIZAR_M
+    if exceso <= 0:
+        return 0.0
+    return min(PENALIZACION_ALEJAMIENTO_MAX_S, exceso / 12.0)
+
+
+def _arista_parcial(arista: dict, path: list, ancla_inicio: dict,
+                     ancla_fin: dict, acceso_m: float, retardo_s: float,
+                     id_arista: str, **extra) -> dict:
+    """Crea una arista legal que usa solo una parte de una conexion real."""
+    total = _longitud_trazo_m(path)
+    recorrido = max(0.0, ancla_fin["progreso_m"] - ancla_inicio["progreso_m"])
+    distancia_via = arista["d"] * recorrido / total if total else 0.0
+    v_libre = arista["v_libre"]
+    if pd.isna(v_libre):
+        v_libre = arista["v"]
+    tiempo_acceso = acceso_m / (VELOCIDAD_ACCESO_KMH / 3.6)
+    return {
+        **arista,
+        "d": distancia_via + acceso_m,
+        "t": distancia_via / (arista["v"] / 3.6) + tiempo_acceso + retardo_s,
+        "t_libre": distancia_via / (v_libre / 3.6) + tiempo_acceso + retardo_s,
+        "retardo_s": retardo_s,
+        "path_ajustado": _recortar_trazo(path, ancla_inicio, ancla_fin),
+        "acceso_m": acceso_m,
+        "recorte_m": max(0.0, arista["d"] - distancia_via),
+        "id_arista": id_arista,
+        **extra,
+    }
+
+
+def _seleccionar_candidatos(candidatos: list, nodo: str) -> list:
+    """Amplia el radio sin dejar fuera las conexiones propias del nodo."""
+    candidatos.sort(key=lambda x: (x[0], x[3]["acceso_m"]))
+    elegidos = candidatos[:MAX_CANDIDATOS_EXTREMO]
+    ids = {(u, a["id_arista"], round(ancla["progreso_m"], 1))
+           for _, u, a, ancla, _ in elegidos}
+    for candidato in candidatos:
+        _, u, arista, ancla, _ = candidato
+        conexion = arista["conexion"]
+        clave = (u, arista["id_arista"], round(ancla["progreso_m"], 1))
+        if nodo in (conexion["a"], conexion["b"]) and clave not in ids:
+            elegidos.append(candidato)
+            ids.add(clave)
+    return elegidos
+
+
+def _agregar_extremos_virtuales(aristas: dict, origen: str, destino: str,
+                                 red: dict):
+    """
+    Conecta origen y destino a varias vias cercanas mediante puntos virtuales.
+    Los nodos de monitoreo dejan de ser paradas obligatorias: cada arista
+    parcial empieza o termina en la proyeccion sobre la via dirigida.
+    """
+    puntos = red.get("puntos", {})
+    if origen not in puntos or destino not in puntos:
+        return None
+    punto_origen, punto_destino = puntos[origen], puntos[destino]
+    candidatos_inicio, candidatos_fin = [], []
+    for u, salidas in aristas.items():
+        for arista in salidas:
+            path = _trazo_dirigido(arista["conexion"], arista["sentido"])
+            if len(path) < 2:
+                continue
+            total = _longitud_trazo_m(path)
+            if total <= 0:
+                continue
+            if u == origen:
+                anclas_inicio = _anclas_extremo(path, punto_origen, True)
+            elif arista["hacia"] == origen:
+                anclas_inicio = []
+            else:
+                anclas_inicio = _proyecciones_candidatas(
+                    path, punto_origen, True)
+            for ancla in anclas_inicio:
+                restante = total - ancla["progreso_m"]
+                puntaje = (ancla["acceso_m"] * FACTOR_ACCESO
+                           + 0.08 * restante)
+                candidatos_inicio.append((puntaje, u, arista, ancla, path))
+            if arista["hacia"] == destino:
+                anclas_fin = _anclas_extremo(path, punto_destino, False)
+            elif u == destino:
+                anclas_fin = []
+            else:
+                anclas_fin = _proyecciones_candidatas(
+                    path, punto_destino, False)
+            for ancla in anclas_fin:
+                puntaje = (ancla["acceso_m"] * FACTOR_ACCESO
+                           + 0.08 * ancla["progreso_m"])
+                candidatos_fin.append((puntaje, u, arista, ancla, path))
+    if not candidatos_inicio or not candidatos_fin:
+        return None
+    inicios = _seleccionar_candidatos(candidatos_inicio, origen)
+    finales = _seleccionar_candidatos(candidatos_fin, destino)
+    virtual_origen = f"\0origen:{origen}"
+    virtual_destino = f"\0destino:{destino}"
+    ampliadas = {u: [dict(a) for a in salidas] for u, salidas in aristas.items()}
+    ampliadas.setdefault(virtual_origen, [])
+
+    for _, u, arista, ancla, path in inicios:
+        fin = _ancla_base(path, path[-1], False)
+        penalizacion = _penalizacion_alejamiento(
+            ancla["punto"], fin["punto"], punto_destino)
+        parcial = _arista_parcial(
+            arista, path, ancla, fin, ancla["acceso_m"], arista["retardo_s"],
+            f"inicio|{arista['id_arista']}|{ancla['progreso_m']:.1f}",
+            hacia=arista["hacia"], estado_anterior=u,
+            punto_origen=ancla["punto"],
+            calzada_origen_ajustada=not (
+                u == origen and ancla["progreso_m"] <= 1.0),
+            penalizacion_logica_s=penalizacion,
+            nodos_publicos=[arista["hacia"]], virtual_inicio=True,
+        )
+        ampliadas[virtual_origen].append(parcial)
+
+    for _, u, arista, ancla, path in finales:
+        inicio = _ancla_base(path, path[0], True)
+        parcial = _arista_parcial(
+            arista, path, inicio, ancla, ancla["acceso_m"], 0.0,
+            f"fin|{arista['id_arista']}|{ancla['progreso_m']:.1f}",
+            hacia=virtual_destino, giro_hacia=arista["hacia"],
+            punto_destino=ancla["punto"],
+            calzada_destino_ajustada=not (
+                arista["hacia"] == destino
+                and _longitud_trazo_m(path) - ancla["progreso_m"] <= 1.0),
+            nodos_publicos=[destino], virtual_fin=True,
+        )
+        ampliadas.setdefault(u, []).append(parcial)
+
+    # Viaje directo cuando ambas proyecciones caen, en ese orden, sobre la
+    # misma calzada dirigida. Evita obligar a tocar cualquiera de sus nodos.
+    por_arista_fin = {}
+    for candidato in finales:
+        por_arista_fin.setdefault(candidato[2]["id_arista"], []).append(candidato)
+    for _, u, arista, ancla_inicio, path in inicios:
+        for _, _, _, ancla_fin, _ in por_arista_fin.get(arista["id_arista"], []):
+            if ancla_fin["progreso_m"] <= ancla_inicio["progreso_m"] + 1:
+                continue
+            directa = _arista_parcial(
+                arista, path, ancla_inicio, ancla_fin,
+                ancla_inicio["acceso_m"] + ancla_fin["acceso_m"], 0.0,
+                (f"directa|{arista['id_arista']}|"
+                 f"{ancla_inicio['progreso_m']:.1f}|{ancla_fin['progreso_m']:.1f}"),
+                hacia=virtual_destino, estado_anterior=u,
+                punto_origen=ancla_inicio["punto"],
+                punto_destino=ancla_fin["punto"],
+                calzada_origen_ajustada=not (
+                    u == origen and ancla_inicio["progreso_m"] <= 1.0),
+                calzada_destino_ajustada=not (
+                    arista["hacia"] == destino
+                    and _longitud_trazo_m(path) - ancla_fin["progreso_m"] <= 1.0),
+                nodos_publicos=[destino], virtual_inicio=True, virtual_fin=True,
+            )
+            ampliadas[virtual_origen].append(directa)
+    return ampliadas, virtual_origen, virtual_destino
+
+
 def _dijkstra_pasos(origen: str, destino: str, aristas: dict, red: dict,
                      anterior_inicial: str | None = None,
                      nodos_bloqueados: set | None = None,
-                     aristas_bloqueadas: set | None = None):
-    """Dijkstra reutilizable para el camino principal y los desvíos de Yen."""
+                     aristas_bloqueadas: set | None = None,
+                     permitir_repeticiones: bool = False):
+    """
+    Dijkstra con giros y penalizaciones.
+
+    Primero busca un camino simple. El conjunto visitado viaja con cada
+    etiqueta, pero la dominancia se conserva por (anterior, nodo), de modo que
+    la complejidad no crece exponencialmente. Solo si no existe ese camino se
+    repite la busqueda permitiendo nodos repetidos; ese respaldo conserva los
+    retornos realmente obligatorios por sentidos o restricciones.
+    """
     nodos_bloqueados = nodos_bloqueados or set()
     aristas_bloqueadas = aristas_bloqueadas or set()
     giros_restringidos = _giros_restringidos(red)
     penalizaciones_giro = _penalizaciones_giro(red)
+    visitados_inicio = frozenset((origen,))
     inicio = (anterior_inicial, origen)
     tiempos, previo = {inicio: 0.0}, {}
-    cola = [(0.0, anterior_inicial or "", origen)]
+    contador = 0
+    cola = [(0.0, contador, anterior_inicial or "", origen, visitados_inicio)]
     estado_final = None
     while cola:
-        t, anterior_orden, u = heapq.heappop(cola)
+        t, _, anterior_orden, u, visitados = heapq.heappop(cola)
         anterior = anterior_orden or None
         estado = (anterior, u)
         if t > tiempos.get(estado, float("inf")):
@@ -537,18 +745,41 @@ def _dijkstra_pasos(origen: str, destino: str, aristas: dict, red: dict,
             break
         for a in aristas.get(u, []):
             w = a["hacia"]
-            if (w in nodos_bloqueados or (u, w) in aristas_bloqueadas
+            id_arista = a.get("id_arista", (u, w))
+            giro_hacia = a.get("giro_hacia", w)
+            if ((not permitir_repeticiones and w in visitados)
+                    or w in nodos_bloqueados
+                    or id_arista in aristas_bloqueadas
                     or (anterior is not None
-                        and (anterior, u, w) in giros_restringidos)):
+                        and (anterior, u, giro_hacia) in giros_restringidos)):
                 continue
-            siguiente = (u, w)
-            retardo_giro = penalizaciones_giro.get((anterior, u, w), 0.0)
-            nuevo = t + a["t"] + retardo_giro
-            if nuevo < tiempos.get(siguiente, float("inf")):
-                tiempos[siguiente] = nuevo
-                previo[siguiente] = (estado, {**a, "retardo_giro_s": retardo_giro})
-                heapq.heappush(cola, (nuevo, u, w))
+            retardo_giro = penalizaciones_giro.get(
+                (anterior, u, giro_hacia), 0.0)
+            penalizacion_logica = a.get("penalizacion_logica_s", 0.0)
+            if anterior is not None and giro_hacia == anterior:
+                penalizacion_logica += PENALIZACION_RETORNO_INMEDIATO_S
+            nuevo = t + a["t"] + retardo_giro + penalizacion_logica
+            nuevos_visitados = visitados | {w}
+            anterior_siguiente = a.get("estado_anterior", u)
+            siguiente = (anterior_siguiente, w)
+            if nuevo >= tiempos.get(siguiente, float("inf")):
+                continue
+            tiempos[siguiente] = nuevo
+            previo[siguiente] = (estado, {
+                **a, "retardo_giro_s": retardo_giro,
+                "penalizacion_logica_s": penalizacion_logica,
+            })
+            contador += 1
+            heapq.heappush(
+                cola, (nuevo, contador, anterior_siguiente or "", w,
+                       nuevos_visitados))
     if estado_final is None:
+        if not permitir_repeticiones:
+            return _dijkstra_pasos(
+                origen, destino, aristas, red, anterior_inicial,
+                nodos_bloqueados, aristas_bloqueadas,
+                permitir_repeticiones=True,
+            )
         return None
     pasos, estado = [], estado_final
     while estado != inicio:
@@ -557,10 +788,18 @@ def _dijkstra_pasos(origen: str, destino: str, aristas: dict, red: dict,
     return list(reversed(pasos))
 
 
-def _resumir_pasos(origen: str, pasos: list) -> dict:
+def _resumir_pasos(origen: str, pasos: list, destino: str | None = None,
+                   origen_busqueda: str | None = None) -> dict:
     """Convierte una secuencia de aristas en el formato público de ruta."""
+    nodos = [origen]
+    for paso in pasos:
+        for nodo in paso.get("nodos_publicos", [paso["hacia"]]):
+            if not str(nodo).startswith("\0") and nodo != nodos[-1]:
+                nodos.append(nodo)
+    if destino and nodos[-1] != destino:
+        nodos.append(destino)
     resumen = {
-        "nodos": [origen] + [p["hacia"] for p in pasos],
+        "nodos": nodos,
         "tramos": [(p["conexion"], p["sentido"]) for p in pasos],
         "trazos": [p.get("path_ajustado") or _trazo_dirigido(
             p["conexion"], p["sentido"]) for p in pasos],
@@ -570,9 +809,14 @@ def _resumir_pasos(origen: str, pasos: list) -> dict:
             p["t_libre"] + p.get("retardo_giro_s", 0) for p in pasos),
         "retardo_s": sum(
             p.get("retardo_s", 0) + p.get("retardo_giro_s", 0) for p in pasos),
+        "costo_s": sum(
+            p["t"] + p.get("retardo_giro_s", 0)
+            + p.get("penalizacion_logica_s", 0) for p in pasos),
         "acceso_m": sum(p.get("acceso_m", 0) for p in pasos),
         "recorte_m": sum(p.get("recorte_m", 0) for p in pasos),
         "_pasos": pasos,
+        "_nodos_busqueda": [origen_busqueda or origen]
+        + [p["hacia"] for p in pasos],
     }
     if pasos and pasos[0].get("punto_origen"):
         resumen["punto_origen"] = pasos[0]["punto_origen"]
@@ -595,38 +839,60 @@ def rutas_mas_rapidas(origen: str, destino: str, red: dict, promedios: dict,
     """
     if not origen or not destino or origen == destino or cantidad < 1:
         return []
-    aristas = _aristas_para_rutas(red, promedios, cierres)
-    aristas = _ajustar_extremos(aristas, origen, destino, red)
-    primeros_pasos = _dijkstra_pasos(origen, destino, aristas, red)
+    aristas_base = _aristas_para_rutas(red, promedios, cierres)
+    virtuales = _agregar_extremos_virtuales(
+        aristas_base, origen, destino, red)
+    if virtuales:
+        aristas, origen_busqueda, destino_busqueda = virtuales
+    else:
+        aristas = _ajustar_extremos(aristas_base, origen, destino, red)
+        origen_busqueda, destino_busqueda = origen, destino
+    primeros_pasos = _dijkstra_pasos(
+        origen_busqueda, destino_busqueda, aristas, red)
+    # Si los anclajes ampliados no logran conectarse, se conserva el calculo
+    # anterior sobre los nodos seleccionados como respaldo legal.
+    if primeros_pasos is None and virtuales:
+        aristas = _ajustar_extremos(aristas_base, origen, destino, red)
+        origen_busqueda, destino_busqueda = origen, destino
+        primeros_pasos = _dijkstra_pasos(
+            origen_busqueda, destino_busqueda, aristas, red)
     if primeros_pasos is None:
         return []
 
-    rutas = [_resumir_pasos(origen, primeros_pasos)]
+    rutas = [_resumir_pasos(
+        origen, primeros_pasos, destino, origen_busqueda)]
     secuencias_aceptadas = {tuple(rutas[0]["nodos"])}
     candidatos, secuencias_candidatas = [], set()
     orden = 0
 
     while len(rutas) < cantidad:
         base = rutas[-1]
-        for i in range(len(base["nodos"]) - 1):
-            raiz_nodos = base["nodos"][:i + 1]
+        nodos_busqueda = base["_nodos_busqueda"]
+        for i in range(len(nodos_busqueda) - 1):
+            raiz_nodos = nodos_busqueda[:i + 1]
             raiz_pasos = base["_pasos"][:i]
+            ids_raiz = [p.get("id_arista") for p in raiz_pasos]
             aristas_bloqueadas = {
-                (ruta["nodos"][i], ruta["nodos"][i + 1])
+                ruta["_pasos"][i].get("id_arista")
                 for ruta in rutas
-                if len(ruta["nodos"]) > i + 1
-                and ruta["nodos"][:i + 1] == raiz_nodos
+                if len(ruta["_pasos"]) > i
+                and [p.get("id_arista") for p in ruta["_pasos"][:i]] == ids_raiz
             }
+            anterior_raiz = None
+            if raiz_pasos:
+                anterior_raiz = raiz_pasos[-1].get(
+                    "estado_anterior", raiz_nodos[-2])
             desvio = _dijkstra_pasos(
-                raiz_nodos[-1], destino, aristas, red,
-                anterior_inicial=raiz_nodos[-2] if len(raiz_nodos) > 1 else None,
+                raiz_nodos[-1], destino_busqueda, aristas, red,
+                anterior_inicial=anterior_raiz,
                 nodos_bloqueados=set(raiz_nodos[:-1]),
                 aristas_bloqueadas=aristas_bloqueadas,
             )
             if desvio is None:
                 continue
             pasos = raiz_pasos + desvio
-            candidata = _resumir_pasos(origen, pasos)
+            candidata = _resumir_pasos(
+                origen, pasos, destino, origen_busqueda)
             secuencia = tuple(candidata["nodos"])
             if (len(secuencia) != len(set(secuencia))
                     or secuencia in secuencias_aceptadas
@@ -634,7 +900,7 @@ def rutas_mas_rapidas(origen: str, destino: str, red: dict, promedios: dict,
                 continue
             orden += 1
             heapq.heappush(
-                candidatos, (candidata["tiempo_s"], secuencia, orden, candidata))
+                candidatos, (candidata["costo_s"], secuencia, orden, candidata))
             secuencias_candidatas.add(secuencia)
 
         if not candidatos:

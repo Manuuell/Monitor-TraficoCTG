@@ -26,6 +26,7 @@ COLOR_RUTA = "#2dd4bf"        # --mint del dashboard R
 COLOR_BORDE_RUTA = "#12307a"  # --ink del dashboard R
 COLOR_CIERRE = "#ef4444"
 COLOR_RUTA_NORMAL = "#64748b"
+COLORES_RUTAS = ["#14b8a6", "#f97316", "#8b5cf6"]
 # Un color por corredor en el orden de la hoja CORREDORES (PALETA_AVENIDAS
 # del dashboard R): el color de cada uno no cambia al filtrar
 PALETA_CORREDORES = [
@@ -288,28 +289,11 @@ def _reutiliza_geometria_cerrada(path: list, indice: dict,
     return False
 
 
-def ruta_mas_rapida(origen: str, destino: str, red: dict, promedios: dict,
-                    cierres: list | tuple | None = None):
-    """
-    Camino de menor tiempo de origen a destino con las velocidades promedio
-    del periodo filtrado (Dijkstra). Cada conexion da dos aristas, una por
-    sentido, con su propia distancia por via. Las conexiones con un nodo sin
-    datos se descartan.
-
-    ``cierres`` no altera la red: solo excluye temporalmente los sentidos
-    seleccionados. Si la red incluye ``restricciones_giro``, tambien se
-    descartan esos movimientos.
-
-    Devuelve None si no hay camino, o un dict con nodos (en orden), tramos
-    (conexion y sentido de cada paso), dist_m, tiempo_s y tiempo_libre_s.
-    """
-    if not origen or not destino or origen == destino:
-        return None
-
+def _aristas_para_rutas(red: dict, promedios: dict,
+                        cierres: list | tuple | None = None) -> dict:
+    """Arma una sola vez las aristas dirigidas y sus costos de viaje."""
     bloqueadas = aristas_cerradas(cierres)
     geometrias_cerradas = _indice_geometrias_cerradas(red, cierres)
-    giros_restringidos = _giros_restringidos(red)
-    penalizaciones_giro = _penalizaciones_giro(red)
     aristas = {}
     for c in red["conexiones"]:
         v = _armonica(promedios.get(c["a"], {}).get("vel_actual"),
@@ -333,50 +317,145 @@ def ruta_mas_rapida(origen: str, destino: str, red: dict, promedios: dict,
                 "retardo_s": retardo,
                 "conexion": c, "sentido": sentido,
             })
+    return aristas
 
-    # El estado conserva el nodo anterior para poder validar el giro al tomar
-    # la siguiente arista. En el primer paso es None.
-    inicio = (None, origen)
+
+def _dijkstra_pasos(origen: str, destino: str, aristas: dict, red: dict,
+                     anterior_inicial: str | None = None,
+                     nodos_bloqueados: set | None = None,
+                     aristas_bloqueadas: set | None = None):
+    """Dijkstra reutilizable para el camino principal y los desvíos de Yen."""
+    nodos_bloqueados = nodos_bloqueados or set()
+    aristas_bloqueadas = aristas_bloqueadas or set()
+    giros_restringidos = _giros_restringidos(red)
+    penalizaciones_giro = _penalizaciones_giro(red)
+    inicio = (anterior_inicial, origen)
     tiempos, previo = {inicio: 0.0}, {}
-    cola = [(0.0, "", origen)]
+    cola = [(0.0, anterior_inicial or "", origen)]
     estado_final = None
     while cola:
         t, anterior_orden, u = heapq.heappop(cola)
         anterior = anterior_orden or None
         estado = (anterior, u)
+        if t > tiempos.get(estado, float("inf")):
+            continue
         if u == destino:
             estado_final = estado
             break
-        if t > tiempos.get(estado, float("inf")):
-            continue
         for a in aristas.get(u, []):
-            if anterior is not None and (anterior, u, a["hacia"]) in giros_restringidos:
+            w = a["hacia"]
+            if (w in nodos_bloqueados or (u, w) in aristas_bloqueadas
+                    or (anterior is not None
+                        and (anterior, u, w) in giros_restringidos)):
                 continue
-            siguiente = (u, a["hacia"])
-            retardo_giro = penalizaciones_giro.get((anterior, u, a["hacia"]), 0.0)
+            siguiente = (u, w)
+            retardo_giro = penalizaciones_giro.get((anterior, u, w), 0.0)
             nuevo = t + a["t"] + retardo_giro
             if nuevo < tiempos.get(siguiente, float("inf")):
                 tiempos[siguiente] = nuevo
                 previo[siguiente] = (estado, {**a, "retardo_giro_s": retardo_giro})
-                heapq.heappush(cola, (nuevo, u, a["hacia"]))
-
+                heapq.heappush(cola, (nuevo, u, w))
     if estado_final is None:
         return None
-
     pasos, estado = [], estado_final
     while estado != inicio:
         estado, arista = previo[estado]
         pasos.append(arista)
-    pasos.reverse()
+    return list(reversed(pasos))
+
+
+def _resumir_pasos(origen: str, pasos: list) -> dict:
+    """Convierte una secuencia de aristas en el formato público de ruta."""
     return {
         "nodos": [origen] + [p["hacia"] for p in pasos],
         "tramos": [(p["conexion"], p["sentido"]) for p in pasos],
         "dist_m": sum(p["d"] for p in pasos),
         "tiempo_s": sum(p["t"] + p.get("retardo_giro_s", 0) for p in pasos),
-        "tiempo_libre_s": sum(p["t_libre"] + p.get("retardo_giro_s", 0) for p in pasos),
-        "retardo_s": sum(p.get("retardo_s", 0) + p.get("retardo_giro_s", 0)
-                         for p in pasos),
+        "tiempo_libre_s": sum(
+            p["t_libre"] + p.get("retardo_giro_s", 0) for p in pasos),
+        "retardo_s": sum(
+            p.get("retardo_s", 0) + p.get("retardo_giro_s", 0) for p in pasos),
+        "_pasos": pasos,
     }
+
+
+def rutas_mas_rapidas(origen: str, destino: str, red: dict, promedios: dict,
+                       cantidad: int = 3,
+                       cierres: list | tuple | None = None) -> list:
+    """
+    Devuelve hasta ``cantidad`` caminos simples y distintos, ordenados por
+    tiempo. Usa Yen sobre el mismo costo dirigido de Dijkstra, por lo que
+    conserva sentidos, giros, retardos, cierres y velocidades filtradas.
+    """
+    if not origen or not destino or origen == destino or cantidad < 1:
+        return []
+    aristas = _aristas_para_rutas(red, promedios, cierres)
+    primeros_pasos = _dijkstra_pasos(origen, destino, aristas, red)
+    if primeros_pasos is None:
+        return []
+
+    rutas = [_resumir_pasos(origen, primeros_pasos)]
+    secuencias_aceptadas = {tuple(rutas[0]["nodos"])}
+    candidatos, secuencias_candidatas = [], set()
+    orden = 0
+
+    while len(rutas) < cantidad:
+        base = rutas[-1]
+        for i in range(len(base["nodos"]) - 1):
+            raiz_nodos = base["nodos"][:i + 1]
+            raiz_pasos = base["_pasos"][:i]
+            aristas_bloqueadas = {
+                (ruta["nodos"][i], ruta["nodos"][i + 1])
+                for ruta in rutas
+                if len(ruta["nodos"]) > i + 1
+                and ruta["nodos"][:i + 1] == raiz_nodos
+            }
+            desvio = _dijkstra_pasos(
+                raiz_nodos[-1], destino, aristas, red,
+                anterior_inicial=raiz_nodos[-2] if len(raiz_nodos) > 1 else None,
+                nodos_bloqueados=set(raiz_nodos[:-1]),
+                aristas_bloqueadas=aristas_bloqueadas,
+            )
+            if desvio is None:
+                continue
+            pasos = raiz_pasos + desvio
+            candidata = _resumir_pasos(origen, pasos)
+            secuencia = tuple(candidata["nodos"])
+            if (len(secuencia) != len(set(secuencia))
+                    or secuencia in secuencias_aceptadas
+                    or secuencia in secuencias_candidatas):
+                continue
+            orden += 1
+            heapq.heappush(
+                candidatos, (candidata["tiempo_s"], secuencia, orden, candidata))
+            secuencias_candidatas.add(secuencia)
+
+        if not candidatos:
+            break
+        _, secuencia, _, elegida = heapq.heappop(candidatos)
+        secuencias_candidatas.discard(secuencia)
+        rutas.append(elegida)
+        secuencias_aceptadas.add(secuencia)
+    return rutas
+
+
+def ruta_mas_rapida(origen: str, destino: str, red: dict, promedios: dict,
+                    cierres: list | tuple | None = None):
+    """
+    Camino de menor tiempo de origen a destino con las velocidades promedio
+    del periodo filtrado (Dijkstra). Cada conexion da dos aristas, una por
+    sentido, con su propia distancia por via. Las conexiones con un nodo sin
+    datos se descartan.
+
+    ``cierres`` no altera la red: solo excluye temporalmente los sentidos
+    seleccionados. Si la red incluye ``restricciones_giro``, tambien se
+    descartan esos movimientos.
+
+    Devuelve None si no hay camino, o un dict con nodos (en orden), tramos
+    (conexion y sentido de cada paso), dist_m, tiempo_s y tiempo_libre_s.
+    """
+    rutas = rutas_mas_rapidas(origen, destino, red, promedios, 1, cierres)
+    return rutas[0] if rutas else None
 
 
 def buscar_conexion(red: dict, inicio: str, fin: str):
@@ -482,7 +561,8 @@ def _trazo_corredor(conexion: dict, puntos: dict, por_via: bool,
 def construir_mapa_red(df: pd.DataFrame, red: dict, promedios: dict, metrica: str,
                        metrica_label: str, clasificar_ratio, mostrar_conexiones: bool,
                        por_via: bool, ruta=None, en_vivo: bool = False,
-                       corredores=None) -> folium.Map:
+                       corredores=None, rutas=None,
+                       ruta_seleccionada: int = 0) -> folium.Map:
     """
     Mapa de la red: conexiones coloreadas por la metrica, la ruta elegida
     resaltada encima y los nodos (con su popup) arriba de todo. Con una ruta
@@ -497,7 +577,10 @@ def construir_mapa_red(df: pd.DataFrame, red: dict, promedios: dict, metrica: st
     escala = mapa_nodos.escala_metrica(m, metrica, metrica_label)
     puntos = df.set_index("id_nodo")[["lat", "lon"]].to_dict("index")
     nombres = dict(zip(df["id_nodo"], df["nombre_nodo"]))
-    resaltar = bool(ruta or corredores)
+    rutas_mapa = rutas or ([ruta] if ruta else [])
+    ruta_seleccionada = min(max(ruta_seleccionada, 0), len(rutas_mapa) - 1) if rutas_mapa else 0
+    ruta_activa = rutas_mapa[ruta_seleccionada] if rutas_mapa else None
+    resaltar = bool(rutas_mapa or corredores)
 
     if mostrar_conexiones:
         # Fuera del selector de mapa: se prenden con "Mostrar conexiones"
@@ -541,33 +624,62 @@ def construir_mapa_red(df: pd.DataFrame, red: dict, promedios: dict, metrica: st
         return mapa_nodos.terminar_mapa(m, df[en_corredor]["lat"], df[en_corredor]["lon"],
                                         encuadrar_todos=True)
 
-    if not ruta:
+    if not rutas_mapa:
         mapa_nodos.agregar_nodos(m, df, metrica, escala, clasificar_ratio, en_vivo)
     else:
-        # Orden de dibujo: nodos fuera de la ruta (atenuados) abajo, luego la
-        # ruta con su borde, y los nodos de la ruta arriba de todo
-        en_ruta = df["id_nodo"].isin(ruta["nodos"])
+        # Las rutas no elegidas quedan visibles para comparar; la seleccionada
+        # se dibuja al final, con mayor grosor y sus nodos encima.
+        en_ruta = df["id_nodo"].isin(ruta_activa["nodos"])
         mapa_nodos.agregar_nodos(m, df[~en_ruta], metrica, escala, clasificar_ratio,
                                  en_vivo, estilo="atenuado")
-        capa_ruta = folium.FeatureGroup(name="Ruta", control=False).add_to(m)
-        for color, grosor in ((COLOR_BORDE_RUTA, 13), (COLOR_RUTA, 7)):
-            for conexion, sentido in ruta["tramos"]:
+        capa_ruta = folium.FeatureGroup(name="Rutas alternativas", control=False).add_to(m)
+        orden_rutas = [i for i in range(len(rutas_mapa)) if i != ruta_seleccionada]
+        orden_rutas.append(ruta_seleccionada)
+        for indice in orden_rutas:
+            opcion = rutas_mapa[indice]
+            color = COLORES_RUTAS[indice % len(COLORES_RUTAS)]
+            if indice == ruta_seleccionada:
+                for conexion, sentido in opcion["tramos"]:
+                    folium.PolyLine(
+                        _trazo(conexion, puntos, por_via, sentido),
+                        color=COLOR_BORDE_RUTA, weight=12, opacity=0.9,
+                    ).add_to(capa_ruta)
+            for conexion, sentido in opcion["tramos"]:
                 folium.PolyLine(
                     _trazo(conexion, puntos, por_via, sentido),
-                    color=color, weight=grosor, opacity=1,
+                    color=color,
+                    weight=7 if indice == ruta_seleccionada else 4,
+                    opacity=1 if indice == ruta_seleccionada else 0.48,
+                    tooltip=f"Ruta {indice + 1}",
                 ).add_to(capa_ruta)
         mapa_nodos.agregar_nodos(m, df[en_ruta], metrica, escala, clasificar_ratio,
                                  en_vivo, estilo="resaltado")
 
-    if ruta:
-        for id_nodo, etiqueta in ((ruta["nodos"][0], "Origen"), (ruta["nodos"][-1], "Destino")):
+        etiquetas = ["recomendada", "segunda alternativa", "tercera alternativa"]
+        items = "".join(
+            f'<div style="margin:4px 0"><span style="display:inline-block;width:24px;'
+            f'border-top:5px solid {COLORES_RUTAS[i]};margin-right:7px"></span>'
+            f'Ruta {i + 1}: {etiquetas[i]}</div>'
+            for i in range(len(rutas_mapa))
+        )
+        m.get_root().html.add_child(folium.Element(
+            '<div style="position:fixed;bottom:28px;left:52px;z-index:9999;'
+            'background:white;padding:9px 12px;border-radius:9px;box-shadow:0 2px 8px #0003;'
+            f'font:12px Arial;color:#172554">{items}</div>'))
+
+    if ruta_activa:
+        color_activo = COLORES_RUTAS[ruta_seleccionada % len(COLORES_RUTAS)]
+        for id_nodo, etiqueta in ((ruta_activa["nodos"][0], "Origen"),
+                                  (ruta_activa["nodos"][-1], "Destino")):
             p = puntos[id_nodo]
             folium.CircleMarker(
-                location=[p["lat"], p["lon"]], radius=14, color=COLOR_RUTA, weight=4,
+                location=[p["lat"], p["lon"]], radius=14, color=color_activo, weight=4,
                 fill=False, tooltip=folium.Tooltip(etiqueta, permanent=True),
             ).add_to(m)
-        en_ruta = df[df["id_nodo"].isin(ruta["nodos"])]
-        return mapa_nodos.terminar_mapa(m, en_ruta["lat"], en_ruta["lon"])
+        ids_rutas = {n for opcion in rutas_mapa for n in opcion["nodos"]}
+        en_rutas = df[df["id_nodo"].isin(ids_rutas)]
+        return mapa_nodos.terminar_mapa(m, en_rutas["lat"], en_rutas["lon"],
+                                        encuadrar_todos=True)
     return mapa_nodos.terminar_mapa(m, df["lat"], df["lon"])
 
 

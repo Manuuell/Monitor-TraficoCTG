@@ -53,6 +53,57 @@ class SimulacionCierresTest(unittest.TestCase):
         self.assertEqual(ruta["nodos"], ["A", "B", "D"])
         self.assertEqual(ruta["dist_m"], 200)
 
+    def test_devuelve_hasta_tres_rutas_unicas_ordenadas_por_tiempo(self):
+        puntos = {"E": [10.0020, -75.0000], "F": [10.0020, -74.9990]}
+
+        def conexion(a, b, distancia):
+            base = {
+                "A": [10.0000, -75.0000], "B": [10.0000, -74.9990],
+                "C": [10.0010, -75.0000], "D": [10.0010, -74.9990],
+                **puntos,
+            }
+            return {
+                "a": a, "b": b, "d_ab_m": distancia, "d_ba_m": distancia,
+                "path": [base[a], base[b]], "path_ba": [base[b], base[a]],
+            }
+
+        red = {
+            "conexiones": [
+                conexion("A", "B", 100), conexion("B", "D", 100),
+                conexion("A", "C", 140), conexion("C", "D", 140),
+                conexion("A", "E", 180), conexion("E", "F", 90),
+                conexion("F", "D", 90),
+            ],
+            "restricciones_giro": [],
+        }
+        promedios = {
+            nodo: {"vel_actual": 36.0, "vel_libre": 40.0, "ratio": 0.9}
+            for nodo in "ABCDEF"
+        }
+        rutas = red_nodos.rutas_mas_rapidas("A", "D", red, promedios, cantidad=3)
+        self.assertEqual([r["nodos"] for r in rutas], [
+            ["A", "B", "D"], ["A", "C", "D"], ["A", "E", "F", "D"],
+        ])
+        self.assertEqual([r["dist_m"] for r in rutas], [200, 280, 360])
+        self.assertEqual(len({tuple(r["nodos"]) for r in rutas}), 3)
+        self.assertEqual([r["tiempo_s"] for r in rutas],
+                         sorted(r["tiempo_s"] for r in rutas))
+
+    def test_informa_solo_las_rutas_disponibles(self):
+        rutas = red_nodos.rutas_mas_rapidas(
+            "A", "D", self.red, self.promedios, cantidad=3)
+        self.assertEqual(len(rutas), 2)
+        self.assertEqual([r["nodos"] for r in rutas],
+                         [["A", "B", "D"], ["A", "C", "D"]])
+
+    def test_todas_las_alternativas_respetan_los_giros_restringidos(self):
+        red = copy.deepcopy(self.red)
+        red["restricciones_giro"] = [["A", "B", "D"]]
+        rutas = red_nodos.rutas_mas_rapidas(
+            "A", "D", red, self.promedios, cantidad=3)
+        self.assertEqual([r["nodos"] for r in rutas], [["A", "C", "D"]])
+        self.assertNotIn(["A", "B", "D"], [r["nodos"] for r in rutas])
+
     def test_cierre_de_un_sentido_conserva_el_contrario(self):
         cierre = [{"inicio": "A", "fin": "B", "sentido": "ida"}]
         self.assertEqual(self.ruta(cierre)["nodos"], ["A", "C", "D"])

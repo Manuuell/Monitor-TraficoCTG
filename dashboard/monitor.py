@@ -2836,26 +2836,79 @@ with tab_red:
             with st.spinner("Calculando promedios..."):
                 promedios_red, _ = promedios_mapa(**consulta_red)
         prom = promedios_red.set_index("id_nodo").to_dict("index")
-        ruta = (red_nodos.ruta_mas_rapida(origen, destino, red, prom)
-                if origen and destino else None)
+        rutas = (red_nodos.rutas_mas_rapidas(origen, destino, red, prom, cantidad=3)
+                 if origen and destino else [])
+        indice_ruta = min(st.session_state.get("red_ruta_seleccionada", 0),
+                          len(rutas) - 1) if rutas else 0
+        ruta = rutas[indice_ruta] if rutas else None
 
         nodos_red = catalogo.merge(promedios_red, on="id_nodo", how="left")
         ids_vista = set(filtros_red["consulta"]["ids"])
         if ids_vista:
-            ids_vista |= set(ruta["nodos"]) if ruta else set()
+            ids_vista |= {n for opcion in rutas for n in opcion["nodos"]}
             ids_vista |= {n for c in vista_corredores for n in c["nodos"]}
             nodos_red = nodos_red[nodos_red["id_nodo"].isin(ids_vista)]
 
         with col_mapa:
             if origen and destino and origen == destino:
                 st.info("El origen y el destino son el mismo nodo.")
-            elif origen and destino and ruta is None:
+            elif origen and destino and not rutas:
                 st.warning("No hay un camino entre esos nodos con datos para estos filtros.")
+
+            if rutas:
+                st.markdown("### Alternativas de ruta")
+                tiempo_base = rutas[0]["tiempo_s"]
+                columnas_ruta = st.columns(len(rutas))
+                etiquetas_ruta = ["Ruta recomendada", "Segunda alternativa",
+                                   "Tercera alternativa"]
+                for i, (columna, opcion) in enumerate(zip(columnas_ruta, rutas)):
+                    km_opcion = opcion["dist_m"] / 1000
+                    minutos_opcion = opcion["tiempo_s"] / 60
+                    velocidad_opcion = (km_opcion / (minutos_opcion / 60)
+                                        if minutos_opcion else 0)
+                    ratios_opcion = pd.Series([
+                        prom.get(n, {}).get("ratio") for n in opcion["nodos"]
+                    ], dtype=float)
+                    fluidez_opcion = ratios_opcion.mean()
+                    estado_opcion = clasificar_ratio(fluidez_opcion)[1]
+                    adicional = (opcion["tiempo_s"] - tiempo_base) / 60
+                    seleccionado = i == indice_ruta
+                    color_opcion = red_nodos.COLORES_RUTAS[i]
+                    with columna:
+                        st.markdown(
+                            f'<div style="border:2px solid {color_opcion if seleccionado else "#dbe4f0"};'
+                            f'border-radius:16px;padding:14px 15px;background:{"#f0fdfa" if seleccionado else "white"};'
+                            f'box-shadow:0 5px 18px #0f172a12;min-height:255px">'
+                            f'<div style="font-size:12px;font-weight:800;color:{color_opcion};'
+                            f'text-transform:uppercase">Ruta {i + 1}</div>'
+                            f'<div style="font-size:18px;font-weight:800;color:#172554;margin:4px 0 10px">'
+                            f'{etiquetas_ruta[i]}</div>'
+                            f'<div style="font-size:13px;line-height:1.75;color:#334155">'
+                            f'<b>{km_opcion:.1f} km</b> · <b>{minutos_opcion:.1f} min</b><br>'
+                            f'{velocidad_opcion:.1f} km/h · +{adicional:.1f} min<br>'
+                            f'{len(opcion["nodos"])} nodos · {len(opcion["tramos"])} tramos<br>'
+                            f'Fluidez {fluidez_opcion:.2f} · {estado_opcion}</div></div>',
+                            unsafe_allow_html=True,
+                        )
+                        if st.button(
+                            "Seleccionada" if seleccionado else "Mostrar en el mapa",
+                            key=f"red_elegir_ruta_{i}", use_container_width=True,
+                            disabled=seleccionado,
+                        ):
+                            st.session_state.red_ruta_seleccionada = i
+                            st.rerun()
+
+                if len(rutas) < 3:
+                    st.info(
+                        f"Se encontraron {len(rutas)} ruta(s) válida(s) y diferente(s); "
+                        "no existen tres caminos disponibles para esta selección."
+                    )
 
             mapa_red = red_nodos.construir_mapa_red(
                 nodos_red, red, prom, filtros_red["metrica"], filtros_red["metrica_label"],
                 clasificar_ratio, mostrar_conexiones, seguir_vias, ruta, en_vivo_red,
-                corredores=vista_corredores,
+                corredores=vista_corredores, rutas=rutas,
+                ruta_seleccionada=indice_ruta,
             )
             # Los corredores van de Bayunca a Mamonal: con 560 px la ciudad se
             # ve un nivel de zoom mas lejos
@@ -2900,38 +2953,48 @@ with tab_red:
                        "elegidos. Demora: minutos de más frente al flujo libre. Fluidez: "
                        "promedio de sus nodos.")
 
-        if ruta:
-            st.markdown("### Ruta seleccionada")
-            km = ruta["dist_m"] / 1000
-            minutos = ruta["tiempo_s"] / 60
-            extra = minutos - ruta["tiempo_libre_s"] / 60
-            rc1, rc2, rc3, rc4 = st.columns(4)
-            with rc1: st.metric("Distancia total", f"{km:.1f} km")
-            with rc2: st.metric("Tiempo promedio de viaje", f"{minutos:.1f} min",
-                                f"+{extra:.1f} min frente al flujo libre", delta_color="inverse")
-            with rc3: st.metric("Velocidad promedio", f"{km / (minutos / 60):.1f} km/h")
-            with rc4: st.metric("Nodos en la ruta", len(ruta["nodos"]))
-
-            tabla_ruta = pd.DataFrame([{
-                "#": i + 1,
-                "Nodo": nombres[n],
-                "Velocidad (km/h)": prom.get(n, {}).get("vel_actual"),
-                "Índice de fluidez": prom.get(n, {}).get("ratio"),
-                "Estado": clasificar_ratio(prom.get(n, {}).get("ratio"))[1],
-            } for i, n in enumerate(ruta["nodos"])])
-            # En rutas cortas la tabla ya muestra todos los nodos
-            if len(tabla_ruta) > 3:
-                criticos = tabla_ruta.nsmallest(3, "Índice de fluidez")
-                st.markdown(
-                    "**Mayor congestión en la ruta:** " + " · ".join(
-                        f"{r['Nodo']} ({r['Índice de fluidez']:.2f}, {r['Estado'].lower()})"
-                        for _, r in criticos.iterrows()
+        if rutas:
+            st.markdown("### Detalle de las alternativas")
+            etiquetas_detalle = ["Ruta recomendada", "Segunda alternativa",
+                                  "Tercera alternativa"]
+            for i, opcion in enumerate(rutas):
+                minutos_opcion = opcion["tiempo_s"] / 60
+                with st.expander(
+                    f"Ruta {i + 1} · {etiquetas_detalle[i]} · {minutos_opcion:.1f} min",
+                    expanded=i == indice_ruta,
+                ):
+                    st.markdown(
+                        "**Secuencia completa:** " + " → ".join(
+                            nombres.get(n, n) for n in opcion["nodos"]
+                        )
                     )
-                )
-            st.dataframe(
-                tabla_ruta.style.format({"Velocidad (km/h)": "{:.1f}", "Índice de fluidez": "{:.2f}"}),
-                width="stretch", hide_index=True,
-            )
+                    tabla_ruta = pd.DataFrame([{
+                        "Número": numero + 1,
+                        "Nodo": nombres.get(n, n),
+                        "Velocidad de circulación": prom.get(n, {}).get("vel_actual"),
+                        "Velocidad de flujo libre": prom.get(n, {}).get("vel_libre"),
+                        "Índice de fluidez": prom.get(n, {}).get("ratio"),
+                        "Estado": clasificar_ratio(prom.get(n, {}).get("ratio"))[1],
+                    } for numero, n in enumerate(opcion["nodos"])])
+                    criticos = tabla_ruta.dropna(
+                        subset=["Índice de fluidez"]
+                    ).nsmallest(3, "Índice de fluidez")
+                    if not criticos.empty:
+                        st.markdown(
+                            "**Puntos con mayor congestión:** " + " · ".join(
+                                f"{fila['Nodo']} ({fila['Índice de fluidez']:.2f}, "
+                                f"{fila['Estado'].lower()})"
+                                for _, fila in criticos.iterrows()
+                            )
+                        )
+                    st.dataframe(
+                        tabla_ruta.style.format({
+                            "Velocidad de circulación": "{:.1f} km/h",
+                            "Velocidad de flujo libre": "{:.1f} km/h",
+                            "Índice de fluidez": "{:.2f}",
+                        }, na_rep="—"),
+                        width="stretch", hide_index=True,
+                    )
 
 # ----------------------------------------------------------------
 # TAB SIMULACION DE CIERRES

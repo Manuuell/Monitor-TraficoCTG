@@ -27,6 +27,16 @@ COLOR_BORDE_RUTA = "#12307a"  # --ink del dashboard R
 COLOR_CIERRE = "#ef4444"
 COLOR_RUTA_NORMAL = "#64748b"
 COLORES_RUTAS = ["#14b8a6", "#f97316", "#8b5cf6"]
+# Ajuste de extremos en dobles calzadas. Solo se considera otra calzada si el
+# trazado legal vuelve cerca del punto con direccion opuesta y separacion
+# lateral real; asi no se elimina un retorno sobre la misma calzada.
+DIST_CALZADA_MIN_M = 4.0
+DIST_CALZADA_MAX_M = 350.0
+RECORTE_MIN_M = 40.0
+RECORTE_MAX_M = 3000.0
+AHORRO_MIN_M = 35.0
+FACTOR_ACCESO = 2.0
+VELOCIDAD_ACCESO_KMH = 18.0
 # Un color por corredor en el orden de la hoja CORREDORES (PALETA_AVENIDAS
 # del dashboard R): el color de cada uno no cambia al filtrar
 PALETA_CORREDORES = [
@@ -55,6 +65,10 @@ def cargar_red(path_json, catalogo: pd.DataFrame, pares_excel: list) -> dict:
     no existe el JSON.
     """
     puntos = catalogo.set_index("id_nodo")[["lat", "lon"]].to_dict("index")
+    coordenadas = {
+        str(id_nodo): [float(p["lat"]), float(p["lon"])]
+        for id_nodo, p in puntos.items()
+    }
     if path_json.exists():
         with open(path_json, encoding="utf-8") as f:
             datos = json.load(f)
@@ -71,6 +85,7 @@ def cargar_red(path_json, catalogo: pd.DataFrame, pares_excel: list) -> dict:
             "penalizaciones_giro": datos.get("penalizaciones_giro", []),
             "retardos_nodo_s": datos.get(
                 "retardos_nodo_s", datos.get("penalizaciones_nodo_s", {})),
+            "puntos": coordenadas,
         }
 
     conexiones = []
@@ -81,7 +96,7 @@ def cargar_red(path_json, catalogo: pd.DataFrame, pares_excel: list) -> dict:
     return {"conexiones": conexiones, "por_via": False,
             "fuente": "hoja REDES en línea recta (falta data/red_nodos.json)",
             "restricciones_giro": [], "penalizaciones_giro": [],
-            "retardos_nodo_s": {}}
+            "retardos_nodo_s": {}, "puntos": coordenadas}
 
 
 def _armonica(va, vb) -> float:
@@ -215,6 +230,101 @@ def _delta_xy_m(p: list, q: list) -> tuple:
             (q[0] - p[0]) * 111320)
 
 
+def _distancia_puntos_m(p: list, q: list) -> float:
+    """Distancia local entre dos coordenadas [lat, lon]."""
+    return math.hypot(*_delta_xy_m(p, q))
+
+
+def _longitud_trazo_m(path: list) -> float:
+    """Longitud geometrica de una polilinea en metros."""
+    return sum(_distancia_puntos_m(p, q) for p, q in zip(path, path[1:]))
+
+
+def _proyecciones_sobre_trazo(path: list, punto: list) -> list:
+    """Proyecta un punto sobre cada segmento y conserva distancia y direccion."""
+    salida, acumulado = [], 0.0
+    for indice, (a, b) in enumerate(zip(path, path[1:])):
+        dx, dy = _delta_xy_m(a, b)
+        largo = math.hypot(dx, dy)
+        if largo <= 0:
+            continue
+        px, py = _delta_xy_m(a, punto)
+        fraccion = min(1.0, max(0.0, (px * dx + py * dy) / (largo * largo)))
+        proyectado = [
+            a[0] + (b[0] - a[0]) * fraccion,
+            a[1] + (b[1] - a[1]) * fraccion,
+        ]
+        salida.append({
+            "segmento": indice,
+            "fraccion": fraccion,
+            "punto": proyectado,
+            "progreso_m": acumulado + largo * fraccion,
+            "acceso_m": _distancia_puntos_m(punto, proyectado),
+            "direccion": (dx / largo, dy / largo),
+        })
+        acumulado += largo
+    return salida
+
+
+def _ancla_base(path: list, punto: list, inicio: bool) -> dict:
+    """Ancla original que entrego el motor de ruteo en un extremo."""
+    if inicio:
+        a, b, segmento, fraccion = path[0], path[1], 0, 0.0
+        progreso = 0.0
+    else:
+        a, b = path[-2], path[-1]
+        segmento, fraccion = len(path) - 2, 1.0
+        progreso = _longitud_trazo_m(path)
+    dx, dy = _delta_xy_m(a, b)
+    largo = math.hypot(dx, dy) or 1.0
+    extremo = path[0] if inicio else path[-1]
+    return {
+        "segmento": segmento, "fraccion": fraccion,
+        "punto": list(extremo), "progreso_m": progreso,
+        "acceso_m": _distancia_puntos_m(punto, extremo),
+        "direccion": (dx / largo, dy / largo),
+    }
+
+
+def _anclas_extremo(path: list, punto: list, inicio: bool) -> list:
+    """
+    Ancla original y posibles calzadas paralelas recorridas legalmente por el
+    mismo trazado. La direccion opuesta y la separacion lateral impiden
+    confundir un retorno necesario sobre la misma calzada con otra calzada.
+    """
+    base = _ancla_base(path, punto, inicio)
+    total = _longitud_trazo_m(path)
+    candidatos = [base]
+    for candidato in _proyecciones_sobre_trazo(path, punto):
+        recorte = (candidato["progreso_m"] if inicio
+                   else total - candidato["progreso_m"])
+        separacion = _distancia_puntos_m(base["punto"], candidato["punto"])
+        producto = sum(x * y for x, y in zip(
+            base["direccion"], candidato["direccion"]))
+        if not (RECORTE_MIN_M <= recorte <= RECORTE_MAX_M):
+            continue
+        if not (DIST_CALZADA_MIN_M <= separacion <= DIST_CALZADA_MAX_M):
+            continue
+        if candidato["acceso_m"] > DIST_CALZADA_MAX_M or producto > -0.2:
+            continue
+        candidatos.append(candidato)
+    return candidatos
+
+
+def _recortar_trazo(path: list, ancla_inicio: dict, ancla_fin: dict) -> list:
+    """Recorta una polilinea entre dos proyecciones e inserta ambos puntos."""
+    salida = [ancla_inicio["punto"]]
+    for indice in range(ancla_inicio["segmento"] + 1,
+                        ancla_fin["segmento"] + 1):
+        salida.append(list(path[indice]))
+    salida.append(ancla_fin["punto"])
+    limpia = []
+    for punto in salida:
+        if not limpia or _distancia_puntos_m(limpia[-1], punto) > 0.05:
+            limpia.append(punto)
+    return limpia
+
+
 def _muestras_trazo(path: list, paso_m: float = 8.0) -> list:
     """Muestrea una polilinea e incluye la direccion local de cada punto."""
     muestras = []
@@ -316,8 +426,91 @@ def _aristas_para_rutas(red: dict, promedios: dict,
                               else d / (v / 3.6)) + retardo),
                 "retardo_s": retardo,
                 "conexion": c, "sentido": sentido,
+                "v": v, "v_libre": v_libre,
             })
     return aristas
+
+
+def _ajustar_arista_extremos(arista: dict, origen: str, destino: str,
+                              u: str, red: dict) -> dict:
+    """Recorta el rodeo inicial/final de una arista y recalcula su costo."""
+    w = arista["hacia"]
+    ajustar_inicio, ajustar_fin = u == origen, w == destino
+    path = _trazo_dirigido(arista["conexion"], arista["sentido"])
+    puntos = red.get("puntos", {})
+    if (len(path) < 2 or (ajustar_inicio and origen not in puntos)
+            or (ajustar_fin and destino not in puntos)
+            or not (ajustar_inicio or ajustar_fin)):
+        return arista
+
+    total_geom = _longitud_trazo_m(path)
+    if total_geom <= 0:
+        return arista
+    if ajustar_inicio:
+        anclas_inicio = _anclas_extremo(path, puntos[origen], True)
+        inicio_base = anclas_inicio[0]
+    else:
+        inicio_base = _ancla_base(path, path[0], True)
+        anclas_inicio = [inicio_base]
+    if ajustar_fin:
+        anclas_fin = _anclas_extremo(path, puntos[destino], False)
+        fin_base = anclas_fin[0]
+    else:
+        fin_base = _ancla_base(path, path[-1], False)
+        anclas_fin = [fin_base]
+
+    opciones = []
+    for ancla_inicio in anclas_inicio:
+        for ancla_fin in anclas_fin:
+            recorrido = ancla_fin["progreso_m"] - ancla_inicio["progreso_m"]
+            if recorrido <= 1.0:
+                continue
+            acceso = ((ancla_inicio["acceso_m"] if ajustar_inicio else 0.0)
+                      + (ancla_fin["acceso_m"] if ajustar_fin else 0.0))
+            opciones.append((recorrido + FACTOR_ACCESO * acceso,
+                             recorrido, acceso, ancla_inicio, ancla_fin))
+    if not opciones:
+        return arista
+    opciones.sort(key=lambda x: (x[0], x[1], x[2]))
+    mejor = opciones[0]
+    base = next((x for x in opciones
+                 if x[3] is inicio_base and x[4] is fin_base), opciones[-1])
+    # Un ahorro pequeño puede ser ruido de la geometria simplificada. En ese
+    # caso se conserva el anclaje original y solo se suma su acceso lateral.
+    if base[0] - mejor[0] < AHORRO_MIN_M:
+        mejor = base
+    _, recorrido_geom, acceso_m, ancla_inicio, ancla_fin = mejor
+    distancia_via = arista["d"] * recorrido_geom / total_geom
+    velocidad = arista["v"]
+    velocidad_libre = arista["v_libre"]
+    if pd.isna(velocidad_libre):
+        velocidad_libre = velocidad
+    tiempo_acceso = acceso_m / (VELOCIDAD_ACCESO_KMH / 3.6)
+    ajustada = {
+        **arista,
+        "d": distancia_via + acceso_m,
+        "t": distancia_via / (velocidad / 3.6) + tiempo_acceso + arista["retardo_s"],
+        "t_libre": (distancia_via / (velocidad_libre / 3.6)
+                     + tiempo_acceso + arista["retardo_s"]),
+        "path_ajustado": _recortar_trazo(path, ancla_inicio, ancla_fin),
+        "acceso_m": acceso_m,
+        "recorte_m": max(0.0, arista["d"] - distancia_via),
+    }
+    if ajustar_inicio:
+        ajustada["punto_origen"] = ancla_inicio["punto"]
+        ajustada["calzada_origen_ajustada"] = ancla_inicio is not inicio_base
+    if ajustar_fin:
+        ajustada["punto_destino"] = ancla_fin["punto"]
+        ajustada["calzada_destino_ajustada"] = ancla_fin is not fin_base
+    return ajustada
+
+
+def _ajustar_extremos(aristas: dict, origen: str, destino: str, red: dict) -> dict:
+    """Aplica el anclaje de calzada a las aristas que salen/llegan al viaje."""
+    return {
+        u: [_ajustar_arista_extremos(a, origen, destino, u, red) for a in salidas]
+        for u, salidas in aristas.items()
+    }
 
 
 def _dijkstra_pasos(origen: str, destino: str, aristas: dict, red: dict,
@@ -366,17 +559,30 @@ def _dijkstra_pasos(origen: str, destino: str, aristas: dict, red: dict,
 
 def _resumir_pasos(origen: str, pasos: list) -> dict:
     """Convierte una secuencia de aristas en el formato público de ruta."""
-    return {
+    resumen = {
         "nodos": [origen] + [p["hacia"] for p in pasos],
         "tramos": [(p["conexion"], p["sentido"]) for p in pasos],
+        "trazos": [p.get("path_ajustado") or _trazo_dirigido(
+            p["conexion"], p["sentido"]) for p in pasos],
         "dist_m": sum(p["d"] for p in pasos),
         "tiempo_s": sum(p["t"] + p.get("retardo_giro_s", 0) for p in pasos),
         "tiempo_libre_s": sum(
             p["t_libre"] + p.get("retardo_giro_s", 0) for p in pasos),
         "retardo_s": sum(
             p.get("retardo_s", 0) + p.get("retardo_giro_s", 0) for p in pasos),
+        "acceso_m": sum(p.get("acceso_m", 0) for p in pasos),
+        "recorte_m": sum(p.get("recorte_m", 0) for p in pasos),
         "_pasos": pasos,
     }
+    if pasos and pasos[0].get("punto_origen"):
+        resumen["punto_origen"] = pasos[0]["punto_origen"]
+        resumen["calzada_origen_ajustada"] = pasos[0].get(
+            "calzada_origen_ajustada", False)
+    if pasos and pasos[-1].get("punto_destino"):
+        resumen["punto_destino"] = pasos[-1]["punto_destino"]
+        resumen["calzada_destino_ajustada"] = pasos[-1].get(
+            "calzada_destino_ajustada", False)
+    return resumen
 
 
 def rutas_mas_rapidas(origen: str, destino: str, red: dict, promedios: dict,
@@ -390,6 +596,7 @@ def rutas_mas_rapidas(origen: str, destino: str, red: dict, promedios: dict,
     if not origen or not destino or origen == destino or cantidad < 1:
         return []
     aristas = _aristas_para_rutas(red, promedios, cierres)
+    aristas = _ajustar_extremos(aristas, origen, destino, red)
     primeros_pasos = _dijkstra_pasos(origen, destino, aristas, red)
     if primeros_pasos is None:
         return []
@@ -558,6 +765,14 @@ def _trazo_corredor(conexion: dict, puntos: dict, por_via: bool,
     return _trazo(conexion, puntos, por_via, sentido)
 
 
+def _trazos_de_ruta(ruta: dict, puntos: dict, por_via: bool) -> list:
+    """Geometrias de una ruta, con los extremos recortados cuando aplica."""
+    if por_via and len(ruta.get("trazos", [])) == len(ruta["tramos"]):
+        return ruta["trazos"]
+    return [_trazo(conexion, puntos, por_via, sentido)
+            for conexion, sentido in ruta["tramos"]]
+
+
 def construir_mapa_red(df: pd.DataFrame, red: dict, promedios: dict, metrica: str,
                        metrica_label: str, clasificar_ratio, mostrar_conexiones: bool,
                        por_via: bool, ruta=None, en_vivo: bool = False,
@@ -639,14 +854,14 @@ def construir_mapa_red(df: pd.DataFrame, red: dict, promedios: dict, metrica: st
             opcion = rutas_mapa[indice]
             color = COLORES_RUTAS[indice % len(COLORES_RUTAS)]
             if indice == ruta_seleccionada:
-                for conexion, sentido in opcion["tramos"]:
+                for trazado in _trazos_de_ruta(opcion, puntos, por_via):
                     folium.PolyLine(
-                        _trazo(conexion, puntos, por_via, sentido),
+                        trazado,
                         color=COLOR_BORDE_RUTA, weight=12, opacity=0.9,
                     ).add_to(capa_ruta)
-            for conexion, sentido in opcion["tramos"]:
+            for trazado in _trazos_de_ruta(opcion, puntos, por_via):
                 folium.PolyLine(
-                    _trazo(conexion, puntos, por_via, sentido),
+                    trazado,
                     color=color,
                     weight=7 if indice == ruta_seleccionada else 4,
                     opacity=1 if indice == ruta_seleccionada else 0.48,
@@ -671,7 +886,10 @@ def construir_mapa_red(df: pd.DataFrame, red: dict, promedios: dict, metrica: st
         color_activo = COLORES_RUTAS[ruta_seleccionada % len(COLORES_RUTAS)]
         for id_nodo, etiqueta in ((ruta_activa["nodos"][0], "Origen"),
                                   (ruta_activa["nodos"][-1], "Destino")):
-            p = puntos[id_nodo]
+            coordenada = (ruta_activa.get("punto_origen") if etiqueta == "Origen"
+                          else ruta_activa.get("punto_destino")) if por_via else None
+            p = ({"lat": coordenada[0], "lon": coordenada[1]}
+                 if coordenada else puntos[id_nodo])
             folium.CircleMarker(
                 location=[p["lat"], p["lon"]], radius=14, color=color_activo, weight=4,
                 fill=False, tooltip=folium.Tooltip(etiqueta, permanent=True),
@@ -725,18 +943,18 @@ def construir_mapa_simulacion(
 
     if ruta_normal:
         capa_normal = folium.FeatureGroup(name="Ruta sin cierres", control=False).add_to(m)
-        for conexion, sentido in ruta_normal["tramos"]:
+        for trazado in _trazos_de_ruta(ruta_normal, puntos, por_via):
             folium.PolyLine(
-                _trazo(conexion, puntos, por_via, sentido), color=COLOR_RUTA_NORMAL,
+                trazado, color=COLOR_RUTA_NORMAL,
                 weight=6, opacity=0.75, dash_array="10 8", tooltip="Ruta sin cierres",
             ).add_to(capa_normal)
 
     if ruta_alternativa:
         capa_alt = folium.FeatureGroup(name="Ruta alternativa", control=False).add_to(m)
         for color, grosor in ((COLOR_BORDE_RUTA, 13), (COLOR_RUTA, 7)):
-            for conexion, sentido in ruta_alternativa["tramos"]:
+            for trazado in _trazos_de_ruta(ruta_alternativa, puntos, por_via):
                 folium.PolyLine(
-                    _trazo(conexion, puntos, por_via, sentido), color=color,
+                    trazado, color=color,
                     weight=grosor, opacity=1, tooltip="Ruta alternativa",
                 ).add_to(capa_alt)
 
@@ -770,7 +988,11 @@ def construir_mapa_simulacion(
     for id_nodo, etiqueta, color in (
             (origen, "Origen", "#22c55e"), (destino, "Destino", "#f59e0b")):
         if id_nodo in puntos:
-            p = puntos[id_nodo]
+            ruta_marcadores = ruta_alternativa or ruta_normal or {}
+            coordenada = (ruta_marcadores.get("punto_origen") if etiqueta == "Origen"
+                          else ruta_marcadores.get("punto_destino")) if por_via else None
+            p = ({"lat": coordenada[0], "lon": coordenada[1]}
+                 if coordenada else puntos[id_nodo])
             folium.CircleMarker(
                 location=[p["lat"], p["lon"]], radius=14, color=color, weight=5,
                 fill=False, tooltip=folium.Tooltip(etiqueta, permanent=True),

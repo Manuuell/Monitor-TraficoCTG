@@ -185,5 +185,148 @@ class SimulacionCierresTest(unittest.TestCase):
         self.assertEqual(ruta["nodos"], ["E", "A", "C", "D"])
 
 
+class CalzadasParalelasTest(unittest.TestCase):
+    def setUp(self):
+        self.promedios = {
+            nodo: {"vel_actual": 36.0, "vel_libre": 45.0, "ratio": 0.8}
+            for nodo in "OABD"
+        }
+
+    @staticmethod
+    def conexion(a, b, path, distancia=1400, **extra):
+        return {
+            "a": a, "b": b, "d_ab_m": distancia, "d_ba_m": distancia,
+            "path": path, "path_ba": list(reversed(path)), **extra,
+        }
+
+    def test_origen_elige_la_calzada_paralela_que_avanza_al_destino(self):
+        path = [
+            [10.0000, -75.0000], [10.0000, -75.0010],
+            [10.0001, -75.0010], [10.0001, -75.0000],
+            [10.0001, -74.9900],
+        ]
+        red = {
+            "conexiones": [self.conexion("O", "D", path)],
+            "puntos": {"O": [10.0000, -75.0000], "D": [10.0000, -74.9900]},
+            "restricciones_giro": [],
+        }
+        ruta = red_nodos.ruta_mas_rapida("O", "D", red, self.promedios)
+        self.assertTrue(ruta["calzada_origen_ajustada"])
+        self.assertGreater(ruta["recorte_m"], 150)
+        self.assertLess(ruta["dist_m"], 1300)
+        self.assertAlmostEqual(ruta["punto_origen"][0], 10.0001, places=5)
+        self.assertEqual(ruta["trazos"][0][0], ruta["punto_origen"])
+
+    def test_destino_termina_en_la_calzada_correcta_sin_vuelta_final(self):
+        path = [
+            [10.0000, -75.0000], [10.0000, -74.9900],
+            [10.0000, -74.9890], [10.0001, -74.9890],
+            [10.0001, -74.9900],
+        ]
+        red = {
+            "conexiones": [self.conexion("O", "D", path)],
+            "puntos": {"O": [10.0000, -75.0000], "D": [10.0000, -74.9900]},
+            "restricciones_giro": [],
+        }
+        ruta = red_nodos.ruta_mas_rapida("O", "D", red, self.promedios)
+        self.assertTrue(ruta["calzada_destino_ajustada"])
+        self.assertGreater(ruta["recorte_m"], 150)
+        self.assertLess(ruta["dist_m"], 1300)
+        self.assertEqual(ruta["trazos"][0][-1], ruta["punto_destino"])
+
+    def test_compara_calzadas_antes_de_elegir_la_ruta_mas_rapida(self):
+        puntos = {
+            "O": [10.0000, -75.0000], "A": [10.0010, -74.9950],
+            "D": [10.0000, -74.9900],
+        }
+        path_con_retorno = [
+            [10.0000, -75.0000], [10.0000, -75.0010],
+            [10.0001, -75.0010], [10.0001, -75.0000],
+            [10.0001, -74.9900],
+        ]
+        conexiones = [
+            self.conexion("O", "D", path_con_retorno, 1400),
+            self.conexion("O", "A", [puntos["O"], puntos["A"]], 650),
+            self.conexion("A", "D", [puntos["A"], puntos["D"]], 650),
+        ]
+        red_sin_ajuste = {"conexiones": conexiones, "restricciones_giro": []}
+        red_ajustada = {**red_sin_ajuste, "puntos": puntos}
+        anterior = red_nodos.ruta_mas_rapida(
+            "O", "D", red_sin_ajuste, self.promedios)
+        corregida = red_nodos.ruta_mas_rapida(
+            "O", "D", red_ajustada, self.promedios)
+        self.assertEqual(anterior["nodos"], ["O", "A", "D"])
+        self.assertEqual(corregida["nodos"], ["O", "D"])
+        self.assertLess(corregida["tiempo_s"], anterior["tiempo_s"])
+
+    def test_misma_via_y_sentido_no_se_recorta(self):
+        path = [[10.0000, -75.0000], [10.0000, -74.9950], [10.0000, -74.9900]]
+        red = {
+            "conexiones": [self.conexion("O", "D", path, distancia=1100)],
+            "puntos": {"O": path[0], "D": path[-1]},
+            "restricciones_giro": [],
+        }
+        ruta = red_nodos.ruta_mas_rapida("O", "D", red, self.promedios)
+        self.assertFalse(ruta["calzada_origen_ajustada"])
+        self.assertFalse(ruta["calzada_destino_ajustada"])
+        self.assertAlmostEqual(ruta["dist_m"], 1100)
+
+    def test_sentido_opuesto_usa_su_geometria_dirigida(self):
+        ida = [[10.0001, -75.0000], [10.0001, -74.9900]]
+        vuelta = [[10.0000, -74.9900], [10.0000, -75.0000]]
+        conexion = self.conexion("O", "D", ida, distancia=1100)
+        conexion["path_ba"] = vuelta
+        red = {
+            "conexiones": [conexion],
+            "puntos": {"O": [10.0000, -75.0000], "D": [10.0000, -74.9900]},
+            "restricciones_giro": [],
+        }
+        ruta = red_nodos.ruta_mas_rapida("D", "O", red, self.promedios)
+        self.assertEqual(ruta["trazos"][0], vuelta)
+        self.assertEqual(ruta["nodos"], ["D", "O"])
+
+    def test_via_de_un_solo_sentido_no_inventa_la_vuelta(self):
+        path = [[10.0000, -75.0000], [10.0000, -74.9900]]
+        red = {
+            "conexiones": [self.conexion(
+                "O", "D", path, permitir_ab=True, permitir_ba=False)],
+            "puntos": {"O": path[0], "D": path[-1]},
+            "restricciones_giro": [],
+        }
+        self.assertIsNone(red_nodos.ruta_mas_rapida("D", "O", red, self.promedios))
+
+    def test_retorno_necesario_en_la_misma_calzada_se_conserva(self):
+        path = [
+            [10.0000, -75.0000], [10.0000, -74.9950],
+            [10.0000, -75.0000], [10.0000, -75.0050],
+        ]
+        red = {
+            "conexiones": [self.conexion("O", "D", path, distancia=1700)],
+            "puntos": {"O": path[0], "D": path[-1]},
+            "restricciones_giro": [],
+        }
+        ruta = red_nodos.ruta_mas_rapida("O", "D", red, self.promedios)
+        self.assertFalse(ruta["calzada_origen_ajustada"])
+        self.assertAlmostEqual(ruta["dist_m"], 1700)
+
+    def test_un_cierre_obliga_a_usar_la_otra_conexion(self):
+        puntos = {
+            "O": [10.0000, -75.0000], "A": [10.0000, -74.9950],
+            "B": [10.0010, -74.9950], "D": [10.0000, -74.9900],
+        }
+        conexiones = [
+            self.conexion("O", "A", [puntos["O"], puntos["A"]], 500),
+            self.conexion("A", "D", [puntos["A"], puntos["D"]], 500),
+            self.conexion("O", "B", [
+                puntos["O"], [10.0010, -75.0000], puntos["B"]], 700),
+            self.conexion("B", "D", [puntos["B"], puntos["D"]], 700),
+        ]
+        red = {"conexiones": conexiones, "puntos": puntos, "restricciones_giro": []}
+        cierre = [{"inicio": "O", "fin": "A", "sentido": "ida"}]
+        ruta = red_nodos.ruta_mas_rapida(
+            "O", "D", red, self.promedios, cierres=cierre)
+        self.assertEqual(ruta["nodos"], ["O", "B", "D"])
+
+
 if __name__ == "__main__":
     unittest.main()

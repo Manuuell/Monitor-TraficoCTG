@@ -1559,6 +1559,12 @@ def calcular_proxima_ejecucion():
 def render_analisis_nodo():
     """Cuatro vistas coordinadas del comportamiento de un unico nodo."""
     st.markdown("### Análisis por nodo")
+    st.caption(
+        "Examina detalladamente el comportamiento de un punto de monitoreo. "
+        "Permite seleccionar el nodo, el periodo de análisis, el horario y el tipo "
+        "de día para estudiar su evolución histórica, patrón horario, velocidades, "
+        "índice de fluidez y distribución de los estados de circulación."
+    )
 
     with st.spinner("Consultando datos disponibles..."):
         min_fecha, max_fecha, _ = rango_fechas_historico()
@@ -1930,6 +1936,12 @@ def render_analisis_nodo():
 def render_analisis_temporal():
     """Vista temporal con una sola muestra estadistica para los cuatro graficos."""
     st.markdown("### Análisis temporal")
+    st.caption(
+        "Analiza cómo cambian las condiciones de movilidad de la red a través del "
+        "tiempo. Permite seleccionar el indicador, el periodo, las horas, los puntos "
+        "de monitoreo y el tipo de día para comparar la evolución mensual, los "
+        "patrones horarios, los mapas de calor y la distribución de los datos."
+    )
 
     with st.spinner("Consultando datos disponibles..."):
         min_fecha, max_fecha, fuente_rango = rango_fechas_historico()
@@ -2665,6 +2677,13 @@ tab_mapa, tab_red, tab_historia, tab_temporal, tab_datos, tab_simulacion = st.ta
 # TAB MAPA
 # ----------------------------------------------------------------
 with tab_mapa:
+    st.markdown("### Mapa de tráfico")
+    st.caption(
+        "Visualiza las condiciones de movilidad en los 113 puntos de monitoreo mediante "
+        "la velocidad de circulación, la velocidad de flujo libre y el índice de fluidez. "
+        "Permite delimitar la consulta por periodo, horario y tipo de día, además de "
+        "mostrar toda la red o concentrar el análisis en uno o varios puntos específicos."
+    )
     catalogo = cargar_catalogo()
     if catalogo.empty:
         st.info("No se pudo leer el catálogo de nodos (nodos.xlsx).")
@@ -2766,6 +2785,15 @@ with tab_mapa:
 # TAB RED DE NODOS
 # ----------------------------------------------------------------
 with tab_red:
+    st.markdown("### Red de nodos")
+    st.caption(
+        "Explora los nodos y las conexiones que conforman la red vial monitoreada. "
+        "Permite seleccionar el indicador que se desea representar y delimitar la "
+        "información por periodo, horario y tipo de día. También ofrece la consulta de "
+        "los principales corredores y el cálculo de rutas entre un origen y un destino, "
+        "mostrando las alternativas con menor tiempo estimado, su distancia, velocidad "
+        "promedio, fluidez y nodos recorridos."
+    )
     catalogo = cargar_catalogo()
     if catalogo.empty:
         st.info("No se pudo leer el catálogo de nodos (nodos.xlsx).")
@@ -3000,16 +3028,16 @@ with tab_red:
 # TAB SIMULACION DE CIERRES
 # ----------------------------------------------------------------
 with tab_simulacion:
+    st.markdown("### Simulación de cierres de vías")
+    st.caption(
+        "Selecciona dos nodos conectados directamente para cerrar temporalmente ese tramo. "
+        "Puedes agregar varios cierres y definir el sentido afectado. Después, selecciona "
+        "el origen y el destino de tu viaje para calcular la alternativa con menor tiempo estimado."
+    )
     catalogo = cargar_catalogo()
     if catalogo.empty:
         st.info("No se pudo leer el catálogo de nodos (nodos.xlsx).")
     else:
-        st.markdown("### Simulación de cierres de vías")
-        st.caption(
-            "Selecciona dos nodos conectados directamente para cerrar temporalmente ese tramo. "
-            "Puedes agregar varios cierres y definir el sentido afectado. Después, selecciona "
-            "el origen y el destino de tu viaje para calcular la alternativa con menor tiempo estimado."
-        )
         red_sim = cargar_red()
         nombres_sim = dict(zip(catalogo["id_nodo"], catalogo["nombre_nodo"]))
         cierres_sim = st.session_state.setdefault("sim_cierres", [])
@@ -3360,7 +3388,13 @@ with tab_temporal:
 # TAB HISTORICO
 # ----------------------------------------------------------------
 with tab_historia:
-    st.markdown("### Datos históricos")
+    st.markdown("### Histórico")
+    st.caption(
+        "Consulta el comportamiento de la red durante los últimos siete días o selecciona "
+        "una semana específica. Permite revisar toda la red o elegir un nodo para identificar "
+        "sus horas con mejores y peores condiciones, así como los puntos que presentaron mayor "
+        "congestión durante el periodo."
+    )
     st.caption("Incluye datos de VPS 1 (Turnos 1-2) y VPS 2 (Turnos 3-4)")
 
     # Rango de fechas disponible (consulta ligera; los datos del periodo se

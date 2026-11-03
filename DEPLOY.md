@@ -157,10 +157,22 @@ sudo systemctl status dashboard
 Instalar la configuracion segura de Nginx incluida en el proyecto:
 
 ```bash
+sudo cp deploy/nginx-dashboard-trafico.conf /etc/nginx/snippets/dashboard-trafico.conf
 sudo cp deploy/nginx-tomtom.conf /etc/nginx/sites-available/tomtom-utb
 sudo ln -s /etc/nginx/sites-available/tomtom-utb /etc/nginx/sites-enabled/tomtom-utb
 sudo nginx -t
 sudo systemctl reload nginx
+```
+
+El vhost sirve dos dominios, cada uno con su certificado:
+`smartcity.sentralabs.co` (principal; el comodin `*.sentralabs.co` de
+Namecheap ya apunta a VPS1) y `tomtom-utb.duckdns.org`. Las cabeceras de
+seguridad y el proxy a Streamlit estan en el snippet, compartido por los dos.
+Para emitir el certificado de un dominio nuevo, primero debe estar en el
+`server_name` del bloque 80 y despues:
+
+```bash
+sudo certbot certonly --nginx -d smartcity.sentralabs.co
 ```
 
 En Oracle Cloud y en `ufw`, publicar solamente los puertos necesarios: `22`
@@ -183,6 +195,7 @@ ingreso tanto en `ufw` como en la Security List de Oracle Cloud.
 
 Acceder al dashboard:
 ```
+https://smartcity.sentralabs.co/
 https://tomtom-utb.duckdns.org/
 ```
 

@@ -4,7 +4,7 @@
 
 Sistema distribuido que recolecta, almacena y publica datos de tráfico en tiempo real para la ciudad de Cartagena de Indias. Monitorea **113 nodos** sobre las principales vías consultando la **API TomTom Traffic Flow**, y expone los resultados en un tablero web interactivo.
 
-🔗 **Sistema en vivo:** [tomtom-utb.duckdns.org](https://tomtom-utb.duckdns.org)
+🔗 **Sistema en vivo:** [smartcity.sentralabs.co](https://smartcity.sentralabs.co) (también en [tomtom-utb.duckdns.org](https://tomtom-utb.duckdns.org))
 
 ![Mapa de tráfico del dashboard](docs/capturas/01_inicio_mapa_trafico.jpg)
 

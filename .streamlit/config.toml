@@ -18,7 +18,7 @@ address = "127.0.0.1"
 headless = true
 enableCORS = true
 enableXsrfProtection = true
-corsAllowedOrigins = ["https://tomtom-utb.duckdns.org"]
+corsAllowedOrigins = ["https://smartcity.sentralabs.co", "https://tomtom-utb.duckdns.org"]
 
 [browser]
 gatherUsageStats = false

@@ -21,7 +21,8 @@ import mapa_nodos
 
 
 COBERTURA_NODO_M = 1400.0
-COBERTURA_RED_M = 500.0
+COBERTURA_RED_M = 180.0
+PASO_MUESTREO_RED_M = 100.0
 RESOLUCION_VERTICAL = 170
 
 CONFIG_INDICADORES = {
@@ -61,11 +62,11 @@ CONFIG_INDICADORES = {
         # lento, moderado y fluido. Entre cortes se interpola para obtener una
         # superficie continua, sin cambiar la clasificacion de los nodos.
         "paradas": [
-            (0.00, "#ef4444"),
-            (0.60, "#ef4444"),
-            (0.75, "#f97316"),
-            (0.90, "#f59e0b"),
-            (1.00, "#10b981"),
+            (0.00, "#ff1744"),
+            (0.60, "#ff1744"),
+            (0.75, "#ff5a00"),
+            (0.90, "#ffb000"),
+            (1.00, "#00c853"),
         ],
         "ticks": ["0", "0,60", "0,75", "0,90", "1"],
     },
@@ -93,8 +94,8 @@ class _LeyendaFluidezMapa(MacroElement):
           .leyenda-fluidez-mapa .barra {
             height: 12px; border-radius: 6px;
             background: linear-gradient(90deg,
-              #ef4444 0%, #ef4444 60%, #f97316 75%,
-              #f59e0b 90%, #10b981 100%);
+              #ff1744 0%, #ff1744 60%, #ff5a00 75%,
+              #ffb000 90%, #00c853 100%);
           }
           .leyenda-fluidez-mapa .marcas { position: relative; height: 17px; margin-top: 3px; }
           .leyenda-fluidez-mapa .marca { position: absolute; transform: translateX(-50%); }
@@ -206,7 +207,7 @@ def _rgba_valores(valores: np.ndarray, paradas: list[tuple[float, str]],
     salida = np.zeros((planos.size, 4), dtype=np.uint8)
     for canal in range(3):
         salida[:, canal] = np.interp(planos, posiciones, rgb[:, canal]).round().astype(np.uint8)
-    salida[:, 3] = 210
+    salida[:, 3] = 245
     return salida.reshape((*valores.shape, 4))
 
 
@@ -221,7 +222,7 @@ def _distancias_m(lat: np.ndarray, lon: np.ndarray, puntos: np.ndarray) -> np.nd
 
 
 def _puntos_red(red: dict, catalogo: pd.DataFrame) -> np.ndarray:
-    """Muestrea la geometria vial cada ~200 m para limitar la cobertura al suelo observado."""
+    """Muestrea la geometria vial para recortar la superficie a su cobertura real."""
     ubicaciones = catalogo.set_index("id_nodo")[["lat", "lon"]].to_dict("index")
     puntos = []
     for conexion in red.get("conexiones", []):
@@ -232,15 +233,24 @@ def _puntos_red(red: dict, catalogo: pd.DataFrame) -> np.ndarray:
         if not trazo:
             continue
         elegido = [trazo[0]]
-        ultimo = np.asarray(trazo[0], dtype=float)
-        for punto in trazo[1:-1]:
+        anterior = np.asarray(trazo[0], dtype=float)
+        faltante = PASO_MUESTREO_RED_M
+        for punto in trazo[1:]:
             actual = np.asarray(punto, dtype=float)
-            dy = (actual[0] - ultimo[0]) * 111_320.0
-            dx = (actual[1] - ultimo[1]) * 109_400.0
-            if math.hypot(dx, dy) >= 200.0:
-                elegido.append(punto)
-                ultimo = actual
-        elegido.append(trazo[-1])
+            while True:
+                dy = (actual[0] - anterior[0]) * 111_320.0
+                dx = (actual[1] - anterior[1]) * 109_400.0
+                longitud = math.hypot(dx, dy)
+                if longitud < faltante or longitud == 0:
+                    faltante -= longitud
+                    anterior = actual
+                    break
+                fraccion = faltante / longitud
+                anterior = anterior + (actual - anterior) * fraccion
+                elegido.append(anterior.tolist())
+                faltante = PASO_MUESTREO_RED_M
+        if elegido[-1] != trazo[-1]:
+            elegido.append(trazo[-1])
         puntos.extend(elegido)
     if not puntos:
         return np.empty((0, 2), dtype=float)
@@ -312,19 +322,19 @@ def interpolar_superficie(nodos: pd.DataFrame, columna_metrica: str,
         matriz, config_ind["paradas"], config_ind["vmin"], config_ind["vmax"]
     )
     mascara_2d = mascara.reshape(alto, ancho)
-    # Opacidad constante en la zona fiable; solo se desvanece el ultimo 20 %
-    # del borde para que el limite de cobertura no parezca una medicion exacta.
+    # Opacidad alta en la zona fiable; solo se desvanece el borde inmediato
+    # para que el limite de cobertura no parezca una medicion exacta.
     borde_nodo = np.clip(
-        (COBERTURA_NODO_M - distancia_nodo) / (COBERTURA_NODO_M * 0.20), 0, 1
+        (COBERTURA_NODO_M - distancia_nodo) / (COBERTURA_NODO_M * 0.12), 0, 1
     )
     if puntos_red.size:
         borde_red = np.clip(
-            (COBERTURA_RED_M - distancia_red) / (COBERTURA_RED_M * 0.25), 0, 1
+            (COBERTURA_RED_M - distancia_red) / (COBERTURA_RED_M * 0.15), 0, 1
         )
         borde = np.minimum(borde_nodo, borde_red)
     else:
         borde = borde_nodo
-    alpha = (210 * borde).round().astype(np.uint8).reshape(alto, ancho)
+    alpha = (245 * borde).round().astype(np.uint8).reshape(alto, ancho)
     rgba[:, :, 3] = np.where(mascara_2d, alpha, 0)
     return {
         "imagen": rgba,
@@ -377,7 +387,7 @@ def construir_mapa(nodos: pd.DataFrame, catalogo: pd.DataFrame, red: dict,
         image=superficie["imagen"],
         bounds=superficie["bounds"],
         origin="upper",
-        opacity=0.82,
+        opacity=0.96,
         pixelated=False,
         name="Intensidad del indicador",
         control=False,
@@ -389,7 +399,7 @@ def construir_mapa(nodos: pd.DataFrame, catalogo: pd.DataFrame, red: dict,
         trazo = _trazo_conexion(conexion, puntos_catalogo)
         if trazo:
             folium.PolyLine(
-                trazo, color="#475569", weight=2, opacity=0.55,
+                trazo, color="#475569", weight=1.5, opacity=0.38,
                 tooltip="Conexión de la red monitoreada",
             ).add_to(capa_red)
 

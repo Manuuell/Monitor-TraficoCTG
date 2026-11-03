@@ -62,6 +62,7 @@ class MapaCalorCartagenaTest(unittest.TestCase):
         alpha = superficie["imagen"][:, :, 3]
         self.assertGreater((alpha > 0).sum(), 0)
         self.assertGreater((alpha == 0).sum(), 0)
+        self.assertGreaterEqual(alpha.max(), 240)
         self.assertLess(superficie["celdas_cubiertas"], superficie["celdas_totales"])
 
     def test_escalas_son_fijas_y_fluidez_coincide_con_mapa_trafico(self):
@@ -73,9 +74,30 @@ class MapaCalorCartagenaTest(unittest.TestCase):
         self.assertEqual(ratio["ticks"], ["0", "0,60", "0,75", "0,90", "1"])
         self.assertEqual(
             ratio["paradas"],
-            [(0.00, "#ef4444"), (0.60, "#ef4444"), (0.75, "#f97316"),
-             (0.90, "#f59e0b"), (1.00, "#10b981")],
+            [(0.00, "#ff1744"), (0.60, "#ff1744"), (0.75, "#ff5a00"),
+             (0.90, "#ffb000"), (1.00, "#00c853")],
         )
+
+    def test_red_se_muestrea_fina_y_la_cobertura_no_invade_el_entorno(self):
+        red = {"conexiones": [{
+            "a": "A", "b": "B",
+            "path": [[10.400, -75.500], [10.400, -75.490]],
+        }]}
+        puntos = mapa_geo._puntos_red(red, self.catalogo)
+        distancias = np.hypot(
+            np.diff(puntos[:, 0]) * 111_320.0,
+            np.diff(puntos[:, 1]) * 109_400.0,
+        )
+        self.assertGreater(len(puntos), 2)
+        self.assertLessEqual(distancias.max(), mapa_geo.PASO_MUESTREO_RED_M + 2)
+        self.assertLessEqual(mapa_geo.COBERTURA_RED_M, 180)
+
+    def test_colores_de_fluidez_son_vivos_y_opacos(self):
+        ratio = mapa_geo.CONFIG_INDICADORES["velocidad_ratio"]
+        rgba = mapa_geo._rgba_valores(
+            np.asarray([[0.75]]), ratio["paradas"], ratio["vmin"], ratio["vmax"]
+        )[0, 0]
+        self.assertEqual(rgba.tolist(), [255, 90, 0, 245])
 
     def test_leyenda_fluidez_no_genera_nan(self):
         nodos = mapa_geo.resumir_nodos(self.datos, self.catalogo, "velocidad_ratio")
@@ -102,6 +124,7 @@ class MapaCalorCartagenaTest(unittest.TestCase):
         self.assertIn('"position": "bottomright"', contenido)
         self.assertIn('"collapsed": true', contenido)
         self.assertIn('classList.add("capas-compactas")', contenido)
+        self.assertIn('"opacity": 0.96', contenido)
 
 
 if __name__ == "__main__":

@@ -614,6 +614,18 @@ _CSS_POPUP = """
 .leaflet-container .leaflet-tooltip { font-size: 12px; }
 .leaflet-container .leaflet-control-layers,
 .leaflet-container .leaflet-control-scale-line { font-size: 11px; }
+.leaflet-container.capas-compactas .leaflet-control-layers-expanded {
+    padding: 5px 7px; font-size: 9px; line-height: 1.15;
+}
+.leaflet-container.capas-compactas .leaflet-control-layers label {
+    margin: 0 0 1px; white-space: nowrap;
+}
+.leaflet-container.capas-compactas .leaflet-control-layers-separator {
+    margin: 4px -7px;
+}
+.leaflet-container.capas-compactas .leaflet-control-layers-selector {
+    margin: 0 3px 0 0; transform: scale(.82); transform-origin: left center;
+}
 .legend.leaflet-control text { font-size: 10px; }
 /* Leyenda de velocidades: fondo claro (se lee en Calles y en Oscuro) y alto
    real, porque su texto se dibuja por debajo del svg y tapaba el selector */
@@ -699,6 +711,15 @@ class _ControlesEnEspanol(MacroElement):
             }
             L.control.scale({imperial: false}).addTo(mapa);
         })({{ this._parent.get_name() }});
+        {% endmacro %}
+    """)
+
+
+class _CapasCompactas(MacroElement):
+    """Reduce el selector de capas cuando se abre en mapas con poco espacio."""
+    _template = Template("""
+        {% macro script(this, kwargs) %}
+        {{ this._parent.get_name() }}.getContainer().classList.add("capas-compactas");
         {% endmacro %}
     """)
 
@@ -816,7 +837,10 @@ def agregar_nodos(m: folium.Map, df: pd.DataFrame, metrica: str, escala,
 
 
 def terminar_mapa(m: folium.Map, lat: pd.Series, lon: pd.Series,
-                  encuadrar_todos: bool = False) -> folium.Map:
+                  encuadrar_todos: bool = False,
+                  posicion_capas: str = "topright",
+                  capas_colapsadas: bool = False,
+                  capas_compactas: bool = False) -> folium.Map:
     """
     Selector de mapa, encuadre sobre los puntos dados y estilos del popup.
     encuadrar_todos: encuadra todos los puntos aunque sean muchos (corredores
@@ -828,9 +852,12 @@ def terminar_mapa(m: folium.Map, lat: pd.Series, lon: pd.Series,
         title_cancel="Salir de pantalla completa",
         force_separate_button=True,
     ).add_to(m)
-    # Selector siempre visible (no detras del boton de capas): Calles / Oscuro
-    control = folium.LayerControl(collapsed=False).add_to(m)
+    control = folium.LayerControl(
+        position=posicion_capas, collapsed=capas_colapsadas
+    ).add_to(m)
     _CapaOscura(m, control, m.capa_calles).add_to(m)
+    if capas_compactas:
+        _CapasCompactas().add_to(m)
     # Con muchos puntos se encuadra el 94 % central: los nodos aislados del
     # norte (Bayunca, Ramblas) alejaban el zoom y la ciudad se veia diminuta.
     # Con pocos (una seleccion o una ruta) se encuadran todos.

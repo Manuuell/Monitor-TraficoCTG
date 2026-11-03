@@ -2724,17 +2724,7 @@ with tab_mapa:
                 else:
                     columna_calor = mapa_calor_cartagena.COLUMNAS_MAPA[filtros["metrica"]]
                     config_calor = mapa_calor_cartagena.CONFIG_INDICADORES[columna_calor]
-                    periodo = (
-                        f"Última ejecución · {snapshot_label}" if en_vivo else
-                        f"{consulta['fecha_ini'].strftime('%d/%m/%Y')} a "
-                        f"{consulta['fecha_fin'].strftime('%d/%m/%Y')} · "
-                        f"{consulta['desde']} a {consulta['hasta']}"
-                    )
                     st.markdown(f"#### {config_calor['titulo']} · Mapa de calor")
-                    st.caption(
-                        f"{periodo} · {len(nodos_calor)} nodos · "
-                        f"{int(nodos_calor['n_mediciones'].sum()):,} mediciones"
-                    )
                     with st.spinner("Construyendo superficie continua..."):
                         mapa_calor, _ = mapa_calor_cartagena.construir_mapa(
                             nodos_calor, catalogo, cargar_red(), columna_calor,

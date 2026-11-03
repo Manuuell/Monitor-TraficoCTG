@@ -426,6 +426,8 @@ def construir_mapa(nodos: pd.DataFrame, catalogo: pd.DataFrame, red: dict,
         )
         leyenda.add_to(mapa)
     return mapa_nodos.terminar_mapa(
-        mapa, nodos["lat"], nodos["lon"], encuadrar_todos=True
+        mapa, nodos["lat"], nodos["lon"], encuadrar_todos=True,
+        posicion_capas="bottomright", capas_colapsadas=True,
+        capas_compactas=True,
     ), superficie
 

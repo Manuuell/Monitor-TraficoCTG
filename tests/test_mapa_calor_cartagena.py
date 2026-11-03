@@ -92,6 +92,17 @@ class MapaCalorCartagenaTest(unittest.TestCase):
         self.assertIn("0,75", contenido)
         self.assertIn("0,90", contenido)
 
+    def test_control_de_capas_es_compacto_colapsado_y_abajo(self):
+        nodos = mapa_geo.resumir_nodos(self.datos, self.catalogo, "velocidad_ratio")
+        mapa, _ = mapa_geo.construir_mapa(
+            nodos, self.catalogo, {"conexiones": []}, "velocidad_ratio",
+            lambda valor: ("#000", "Prueba"),
+        )
+        contenido = mapa.get_root().render()
+        self.assertIn('"position": "bottomright"', contenido)
+        self.assertIn('"collapsed": true', contenido)
+        self.assertIn('classList.add("capas-compactas")', contenido)
+
 
 if __name__ == "__main__":
     unittest.main()

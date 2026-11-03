@@ -157,8 +157,19 @@ class CorredoresDelProyectoTest(unittest.TestCase):
             config.NODOS_PATH, nodos["id_nodo"].astype(str))
         self.assertEqual(corredores["AV. PEDRO ROMERO"], [
             "Y_OLAYA", "PUE_FREDO", "ANT_PC", "OFC_ALC",
-            "ENT_GAV", "TIE_PUEBLO", "ROT_PRADO",
+            "TIE_PUEBLO", "ROT_PRADO",
         ])
+
+    def test_pedro_romero_usa_el_trazado_directo_de_calle_32(self):
+        red = json.loads((ROOT / "data" / "red_nodos.json").read_text(encoding="utf-8"))
+        conexion = next(c for c in red["conexiones"]
+                        if {c["a"], c["b"]} == {"PUE_FREDO", "Y_OLAYA"})
+        self.assertEqual(conexion["d_corredor_m"], 930)
+        self.assertEqual(len(conexion["path_corredor"]), 2)
+        self.assertLess(conexion["d_corredor_m"],
+                        min(conexion["d_ab_m"], conexion["d_ba_m"]))
+        self.assertEqual(conexion["modo_path_corredor"],
+                         "Trazado directo revisado (Calle 32)")
 
     def test_todos_los_pares_de_corredores_son_conexiones(self):
         nodos = dt.cargar_nodos(config.NODOS_PATH)

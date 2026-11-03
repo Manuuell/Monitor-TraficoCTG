@@ -1443,7 +1443,9 @@ def _postgresql_configurado() -> bool:
     )
 
 
-@st.cache_data(ttl=3600, show_spinner=False)
+# Cada entrada guarda tres meses de mediciones: sin limite, cada fecha y
+# corrida consultada dejaba una copia en memoria durante una hora.
+@st.cache_data(ttl=3600, show_spinner=False, max_entries=2)
 def cargar_historico_random_forest(fecha, corrida: str) -> tuple:
     """Carga tres meses desde PostgreSQL o Sheets; CSV es solo respaldo local.
 
@@ -1487,7 +1489,9 @@ def cargar_historico_random_forest(fecha, corrida: str) -> tuple:
     return pd.DataFrame(), "Sin histórico"
 
 
-@st.cache_resource(show_spinner=False)
+# Un modelo ocupa ~50 MB y la version cambia con cada corrida nueva: sin
+# limite se acumulaban los de todas las horas desde el ultimo reinicio.
+@st.cache_resource(show_spinner=False, max_entries=2)
 def entrenar_random_forest_cache(version, _historico, _catalogo):
     """Un modelo por version del historico; los DataFrame no se copian al hash."""
     return prediccion_trafico.entrenar_random_forest(_historico, _catalogo)
@@ -3089,7 +3093,11 @@ with tab_simulacion:
             with st.spinner("Consultando datos o calculando la predicción..."):
                 promedios_sim, estado_sim = indicadores_simulacion(
                     fecha_sim, corrida_sim, catalogo)
-        except (ValueError, ImportError) as error_modelo:
+        # Cualquier falla se queda en esta pestaña: un error sin capturar
+        # cortaria el script y no se dibujarian las pestañas siguientes.
+        except Exception as error_modelo:
+            if not isinstance(error_modelo, (ValueError, ImportError)):
+                print(f"  [Simulaciones] Error inesperado: {error_modelo!r}")
             promedios_sim = pd.DataFrame(
                 columns=["id_nodo", "vel_actual", "vel_libre", "ratio", "n", "predicho"])
             estado_sim = {

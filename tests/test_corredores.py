@@ -151,6 +151,15 @@ class ArmarCorredoresTest(unittest.TestCase):
 class CorredoresDelProyectoTest(unittest.TestCase):
     """La hoja real y data/red_nodos.json: cada corredor se dibuja por la via."""
 
+    def test_avenida_pedro_romero_sigue_la_red_sin_devolverse(self):
+        nodos = dt.cargar_nodos(config.NODOS_PATH)
+        corredores, _ = dt.leer_corredores(
+            config.NODOS_PATH, nodos["id_nodo"].astype(str))
+        self.assertEqual(corredores["AV. PEDRO ROMERO"], [
+            "Y_OLAYA", "PUE_FREDO", "ANT_PC", "OFC_ALC",
+            "ENT_GAV", "TIE_PUEBLO", "ROT_PRADO",
+        ])
+
     def test_todos_los_pares_de_corredores_son_conexiones(self):
         nodos = dt.cargar_nodos(config.NODOS_PATH)
         corredores, faltantes = dt.leer_corredores(config.NODOS_PATH, nodos["id_nodo"].astype(str))

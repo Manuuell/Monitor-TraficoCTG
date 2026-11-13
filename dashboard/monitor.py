@@ -1527,6 +1527,7 @@ def indicadores_simulacion(fecha, corrida: str, catalogo: pd.DataFrame) -> tuple
         historico, fecha, corrida)
     tiempos = pd.to_datetime(ventana_rf.get("consultation_time"), errors="coerce")
     version = (
+        prediccion_trafico.VERSION_MODELO,
         len(ventana_rf),
         tiempos.min().isoformat() if tiempos is not None and tiempos.notna().any() else "sin-inicio",
         tiempos.max().isoformat() if tiempos is not None and tiempos.notna().any() else "sin-fecha",
@@ -1537,7 +1538,11 @@ def indicadores_simulacion(fecha, corrida: str, catalogo: pd.DataFrame) -> tuple
     detalle = ("Fecha u hora futura" if instante > ahora
                else "No existe una medición exacta para esta corrida")
     return predichos, {
-        "tipo": "predicho", "fuente": f"Random Forest · {fuente_modelo}",
+        "tipo": "predicho",
+        "fuente": (
+            "75 % Random Forest + 25 % promedio histórico · "
+            f"{fuente_modelo}"
+        ),
         "detalle": detalle, "modelo": modelo, "periodo_modelo": periodo_rf,
     }
 
@@ -3231,7 +3236,8 @@ with tab_simulacion:
                     periodo_sim["fin"].normalize() - periodo_sim["inicio"].normalize()
                 ).days + 1
                 st.info(
-                    f"Predicción Random Forest · {fecha_hora_sim} · "
+                    f"Predicción combinada (75 % Random Forest + 25 % promedio histórico) · "
+                    f"{fecha_hora_sim} · "
                     f"{estado_sim['detalle']} · Entrenado con "
                     f"{modelo_sim['filas']:,} mediciones reales entre "
                     f"{periodo_sim['inicio'].strftime('%d/%m/%Y %H:%M')} y "

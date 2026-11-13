@@ -11,10 +11,12 @@ from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
 
 
-# La validacion contra la ultima corrida real disponible mostro que el promedio
-# nodo-corrida es una base mucho mas estable. El bosque aporta el ajuste por
-# fecha y dia de semana sin separar la prediccion del comportamiento observado.
-PESO_RANDOM_FOREST = 0.25
+# La prediccion final prioriza el patron aprendido por Random Forest y conserva
+# el promedio historico nodo-corrida como componente de estabilidad. Ambos se
+# calculan exclusivamente con la misma ventana permitida de entrenamiento.
+PESO_RANDOM_FOREST = 0.75
+PESO_PROMEDIO_HISTORICO = 0.25
+VERSION_MODELO = "rf-160-16-2-20-0.6-bootstrap-75-25"
 _NUMERICAS = [
     "hora_sin", "hora_cos", "semana_sin", "semana_cos",
     "anio_sin", "anio_cos", "fin_semana", "vel_libre", "lat", "lon",
@@ -153,6 +155,15 @@ def _promedios_por_corrida(historico: pd.DataFrame) -> pd.DataFrame:
     return por_corrida.merge(por_nodo, on="id_nodo", how="left")
 
 
+def combinar_predicciones(prediccion_random_forest, promedio_historico):
+    """Combina 75 % Random Forest y 25 % promedio del periodo entrenado."""
+    return (
+        PESO_RANDOM_FOREST * np.asarray(prediccion_random_forest, dtype=float)
+        + PESO_PROMEDIO_HISTORICO
+        * np.asarray(promedio_historico, dtype=float)
+    )
+
+
 def entrenar_random_forest(historico: pd.DataFrame, catalogo: pd.DataFrame) -> dict:
     """Entrena un Random Forest reproducible y devuelve el modelo y sus metadatos."""
     X, y, referencia = preparar_entrenamiento(historico, catalogo)
@@ -161,10 +172,12 @@ def entrenar_random_forest(historico: pd.DataFrame, catalogo: pd.DataFrame) -> d
         ("numericas", StandardScaler(), _NUMERICAS),
     ])
     bosque = RandomForestRegressor(
-        n_estimators=80,
-        max_depth=18,
-        min_samples_leaf=3,
-        max_features="sqrt",
+        n_estimators=160,
+        max_depth=16,
+        min_samples_split=2,
+        min_samples_leaf=20,
+        max_features=0.6,
+        bootstrap=True,
         random_state=42,
         n_jobs=-1,
     )
@@ -176,6 +189,7 @@ def entrenar_random_forest(historico: pd.DataFrame, catalogo: pd.DataFrame) -> d
         "referencia": referencia,
         "promedios_corrida": _promedios_por_corrida(historico),
         "peso_random_forest": PESO_RANDOM_FOREST,
+        "peso_promedio_historico": PESO_PROMEDIO_HISTORICO,
         "filas": len(X),
         "entrenado_desde": fechas.min() if not fechas.empty else None,
         "entrenado_hasta": fechas.max() if not fechas.empty else None,
@@ -207,10 +221,9 @@ def predecir_velocidades(modelo: dict, catalogo: pd.DataFrame,
         on="id_nodo", how="left",
     )
     base_historica = base["vel_promedio_corrida"].fillna(base["vel_promedio_nodo"])
-    peso_bosque = float(modelo.get("peso_random_forest", PESO_RANDOM_FOREST))
     pred = np.where(
         base_historica.notna(),
-        peso_bosque * pred_bosque + (1 - peso_bosque) * base_historica,
+        combinar_predicciones(pred_bosque, base_historica),
         pred_bosque,
     )
     limite_superior = np.maximum(base["vel_libre"].to_numpy() * 1.15, 20.0)

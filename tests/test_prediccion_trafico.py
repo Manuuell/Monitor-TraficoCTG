@@ -68,6 +68,25 @@ class PrediccionTraficoTest(unittest.TestCase):
         esperadas = pd.Series([38.0, 43.0, 48.0])
         self.assertLess((prediccion["vel_actual"].reset_index(drop=True) - esperadas).abs().mean(), 3)
 
+    def test_random_forest_usa_los_hiperparametros_configurados(self):
+        modelo = prediccion_trafico.entrenar_random_forest(
+            self.historico, self.catalogo)
+        bosque = modelo["pipeline"].named_steps["modelo"]
+        self.assertEqual(bosque.n_estimators, 160)
+        self.assertEqual(bosque.max_depth, 16)
+        self.assertEqual(bosque.min_samples_split, 2)
+        self.assertEqual(bosque.min_samples_leaf, 20)
+        self.assertEqual(bosque.max_features, 0.6)
+        self.assertTrue(bosque.bootstrap)
+        self.assertEqual(bosque.random_state, 42)
+        self.assertEqual(bosque.n_jobs, -1)
+
+    def test_mezcla_75_random_forest_y_25_promedio(self):
+        prediccion = prediccion_trafico.combinar_predicciones([40.0], [60.0])
+        self.assertAlmostEqual(float(prediccion[0]), 45.0)
+        self.assertEqual(prediccion_trafico.PESO_RANDOM_FOREST, 0.75)
+        self.assertEqual(prediccion_trafico.PESO_PROMEDIO_HISTORICO, 0.25)
+
     def test_entrenamiento_no_recorta_las_mediciones_de_tres_meses(self):
         repeticiones = 201
         historico_amplio = pd.concat(

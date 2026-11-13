@@ -38,6 +38,10 @@ AHORRO_MIN_M = 35.0
 FACTOR_ACCESO = 2.0
 VELOCIDAD_ACCESO_KMH = 18.0
 RADIO_BUSQUEDA_EXTREMOS_M = 800.0
+# Una calzada paralela puede no estar conectada directamente al nodo elegido,
+# pero debe pasar realmente junto a el. Un acceso mayor confundia destinos
+# cercanos (por ejemplo, Aeropuerto) con otra via situada a cientos de metros.
+RADIO_ACCESO_NO_INCIDENTE_M = 120.0
 MAX_CANDIDATOS_EXTREMO = 24
 MAX_PROYECCIONES_POR_CONEXION = 3
 PENALIZACION_RETORNO_INMEDIATO_S = 90.0
@@ -584,6 +588,22 @@ def _arista_parcial(arista: dict, path: list, ancla_inicio: dict,
     }
 
 
+def _fijar_extremo_exacto(trazo: list, punto: list, inicio: bool) -> list:
+    """Une el trazado a las coordenadas exactas del nodo seleccionado."""
+    exacto = [float(punto[0]), float(punto[1])]
+    salida = [list(p) for p in trazo]
+    if not salida:
+        return [exacto]
+    indice = 0 if inicio else -1
+    if _distancia_puntos_m(salida[indice], exacto) <= 0.5:
+        salida[indice] = exacto
+    elif inicio:
+        salida.insert(0, exacto)
+    else:
+        salida.append(exacto)
+    return salida
+
+
 def _seleccionar_candidatos(candidatos: list, nodo: str) -> list:
     """Amplia el radio sin dejar fuera las conexiones propias del nodo."""
     candidatos.sort(key=lambda x: (x[0], x[3]["acceso_m"]))
@@ -605,7 +625,8 @@ def _agregar_extremos_virtuales(aristas: dict, origen: str, destino: str,
     """
     Conecta origen y destino a varias vias cercanas mediante puntos virtuales.
     Los nodos de monitoreo dejan de ser paradas obligatorias: cada arista
-    parcial empieza o termina en la proyeccion sobre la via dirigida.
+    parcial usa la proyeccion sobre la via dirigida, pero su geometria empieza
+    y termina exactamente en los nodos seleccionados.
     """
     puntos = red.get("puntos", {})
     if origen not in puntos or destino not in puntos:
@@ -627,6 +648,10 @@ def _agregar_extremos_virtuales(aristas: dict, origen: str, destino: str,
             else:
                 anclas_inicio = _proyecciones_candidatas(
                     path, punto_origen, True)
+                anclas_inicio = [
+                    ancla for ancla in anclas_inicio
+                    if ancla["acceso_m"] <= RADIO_ACCESO_NO_INCIDENTE_M
+                ]
             for ancla in anclas_inicio:
                 restante = total - ancla["progreso_m"]
                 puntaje = (ancla["acceso_m"] * FACTOR_ACCESO
@@ -639,6 +664,10 @@ def _agregar_extremos_virtuales(aristas: dict, origen: str, destino: str,
             else:
                 anclas_fin = _proyecciones_candidatas(
                     path, punto_destino, False)
+                anclas_fin = [
+                    ancla for ancla in anclas_fin
+                    if ancla["acceso_m"] <= RADIO_ACCESO_NO_INCIDENTE_M
+                ]
             for ancla in anclas_fin:
                 puntaje = (ancla["acceso_m"] * FACTOR_ACCESO
                            + 0.08 * ancla["progreso_m"])
@@ -660,7 +689,9 @@ def _agregar_extremos_virtuales(aristas: dict, origen: str, destino: str,
             arista, path, ancla, fin, ancla["acceso_m"], arista["retardo_s"],
             f"inicio|{arista['id_arista']}|{ancla['progreso_m']:.1f}",
             hacia=arista["hacia"], estado_anterior=u,
-            punto_origen=ancla["punto"],
+            punto_origen=list(punto_origen),
+            path_ajustado=_fijar_extremo_exacto(
+                _recortar_trazo(path, ancla, fin), punto_origen, True),
             calzada_origen_ajustada=not (
                 u == origen and ancla["progreso_m"] <= 1.0),
             penalizacion_logica_s=penalizacion,
@@ -674,7 +705,9 @@ def _agregar_extremos_virtuales(aristas: dict, origen: str, destino: str,
             arista, path, inicio, ancla, ancla["acceso_m"], 0.0,
             f"fin|{arista['id_arista']}|{ancla['progreso_m']:.1f}",
             hacia=virtual_destino, giro_hacia=arista["hacia"],
-            punto_destino=ancla["punto"],
+            punto_destino=list(punto_destino),
+            path_ajustado=_fijar_extremo_exacto(
+                _recortar_trazo(path, inicio, ancla), punto_destino, False),
             calzada_destino_ajustada=not (
                 arista["hacia"] == destino
                 and _longitud_trazo_m(path) - ancla["progreso_m"] <= 1.0),
@@ -697,8 +730,13 @@ def _agregar_extremos_virtuales(aristas: dict, origen: str, destino: str,
                 (f"directa|{arista['id_arista']}|"
                  f"{ancla_inicio['progreso_m']:.1f}|{ancla_fin['progreso_m']:.1f}"),
                 hacia=virtual_destino, estado_anterior=u,
-                punto_origen=ancla_inicio["punto"],
-                punto_destino=ancla_fin["punto"],
+                punto_origen=list(punto_origen),
+                punto_destino=list(punto_destino),
+                path_ajustado=_fijar_extremo_exacto(
+                    _fijar_extremo_exacto(
+                        _recortar_trazo(path, ancla_inicio, ancla_fin),
+                        punto_origen, True),
+                    punto_destino, False),
                 calzada_origen_ajustada=not (
                     u == origen and ancla_inicio["progreso_m"] <= 1.0),
                 calzada_destino_ajustada=not (

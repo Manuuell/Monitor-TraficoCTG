@@ -214,8 +214,9 @@ class CalzadasParalelasTest(unittest.TestCase):
         self.assertTrue(ruta["calzada_origen_ajustada"])
         self.assertGreater(ruta["recorte_m"], 150)
         self.assertLess(ruta["dist_m"], 1300)
-        self.assertAlmostEqual(ruta["punto_origen"][0], 10.0001, places=5)
+        self.assertEqual(ruta["punto_origen"], red["puntos"]["O"])
         self.assertEqual(ruta["trazos"][0][0], ruta["punto_origen"])
+        self.assertIn([10.0001, -75.0000], ruta["trazos"][0])
 
     def test_destino_termina_en_la_calzada_correcta_sin_vuelta_final(self):
         path = [
@@ -232,6 +233,7 @@ class CalzadasParalelasTest(unittest.TestCase):
         self.assertTrue(ruta["calzada_destino_ajustada"])
         self.assertGreater(ruta["recorte_m"], 150)
         self.assertLess(ruta["dist_m"], 1300)
+        self.assertEqual(ruta["punto_destino"], red["puntos"]["D"])
         self.assertEqual(ruta["trazos"][0][-1], ruta["punto_destino"])
 
     def test_compara_calzadas_antes_de_elegir_la_ruta_mas_rapida(self):
@@ -374,6 +376,30 @@ class CalzadasParalelasTest(unittest.TestCase):
         self.assertEqual(corregida["nodos"], ["O", "B", "D"])
         self.assertNotIn("C", corregida["nodos"])
         self.assertLess(corregida["tiempo_s"], anterior["tiempo_s"])
+
+    def test_destino_no_se_confunde_con_una_via_lejana_no_incidente(self):
+        puntos = {
+            "O": [10.0000, -75.0000], "A": [10.0000, -74.9900],
+            "X": [10.0000, -74.9800], "D": [10.0033, -74.9850],
+        }
+        conexiones = [
+            self.conexion("O", "A", [puntos["O"], puntos["A"]], 1100),
+            self.conexion("A", "X", [puntos["A"], puntos["X"]], 1100),
+            self.conexion("X", "D", [puntos["X"], puntos["D"]], 900),
+        ]
+        promedios = {
+            nodo: {"vel_actual": 36.0, "vel_libre": 45.0, "ratio": 0.8}
+            for nodo in puntos
+        }
+        red = {"conexiones": conexiones, "puntos": puntos,
+               "restricciones_giro": []}
+        ruta = red_nodos.ruta_mas_rapida("O", "D", red, promedios)
+        ultima_conexion = ruta["tramos"][-1][0]
+        self.assertIn("D", (ultima_conexion["a"], ultima_conexion["b"]))
+        self.assertEqual(ruta["punto_origen"], puntos["O"])
+        self.assertEqual(ruta["punto_destino"], puntos["D"])
+        self.assertEqual(ruta["trazos"][0][0], puntos["O"])
+        self.assertEqual(ruta["trazos"][-1][-1], puntos["D"])
 
     def test_sentido_contrario_busca_la_calzada_paralela_legal(self):
         puntos = {
